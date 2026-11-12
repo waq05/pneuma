@@ -807,10 +807,21 @@ if (expandEnv.ok) {
     `批次窗口 ${String(expand.noneWindowMs)}ms（noneTicks ${String(expand.noneTicks)} 次，诊断用）`)
   check('展开：批次期间的计算值也是 none', expand.computedNone === true,
     `sawNone=${String(expandRun.sawNone)}, noneComputed=${String(expandRun.noneComputed)}`)
-  check('展开：批次结束后内联 overflow-anchor 还原成空串', expand.last.inline === '', `实际 ${JSON.stringify(expand.last.inline)}`)
-  check('展开：末帧占位高度回到 0', expand.last.spacer === 0 && expand.last.spacerInline === '',
-    `offsetHeight=${String(expand.last.spacer)} inline=${JSON.stringify(expand.last.spacerInline)}`)
-  check('展开：末帧锚点行仍在原位', Math.abs((expand.last.top ?? 0) - expandRun.baseline) <= 1)
+  // 下面三条在「点击没生效、什么都没发生」时**天然成立**：内联值本来就是空串、占位本来就
+  // 是 0、锚点行本来就没动。不先要求这一下真的接上了，它们就是假绿（审查 2026-11-12 指出）。
+  // 所以先看 `actuated`：没接上就记 skip，别让「没动」冒充「还原对了」。
+  if (expandRun?.actuated === true) {
+    check('展开：批次结束后内联 overflow-anchor 还原成空串', expand.last.inline === '', `实际 ${JSON.stringify(expand.last.inline)}`)
+    check('展开：末帧占位高度回到 0', expand.last.spacer === 0 && expand.last.spacerInline === '',
+      `offsetHeight=${String(expand.last.spacer)} inline=${JSON.stringify(expand.last.spacerInline)}`)
+    check('展开：末帧锚点行仍在原位', Math.abs((expand.last.top ?? 0) - expandRun.baseline) <= 1)
+  } else {
+    for (const name of [
+      '展开：批次结束后内联 overflow-anchor 还原成空串',
+      '展开：末帧占位高度回到 0',
+      '展开：末帧锚点行仍在原位',
+    ]) skip(name, '点击没生效')
+  }
 } else {
   for (const name of [
     '展开：第一条可见行的屏幕 top 变化 ≤1px',
@@ -869,10 +880,20 @@ if (collapseEnv.ok) {
     `批次窗口 ${String(collapse.noneWindowMs)}ms（noneTicks ${String(collapse.noneTicks)} 次，诊断用）`)
   check('收起：批次期间的计算值也是 none', collapse.computedNone === true,
     `sawNone=${String(collapseRun.sawNone)}, noneComputed=${String(collapseRun.noneComputed)}`)
-  check('收起：批次结束后内联 overflow-anchor 还原成空串', collapse.last.inline === '', `实际 ${JSON.stringify(collapse.last.inline)}`)
-  check('收起：末帧占位高度回到 0', collapse.last.spacer === 0 && collapse.last.spacerInline === '',
-    `offsetHeight=${String(collapse.last.spacer)} inline=${JSON.stringify(collapse.last.spacerInline)}`)
-  check('收起：末帧锚点行仍在原位', Math.abs((collapse.last.top ?? 0) - collapseRun.baseline) <= 1)
+  // 同展开那三条：点击没生效时它们天然成立，先要求这一下真的接上了（`actuated`），
+  // 不成立就 skip，理由写「点击没生效」。
+  if (collapseRun?.actuated === true) {
+    check('收起：批次结束后内联 overflow-anchor 还原成空串', collapse.last.inline === '', `实际 ${JSON.stringify(collapse.last.inline)}`)
+    check('收起：末帧占位高度回到 0', collapse.last.spacer === 0 && collapse.last.spacerInline === '',
+      `offsetHeight=${String(collapse.last.spacer)} inline=${JSON.stringify(collapse.last.spacerInline)}`)
+    check('收起：末帧锚点行仍在原位', Math.abs((collapse.last.top ?? 0) - collapseRun.baseline) <= 1)
+  } else {
+    for (const name of [
+      '收起：批次结束后内联 overflow-anchor 还原成空串',
+      '收起：末帧占位高度回到 0',
+      '收起：末帧锚点行仍在原位',
+    ]) skip(name, '点击没生效')
+  }
 } else {
   for (const name of [
     '收起：第一条可见行的屏幕 top 变化 ≤1px',
@@ -1439,9 +1460,479 @@ if (jumpProbe?.error !== undefined) {
     JSON.stringify({ after: jumpProbe.after, floor: jumpProbe.floor }))
 }
 
+// ── 贴底直接点刻度：跟随态下点早轮，落点不许被落定逻辑钉回底部（2026-11-12）─────────
+//
+// 上面那条跳轮探针先合成了一次上滚手势把跟随关掉，所以抓不到这条缺陷。真实用法是
+// **就贴在底部**（跟随态）点一个早轮刻度：改之前，补间逐帧写 `scrollTop`、每帧都经
+// `reader.wrote` 回报，跟随策略一路认为「位置是我写的」；补间收尾那条 `scrollend` 走到
+// `settle()` 时 `following` 还是 true，于是补一次 `pin()`——跳上去约 100ms 后被拽回
+// floor，高亮也跟着跳回最后一轮。
+//
+// 修好之后：视口把落点交回跟随策略（`following = atFloor(24)`），没落在底上就脱离跟随，
+// 一秒之后位置还在原处。
+const bottomJump = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const chat = document.querySelector('.chat')
+  const ticks = [...document.querySelectorAll('.jump-tick')]
+  if (chat === null) return { error: '没有 .chat' }
+  if (ticks.length < 3) return { error: '刻度不足 3 枚（没法从底上跳到更早的轮）' }
+  const spacer = chat.querySelector('[data-chat-turn-spacer]')
+  const floorNow = () => chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
+  // 回到底部并保持跟随：胶囊的点击就是 follow.resume()，把跟随意图重新立起来。
+  const pill = document.querySelector('.chat-to-bottom')
+  if (pill !== null) pill.click()
+  const pinDeadline = performance.now() + 3000
+  while (performance.now() < pinDeadline) {
+    if (Math.abs(chat.scrollTop - floorNow()) <= 2) break
+    await wait(32)
+  }
+  // 落定（180ms）与它的补钉都跑完，跟随态才是稳的——这一步之后才是「贴底」的现场。
+  await wait(320)
+  if (Math.abs(chat.scrollTop - floorNow()) > 2) {
+    return { error: '回不到底部（跟随态没立起来）：离底 ' + String(Math.round(floorNow() - chat.scrollTop)) + 'px' }
+  }
+  const box = chat.getBoundingClientRect()
+  const offsetOf = (row) => row.getBoundingClientRect().top - (box.top - chat.scrollTop)
+  const seats = [...chat.querySelectorAll('.turn-seat[data-round-seat]')]
+  let target = null
+  for (const seat of seats) {
+    const round = Number(seat.getAttribute('data-round-seat'))
+    if (!Number.isInteger(round)) continue
+    const tick = ticks.find((node) => Number(node.getAttribute('data-turn')) === round) ?? null
+    if (tick === null) continue
+    const row = seat.querySelector('[data-round]') ?? seat
+    const offset = offsetOf(row)
+    // 落点要离底够远：「被拽回 floor」这件事才看得出来（不然两个位置本来就挨着）。
+    if (floorNow() - offset < 200) continue
+    target = { round, tick, offset }
+    break
+  }
+  if (target === null) return { error: '没有离底 200px 以上的早轮刻度可点' }
+  const start = chat.scrollTop
+  // 落点用**落定之后**重新量的偏移来判：机器忙的时候从「量偏移」到「点下去」之间排版可能
+  // 又动了一下（实测降速时整页会挪几百像素），拿点击前的旧读数判会把产品判错。
+  const rowFor = () => {
+    const seatsNow = [...chat.querySelectorAll('.turn-seat[data-round-seat]')]
+    const seat = seatsNow.find((node) => Number(node.getAttribute('data-round-seat')) === target.round) ?? null
+    return seat === null ? null : (seat.querySelector('[data-round]') ?? seat)
+  }
+  // 什么都不先滚，直接点：这就是「贴底点刻度」那一态。
+  target.tick.click()
+  // 等补间落定：连续 3 次 50ms 采样位置不变（不按固定时长猜）。
+  let last = chat.scrollTop
+  let stable = 0
+  const settleDeadline = performance.now() + 4000
+  while (performance.now() < settleDeadline) {
+    await wait(50)
+    const now = chat.scrollTop
+    stable = Math.abs(now - last) <= 0.5 ? stable + 1 : 0
+    last = now
+    if (stable >= 3) break
+  }
+  const landed = chat.scrollTop
+  const rowNow = rowFor()
+  const expectedNow = rowNow === null ? null : offsetOf(rowNow)
+  const activeNow = document.querySelector('.jump-tick[aria-current="true"]')
+  // 一秒之后再看一次：缺陷的样子是「约 100ms 后被拽回 floor」，一秒站得住才算修好。
+  await wait(700)
+  const later = chat.scrollTop
+  const rowLater = rowFor()
+  const expectedLater = rowLater === null ? null : offsetOf(rowLater)
+  const activeLater = document.querySelector('.jump-tick[aria-current="true"]')
+  return {
+    round: target.round,
+    start,
+    expectedBefore: target.offset,
+    expectedNow,
+    expectedLater,
+    landed,
+    later,
+    floor: floorNow(),
+    gapLanded: expectedNow === null ? null : landed - expectedNow,
+    gapLater: expectedLater === null ? null : later - expectedLater,
+    bottomGap: floorNow() - later,
+    active: activeNow === null ? null : Number(activeNow.getAttribute('data-turn')),
+    activeLater: activeLater === null ? null : Number(activeLater.getAttribute('data-turn')),
+    ticks: ticks.length,
+  }
+`)
+console.log('[bottom-jump]', JSON.stringify(bottomJump))
+if (bottomJump?.error !== undefined) {
+  check('环境：贴底点刻度的现场摆得出来（有离底 200px 以上的早轮刻度）', false, String(bottomJump.error))
+  for (const name of [
+    '贴底点刻度：落到该轮首行在内容坐标里的偏移（±1px）',
+    '贴底点刻度：1 秒后仍在落点、没被拽回 floor',
+    '贴底点刻度：刻度条亮的是目标轮',
+  ]) skip(name, '现场摆不出来')
+} else {
+  check('贴底点刻度：落到该轮首行在内容坐标里的偏移（±1px）',
+    bottomJump.gapLanded !== null && Math.abs(bottomJump.gapLanded) <= 1,
+    JSON.stringify({ gap: bottomJump.gapLanded, expected: bottomJump.expectedNow, landed: bottomJump.landed }))
+  check('贴底点刻度：1 秒后仍在落点、没被拽回 floor',
+    bottomJump.gapLater !== null && Math.abs(bottomJump.gapLater) <= 1 && bottomJump.bottomGap > 40,
+    JSON.stringify({
+      later: bottomJump.later,
+      expected: bottomJump.expectedLater,
+      floor: bottomJump.floor,
+      bottomGap: bottomJump.bottomGap,
+    }))
+  check('贴底点刻度：刻度条亮的是目标轮',
+    bottomJump.activeLater === bottomJump.round,
+    `目标 ${String(bottomJump.round)} / 1 秒后亮的是 ${String(bottomJump.activeLater)}（落定时是 ${String(bottomJump.active)}）`)
+}
+
+// ── 补间被打断：跳轮补间进行中滚一下，位置要听用户的手（审查 P2，2026-11-12）──────────
+//
+// 改之前 `stopTween()` 只在 `scrollToOffset` 开头与 `detach()` 里调：补间跑到一半时
+// 滚轮一来，`follow.ts` 只改了跟随意图，补间照旧每帧写 `scrollTop`，手滚出来的位置
+// 下一帧就被盖回去。现在滚轮 / 拖动 / 触摸都先 `viewport.cancelMotion()`。
+//
+// 判据不用固定时长猜：点完之后**按位置**等补间走到一成以上（起点与落点都已知，进度 =
+// 已走 / 总距离），确认「补间真的动了、且离目标还很远」再滚；之后 420ms 内位置必须不再变。
+// 合成滚轮不会真的滚动页面，所以「位置没再变」只可能来自补间被取消。
+const interruptProbe = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const raf = () => new Promise((r) => requestAnimationFrame(r))
+  const chat = document.querySelector('.chat')
+  const ticks = [...document.querySelectorAll('.jump-tick')]
+  if (chat === null) return { error: '没有 .chat' }
+  const spacer = chat.querySelector('[data-chat-turn-spacer]')
+  const floorNow = () => chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
+  const backToBottom = async () => {
+    const pill = document.querySelector('.chat-to-bottom')
+    if (pill !== null) pill.click()
+    const pinDeadline = performance.now() + 3000
+    while (performance.now() < pinDeadline) {
+      if (Math.abs(chat.scrollTop - floorNow()) <= 2) break
+      await wait(32)
+    }
+    await wait(320)
+  }
+  const attempts = []
+  // 最多试三次：机器忙的时候「点下去」到「第一帧」之间可能已经过了补间的大半（掉帧），
+  // 那一下打断证明不了什么——回到底部重来，而不是拿一次失败的采样判产品。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    // 从底部起跳：被打断的位置离 floor 很远，「停在原地」与「被钉回底部」也分得开。
+    await backToBottom()
+    const start = chat.scrollTop
+    const box = chat.getBoundingClientRect()
+    const offsetOf = (row) => row.getBoundingClientRect().top - (box.top - chat.scrollTop)
+    const seats = [...chat.querySelectorAll('.turn-seat[data-round-seat]')]
+    let target = null
+    let best = 0
+    for (const seat of seats) {
+      const round = Number(seat.getAttribute('data-round-seat'))
+      if (!Number.isInteger(round)) continue
+      const tick = ticks.find((node) => Number(node.getAttribute('data-turn')) === round) ?? null
+      if (tick === null) continue
+      const row = seat.querySelector('[data-round]') ?? seat
+      const offset = offsetOf(row)
+      // 取**最远**的那一轮（不写死某个轮号）：补间越长，「走到一半」与「走完」分得越开。
+      const distance = start - offset
+      if (distance <= best) continue
+      best = distance
+      target = { round, tick, offset }
+    }
+    if (target === null || best < 300) {
+      return {
+        error: '没有相距 300px 以上的早轮可跳（补间太短，分不出打断）：最远 ' + String(Math.round(best)) + 'px',
+        attempts,
+      }
+    }
+    const distance = start - target.offset
+    target.tick.click()
+    // 等补间**按位置**走到半路（不按帧数猜：掉帧、缓动曲线都会让「第两帧走到几成」变样）。
+    // 起点与落点都是已知的，进度 = 已走 / 总距离；走到 12% 以上就打断，此时离目标还有
+    // 八成以上，补间要是没停，位置一定会明显继续往下走。
+    let atWheel = null
+    const watch = []
+    const watchDeadline = performance.now() + 3000
+    while (performance.now() < watchDeadline) {
+      await raf()
+      const now = chat.scrollTop
+      watch.push({ t: Math.round(performance.now()), top: Number(now.toFixed(1)) })
+      if ((start - now) / distance >= 0.12) {
+        atWheel = now
+        break
+      }
+    }
+    if (atWheel === null) {
+      attempts.push({ attempt, error: '补间三秒内没走到一成', start, target: target.offset, watch: watch.slice(0, 8) })
+      continue
+    }
+    const remaining = Math.abs(target.offset - atWheel)
+    if (remaining < 60) {
+      // 这一帧来得太晚（掉帧 / 页面被降速），补间已经快走完：这一下打断证明不了什么，重来。
+      attempts.push({ attempt, tooLate: true, atWheel, remaining, watch: watch.slice(0, 8) })
+      await wait(300)
+      continue
+    }
+    chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, bubbles: true, cancelable: true }))
+    const trace = []
+    const deadline = performance.now() + 420
+    while (performance.now() < deadline) {
+      await raf()
+      trace.push(Number(chat.scrollTop.toFixed(1)))
+    }
+    const after = chat.scrollTop
+    return {
+      round: target.round,
+      start,
+      target: target.offset,
+      atWheel,
+      after,
+      // 往上走是 scrollTop 变小：正数 = 已经往上离开了起点。
+      moved: start - atWheel,
+      remaining,
+      drift: after - atWheel,
+      floor: floorNow(),
+      attempts,
+      watch: watch.slice(0, 24),
+      trace: trace.slice(0, 24),
+    }
+  }
+  return { error: '三次都没能在补间半路打断（页面被降速或掉帧）', attempts }
+`)
+console.log('[interrupt]', JSON.stringify(interruptProbe))
+if (interruptProbe?.error !== undefined) {
+  check('环境：补间打断的现场摆得出来（有相距 300px 以上的早轮可跳）', false, String(interruptProbe.error))
+  skip('补间打断：滚轮之后位置不再变（补间没有继续把它覆盖）', '现场摆不出来')
+} else {
+  // 前置：滚轮到达的那一刻，补间真的在跑（已经离开起点、且离目标还很远）。
+  // 少了这一条，「本来就没动」会被当成「打断成功」。
+  const midFlight = interruptProbe.moved > 4 && interruptProbe.remaining > 40
+  check('现场：滚轮到达时补间还在半路（已移动 >4px、离目标 >40px）', midFlight,
+    JSON.stringify({
+      moved: Math.round(interruptProbe.moved),
+      remaining: Math.round(interruptProbe.remaining),
+      atWheel: Math.round(interruptProbe.atWheel),
+      target: Math.round(interruptProbe.target),
+    }))
+  if (midFlight) {
+    check('补间打断：滚轮之后位置不再变（补间没有继续把它覆盖）',
+      Math.abs(interruptProbe.drift) <= 2,
+      JSON.stringify({
+        atWheel: Math.round(interruptProbe.atWheel),
+        after: Math.round(interruptProbe.after),
+        drift: Number(interruptProbe.drift.toFixed(1)),
+        target: Math.round(interruptProbe.target),
+      }))
+  } else {
+    skip('补间打断：滚轮之后位置不再变（补间没有继续把它覆盖）', '补间没跑到半路')
+  }
+}
+
 // 收工时的整屏：这时这一轮是收起态（第二次点过），画面里能看出历史位置。
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 writeFileSync(join(shots, '_fold-scroll.png'), Buffer.from(shot.data, 'base64'))
+
+// ── 短会话（内容不满一屏）：atFloor 不再被 floor()===0 挡掉（2026-11-12）────────────
+//
+// 现场怎么摆：把**视口拉得比内容还高**（CDP 的 `Emulation.setDeviceMetricsOverride`），
+// 于是 `floor() = scrollHeight − 占位 − clientHeight` 就是 0——这正是短会话的几何。
+// 为什么不另造一条 1 轮的会话：种子会话是宿主 `Session` 写的、启动就打开它
+// （`DSC_RESUME_SESSION`），中途换会话要走界面或宿主通道，比拉高视口脆得多；而 atFloor
+// 的判据只跟「内容高 vs 可视高」有关，与轮数无关。拉高之前先量一次内容高，再留 800px
+// 余量（下面还要展开一轮，内容会长几百像素）。
+//
+// 对照起点：先在长视口里摆出「不跟随 + 胶囊亮着」（合成上滚手势 + 把位置挪走），这样
+// 「拉成短会话之后胶囊自己收回」才有判别力——它证明 `settle` 用 `atFloor(24)` 判出了
+// 「在底」。旧守卫（`floor() <= 0 → false`）下这一条会红：胶囊会一直亮着。
+const SHORT_CHECKS = [
+  '短会话：floorSlack() 就是 0（atFloor(任何 slack) 都为真）',
+  '短会话：跟随策略判「在底」（读者松手后落定自己回到跟随，胶囊收回）',
+  '短会话：刻度条判「在底」并高亮最后一轮',
+  '短会话：折叠操作不引起滚动跳变（不能滚就不该动）',
+]
+const contentHeight = await evaluate(`
+  const chat = document.querySelector('.chat')
+  return chat === null ? null : Math.ceil(chat.scrollHeight)
+`)
+if (typeof contentHeight !== 'number' || contentHeight <= 0) {
+  check('环境：短会话的对照起点摆得出来（先不跟随、胶囊亮着）', false,
+    `量不到 .chat 的内容高：${JSON.stringify(contentHeight)}`)
+  for (const name of SHORT_CHECKS) skip(name, '现场摆不出来')
+} else {
+  // ① 长视口里先摆出「不跟随、胶囊亮着」。
+  const paused = await evaluate(`
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const chat = document.querySelector('.chat')
+    if (chat === null) return { error: '没有 .chat' }
+    const spacer = chat.querySelector('[data-chat-turn-spacer]')
+    const floorNow = () => chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
+    const pill = document.querySelector('.chat-to-bottom')
+    if (pill !== null) pill.click()
+    const pinDeadline = performance.now() + 3000
+    while (performance.now() < pinDeadline) {
+      if (Math.abs(chat.scrollTop - floorNow()) <= 2) break
+      await wait(32)
+    }
+    await wait(300)
+    // 真手势往上，再把位置挪走：落定（180ms）之后就是「不跟随 + 胶囊亮着」。
+    chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, bubbles: true, cancelable: true }))
+    await wait(30)
+    chat.scrollTop = Math.max(0, floorNow() - 220)
+    // 等胶囊真的亮起来（跟随松手 + React 重渲染），不按固定时长猜：机器忙的时候
+    // 320ms 可能还没渲染完，那会把「场景没摆好」误判成产品。
+    const pillDeadline = performance.now() + 3000
+    while (performance.now() < pillDeadline) {
+      if (document.querySelector('.chat-to-bottom') !== null) break
+      await wait(32)
+    }
+    return { floor: floorNow(), top: chat.scrollTop, pill: document.querySelector('.chat-to-bottom') !== null }
+  `)
+  console.log('[short-pre]', JSON.stringify(paused))
+  if (paused?.error !== undefined || paused?.pill !== true) {
+    check('环境：短会话的对照起点摆得出来（先不跟随、胶囊亮着）', false,
+      String(paused?.error ?? `胶囊没亮：${JSON.stringify(paused)}`))
+    for (const name of SHORT_CHECKS) skip(name, '对照起点摆不出来')
+  } else {
+    check('环境：短会话的对照起点摆得出来（先不跟随、胶囊亮着）', true)
+    // ② 把视口拉得比内容还高：floor() 变成 0，就是短会话。
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 1100,
+      height: Math.ceil(contentHeight) + 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+    await sleep(500)
+    const short = await evaluate(`
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const chat = document.querySelector('.chat')
+      if (chat === null) return { error: '没有 .chat' }
+      const spacer = chat.querySelector('[data-chat-turn-spacer]')
+      const floorNow = () => chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
+      const seats = [...chat.querySelectorAll('.turn-seat[data-round-seat]')]
+      const rounds = seats
+        .map((seat) => Number(seat.getAttribute('data-round-seat')))
+        .filter((value) => Number.isInteger(value))
+      if (rounds.length === 0) return { error: '没有轮座位' }
+      const lastRound = Math.max(...rounds)
+      const floor = floorNow()
+      const top = chat.scrollTop
+      if (floor > 1) return { error: '视口没拉够高：floor() 还是 ' + String(Math.round(floor)) + 'px' }
+      const active = document.querySelector('.jump-tick[aria-current="true"]')
+      const railActive = active === null ? null : Number(active.getAttribute('data-turn'))
+      // 判别力诊断：旧守卫（floor() <= 0 → false）下 atBottom 是 false，刻度条会走命中测试 /
+      // 几何兜底。把旧口径**原样复算**一遍（同 jump-rail 的 pickCurrentRound：命中优先，
+      // 否则按锚点与探针线比），它给出的轮必须不是最后一轮，下面那条断言才有判别力。
+      const box = chat.getBoundingClientRect()
+      const hit = document.elementFromPoint(box.left + chat.clientWidth / 2, box.top + 8)
+      let hitRound = null
+      if (hit !== null && chat.contains(hit)) {
+        const row = hit.closest('[data-round]')
+        const value = row === null ? Number.NaN : Number(row.getAttribute('data-round'))
+        if (Number.isInteger(value) && value >= 0) hitRound = value
+      }
+      const anchors = []
+      const seenRounds = new Set()
+      for (const row of chat.querySelectorAll('[data-round]')) {
+        const value = Number(row.getAttribute('data-round'))
+        if (!Number.isInteger(value) || value < 0) continue
+        if (row.getClientRects().length === 0) continue
+        if (seenRounds.has(value)) continue
+        seenRounds.add(value)
+        anchors.push({ round: value, top: row.getBoundingClientRect().top - box.top + chat.scrollTop })
+      }
+      const probeTop = chat.scrollTop + 8
+      let oldAnswer
+      if (hitRound !== null) oldAnswer = hitRound
+      else if (anchors.length === 0) oldAnswer = -1
+      else {
+        let current = -1
+        for (const anchor of anchors) {
+          if (anchor.top <= probeTop) current = anchor.round
+          else break
+        }
+        oldAnswer = current === -1 ? anchors[0].round : current
+      }
+      const pillAfter = document.querySelector('.chat-to-bottom') !== null
+      // 对照：短会话里折叠最后一轮，位置不该动（不能滚就没地方动）。
+      const seatNow = () => chat.querySelector('.turn-seat[data-round-seat="' + String(lastRound) + '"]')
+      const segmentNow = () => {
+        const seat = seatNow()
+        return seat === null ? null : seat.querySelector('.turn-process')
+      }
+      const foldNow = () => {
+        const segment = segmentNow()
+        return segment === null ? null : segment.getAttribute('data-fold')
+      }
+      const btn = seatNow() === null ? null : seatNow().querySelector('.turn-fold:not([disabled])')
+      const foldFrom = foldNow()
+      const topBeforeFold = chat.scrollTop
+      const heightBeforeFold = chat.scrollHeight
+      const segBefore = segmentNow() === null ? null : Number(segmentNow().getBoundingClientRect().height.toFixed(1))
+      const rowsBefore = segmentNow() === null ? -1 : [...segmentNow().querySelectorAll('.entry-row')]
+        .filter((row) => row.getClientRects().length > 0).length
+      const seatHiddenBefore = seatNow() === null ? null : seatNow().hasAttribute('hidden')
+      let foldActuated = false
+      if (btn !== null) {
+        btn.click()
+        const foldDeadline = performance.now() + 4000
+        while (performance.now() < foldDeadline) {
+          await wait(16)
+          if (foldNow() !== foldFrom) foldActuated = true
+          // 批次收工：内联 overflow-anchor 进过 none 又回到空串（与别的场景同一判据）。
+          if (foldActuated && chat.style.overflowAnchor === '') break
+        }
+        await wait(300)
+      }
+      return {
+        floor,
+        top,
+        lastRound,
+        railActive,
+        hitRound,
+        oldAnswer,
+        pillAfter,
+        foldFrom,
+        foldTo: foldNow(),
+        foldActuated,
+        topBeforeFold,
+        topAfterFold: chat.scrollTop,
+        floorAfterFold: floorNow(),
+        heightBeforeFold,
+        heightAfterFold: chat.scrollHeight,
+        segBefore,
+        segAfter: segmentNow() === null ? null : Number(segmentNow().getBoundingClientRect().height.toFixed(1)),
+        rowsBefore,
+        rowsAfter: segmentNow() === null ? -1 : [...segmentNow().querySelectorAll('.entry-row')]
+          .filter((row) => row.getClientRects().length > 0).length,
+        seatHiddenBefore,
+        seatHiddenAfter: seatNow() === null ? null : seatNow().hasAttribute('hidden'),
+      }
+    `)
+    console.log('[short]', JSON.stringify(short))
+    if (short?.error !== undefined) {
+      check('环境：短会话现场摆得出来（视口拉得比内容高，floor()===0）', false, String(short.error))
+      for (const name of SHORT_CHECKS) skip(name, String(short.error))
+    } else {
+      // floor 0 且 scrollTop 0 ⇒ floorSlack() === 0 ⇒ atFloor(任何 slack >= 0) 都为真。
+      check(SHORT_CHECKS[0], short.floor === 0 && short.top === 0,
+        JSON.stringify({ floor: short.floor, top: short.top }))
+      // 跟随策略那条走 atFloor(24)：对照起点是「胶囊亮着」，拉成短会话后胶囊必须自己收回。
+      check(SHORT_CHECKS[1], short.pillAfter === false,
+        JSON.stringify({ pillAfter: short.pillAfter, floor: short.floor }))
+      // 刻度条那条走 atFloor(32)：短会话里「在底」= 最后一轮。
+      // 判别力：旧守卫下会走命中测试 / 几何兜底，亮的是 oldAnswer；它不等于最后一轮时
+      // 这条断言才有意义（否则命中测试也蒙对最后一轮，断言就是假绿）。
+      check(SHORT_CHECKS[2], short.railActive === short.lastRound && short.oldAnswer !== short.lastRound,
+        `最后一轮 ${String(short.lastRound)} / 刻度条亮的是 ${String(short.railActive)}（旧口径会亮 ${String(short.oldAnswer)}）`)
+      if (short.foldActuated === true) {
+        check(SHORT_CHECKS[3],
+          Math.abs(short.topAfterFold - short.topBeforeFold) <= 1 && short.floorAfterFold === 0,
+          JSON.stringify({
+            topBefore: short.topBeforeFold,
+            topAfter: short.topAfterFold,
+            floorAfter: short.floorAfterFold,
+            contentGrew: short.heightAfterFold - short.heightBeforeFold,
+          }))
+      } else {
+        skip(SHORT_CHECKS[3], '折叠点击没生效')
+      }
+    }
+  }
+}
 
 console.log(`\n[_verify-fold-scroll] 断言 ${String(passed + failures)} 条，通过 ${String(passed)} 条，失败 ${String(failures)} 条，环境跳过 ${String(skipped)} 条`)
 try { ws.close() } catch {}

@@ -265,8 +265,13 @@ export function JumpRail(props: {
         // 落点由视口算：这一行相对内容顶端的偏移 —— 滚到它等于把它顶到容器上缘
         // （旧写法 `scrollIntoView({ block:'start' })` 的同义动作，但不连带滚祖先、
         // 也经过视口的写入通道，跟随策略认得出「这是我们自己滚的」）。
+        //
+        // 第三个参数 `'jump'` 是**跟随的交接**：这次写是读者的意图，不是跟随的意图。
+        // 视口补间收尾时会把落点交回跟随策略（`following = atFloor(阈值)`），落点不在底
+        // 就脱离跟随；少了这一条，补间收尾的 `scrollend` 会按「还在跟随」把位置钉回 floor
+        // ——贴底点早轮刻度，跳上去一百毫秒后被拽回底部（2026-11-12 报障）。
         const offset = props.viewport.offsetOf(node)
-        if (offset !== null) props.viewport.scrollToOffset(offset, 'smooth')
+        if (offset !== null) props.viewport.scrollToOffset(offset, 'smooth', 'jump')
       })()
     },
     [props],

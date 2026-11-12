@@ -20,10 +20,25 @@
  * - 工具卡 `tool-card/factory.tsx:409`：量 `.chat` 的位置来摆悬浮层，不写滚动；
  *
  * 刻度条 `jump-rail.tsx` 以前自己算「到底」（`scrollHeight − clientHeight − scrollTop`，
- * 没减占位），也自己调 `scrollTo` / `scrollIntoView` 跳轮。现在它只经
- * {@link ChatViewport.atFloor} / {@link ChatViewport.floorSlack} /
- * {@link ChatViewport.offsetOf} / {@link ChatViewport.scrollToOffset} 说话——于是「到底」
- * 全仓只有 `floor()` 一个定义，占位非 0 时不会再分叉成两套口径。
+ * 没减占位），也自己调 `scrollTo` / `scrollIntoView` 跳轮；`follow.ts` 也曾自己写
+ * `floor() − scrollTop <= 24` 这种门限。现在两处都只问 {@link ChatViewport.atFloor} /
+ * {@link ChatViewport.floorSlack} / {@link ChatViewport.offsetOf} /
+ * {@link ChatViewport.scrollToOffset}——于是**会话区这只 `.chat` 的「到底」只有 `floor()`
+ * 一个定义**：短会话（`floor() === 0`）与长会话停在 floor 上给的是同一个答案，占位非 0
+ * 时也不会再分叉成两套口径。
+ *
+ * 「全仓」的边界要说清（2026-11-12 复核：这一句以前写成「全仓」，兑现不了，这里老实交代）。
+ * 除本文件之外还有四处写 `scrollHeight − clientHeight` 的「底」，但它们算的都是**别的**
+ * 滚动容器，不是会话区，也都不减底部占位，因此不归本 owner 管、也不与 `floor()` 分叉：
+ *
+ * - `jump-rail.tsx:208` / `:237`：刻度条自己那条轨道 `.jump-rail-scroll` 的底；
+ * - `fold-seats.tsx:235` / `:247` / `:283`：限高的过程组体 `.step-body` 自己的底；
+ * - `ui-trace/ui/ui.tsx:214`：轨迹页自己那只滚动盒的底；
+ * - `ui-status/ui/ui.tsx:2180`：状态面板自己那只滚动盒的底（它连 `FOLLOW_BOTTOM_PX`
+ *   都是自己的一份常量）。
+ *
+ * 这四处要并进来，得先让它们各自持有一只视口实例——那是各自那一页的 owner 该做的事，
+ * 本文件不替它们猜。
  *
  * 还要知道探针的盲区：探针拦的是 `scrollTop` 的**属性赋值**，`scrollTo` /
  * `scrollIntoView` 不走那个 setter，所以「写入栈只指向 ViewportOwner」这条判据抓不到
@@ -90,6 +105,10 @@ const SCROLLER_SELECTOR = '.chat'
 const SPACER_SELECTOR = '[data-chat-turn-spacer]'
 /** 一行：`ui-transcript` 的每个座位都是一个 `.entry-row`（见 ui.tsx 模块头第 2 条）。 */
 const ROW_SELECTOR = '.entry-row'
+/** 一轮的座位：`data-round-seat` 是这一轮的序号（`ui.tsx` 的 `<div className="turn-seat">`）。 */
+const SEAT_ATTR = 'data-round-seat'
+/** 一行属于哪一轮：`.entry-row` 上的 `data-round`（`render.tsx` / `fold-seats.tsx` 都写它）。 */
+const ROUND_ATTR = 'data-round'
 /**
  * 批次比过渡多留的尾巴（ms）。
  *
@@ -107,15 +126,37 @@ export type Landing = 'tail' | 'reading'
 export type ScrollBehaviorKind = 'instant' | 'smooth'
 
 /**
+ * 这次写入是谁要的。
+ *
+ * - `'follow'`（默认）：跟随策略要的（钉底、批次补位、放页补偿）。落点由策略定，写完就完事。
+ * - `'jump'`：读者主动跳转（点刻度）。**落点就是读者的意图**——视口写完要把落点交给跟随
+ *   策略重算意图（见 {@link ViewportReader.jumped}），而不是让策略把位置钉回底部。
+ */
+export type ScrollIntent = 'follow' | 'jump'
+
+/**
  * 一条可以被「按住」的行：元素本身，加上它此刻相对滚动容器顶端的位置。
  *
  * 为什么记「相对容器顶端」而不是记 `scrollTop`：插入 / 收起的高度只能这么量——
  * 行被推下去多少，等于它上方长（缩）了多少。
+ *
+ * 为什么还要记**身份**（`seat` / `round` + `index`）：锚点是「读者正在看的那一行」，
+ * 不是「那个 DOM 节点」。React 重挂（历史回填、设置到位、座位重新分组）会把节点换掉：
+ * 旧元素脱开文档、同身份的新元素接在原位。只记元素引用的话，重挂之后 `land()` 每帧都
+ * 读到 `isConnected === false`，整批一次都不补 `scrollTop`，屏幕上那一行就跟着收起的高度
+ * 往上飞（2026-11-12 复现：段高 331px、漂移 166px）。所以元素之外再记一份身份，脱开之后
+ * 按它把同一行找回来（见 {@link ChatViewport.captureAnchor} 与 `land()`）。
  */
 export interface ScrollAnchor {
   readonly element: HTMLElement
   /** 相对滚动容器顶端的位置（px）。 */
   readonly top: number
+  /** 座位键（`data-round-seat`）：锚在「一轮」上时用它找回同一个座位。 */
+  readonly seat?: string | null
+  /** 这一行属于哪一轮（`data-round`）：锚在「一行」上时用它 + {@link ScrollAnchor.index} 找回。 */
+  readonly round?: string | null
+  /** 同一轮里的行序号（按 `.entry-row[data-round]` 的文档序，0 基）。 */
+  readonly index?: number
 }
 
 /**
@@ -134,6 +175,16 @@ export interface ViewportReader {
    * 视口在批次里每帧都写，不回报的话下一帧就会被当成「读者往上滚了」而松掉跟随。
    */
   wrote(top: number): void
+  /**
+   * 一次**主动跳转**（读者点刻度）落定了，`landed` 是写完之后的实际位置。
+   *
+   * 为什么不和 `wrote` 并成一条：`wrote` 每帧都来（补间逐帧写），语义是「这个位置是我
+   * 写的」；这一条整次跳转只来一次，语义是「这次落点由读者指定」。跟随策略收到它之后按
+   * 参考实现（`use-scroll-follow.ts` 的 `jump()`：`following = nearBottom(landed)`）重算
+   * 意图——落点不在底就脱离跟随，在底就保持跟随——并且**不许钉底**：钉底会把读者刚跳上去
+   * 的位置拽回 floor。
+   */
+  jumped?(landed: number): void
 }
 
 /** 一批会动的盒子（阶段 ④ 传逐行的动画盒子）。 */
@@ -203,11 +254,15 @@ export interface ChatViewport {
    */
   floorSlack(): number
   /**
-   * 此刻算不算「在底」：内容真的能滚（`floor() > 0`）且离底 ≤ `slack` 像素。
+   * 此刻算不算「在底」：离底 ≤ `slack` 像素。
    *
-   * 为什么把「能滚」也算进来：内容比可视区短时 `floor()` 是 0，那一刻谁都在底；
-   * 拿它去判「读者是不是在看最新一轮」会把短会话判成永远贴底。刻度条与跟随共用这一条，
-   * 于是全仓对「到底」只有一个答案。
+   * 判据就是 `floorSlack() <= slack`，短会话也一样：内容比可视区短时 `floor()` 是 0、
+   * `floorSlack()` 也是 0，于是**短会话与长会话停在 floor 上给的是同一个答案**。
+   *
+   * 为什么必须一致（2026-11-12 改）：跟随策略拿它决定「读者松手后要不要重新跟上」
+   * （`settle`）与「主动跳转的落点算不算底」（`jumped`）。短会话若判「不在底」，
+   * 那颗「回到底部」的胶囊会在一个本来就滚不动的会话里亮着，而且落定之后再也不会
+   * 恢复跟随。刻度条与跟随共用这一条，于是全仓对「到底」只有一个答案。
    *
    * @param slack 容差（px），默认 0：只认精确落在 floor 上
    */
@@ -223,17 +278,40 @@ export interface ChatViewport {
    * `'instant'` 直接写 `scrollTop`；`'smooth'` 由本文件逐帧写（不用浏览器的
    * `scrollTo({ behavior: 'smooth' })`，理由见实现）。返回写完之后的实际 `scrollTop`；
    * `'smooth'` 返回的是起点（动画还没跑），最终值在帧回调里落定。
+   *
+   * @param intent 这次写是谁要的（默认 `'follow'`）。`'jump'` 表示读者主动跳转：
+   *   写完（`'smooth'` 是补间最后一帧）会把落点经 {@link ViewportReader.jumped} 交回
+   *   跟随策略重算意图，落点不在底就脱离跟随。
    */
-  scrollToOffset(top: number, behavior?: ScrollBehaviorKind): number
+  scrollToOffset(top: number, behavior?: ScrollBehaviorKind, intent?: ScrollIntent): number
+  /** 有没有一条逐帧补间正在跑（`'smooth'` 那一档）。 */
+  motionActive(): boolean
+  /**
+   * 立刻停掉逐帧补间、停在当前位置。
+   *
+   * 读者手势（滚轮 / 拖动 / 触摸）到了就调它：补间每帧写一次 `scrollTop`，手滚出来的
+   * 位置下一帧就被盖回去，手感是「滚不动」。
+   */
+  cancelMotion(): void
   /** 滚动区此刻是藏起来的（高度 0）：这一态下所有测量都不可信。 */
   hidden(): boolean
   /** 钉到底（写 floor），返回写完之后实际的 `scrollTop`。 */
   pin(): number
   /** 写占位高度；0 就清掉内联样式（口径与没有占位时一致）。 */
   setSpacer(height: number): void
-  /** 记一个锚点（放页前用）：第一个画出来的座位距容器顶端的位置。 */
+  /**
+   * 记一个锚点（放页前用）：第一个画出来的座位距容器顶端的位置。
+   *
+   * 除了元素引用，还记下这座的稳定身份（`data-round-seat`）：重挂之后按身份找回同一个
+   * 座位，补位置这件事就不会因为换了节点而失效。
+   */
   captureAnchor(): ScrollAnchor | null
-  /** 把锚点拉回它原来的位置；返回实际补了多少像素。 */
+  /**
+   * 把锚点拉回它原来的位置；返回实际补了多少像素。
+   *
+   * 元素若在这期间被重挂（不再是同一个节点），先按身份找回同一个座位 / 同一行；
+   * 找不回才是降级：原地不动，并把次数写进 `.chat` 的 `data-fold-anchor-fallback`。
+   */
   restoreAnchor(anchor: ScrollAnchor): number
   /** 开一批；没有滚动容器时返回 null。 */
   beginBatch(options?: BatchOptions): FoldBatch | null
@@ -257,6 +335,40 @@ export function readSlowMs(): number {
   const value = Number.parseFloat(raw)
   if (!Number.isFinite(value) || value <= 0) return 180
   return raw.endsWith('ms') ? value : value * 1000
+}
+
+/**
+ * 属性值放进选择器字面量前的兜底转义。
+ *
+ * 从 DOM 读回来的 `data-*` 是规范化字符串（这两个属性都是数字），这里只挡引号与反斜杠，
+ * 不引 `CSS.escape`——它在某些宿主里没有，而这条路径只需要「不生成坏选择器」。
+ */
+function attrValue(raw: string): string {
+  return raw.replace(/["\\]/g, '\\$&')
+}
+
+/**
+ * 记下一条锚点的稳定身份。
+ *
+ * 座位（`[data-round-seat]`）用座位键；普通行用「轮号 + 同轮行序号」——这两样在 React
+ * 重挂之后都不变，而元素引用会换人。找不到可靠身份时返回空对象：那时只能靠元素本身，
+ * 脱开之后就是降级（见 `ViewportOwner.noteAnchorFallback`）。
+ *
+ * @param element 锚点元素
+ * @param scroller 滚动容器（序号按它里面的文档序数）
+ */
+function identityOf(element: HTMLElement, scroller: HTMLElement): Pick<ScrollAnchor, 'seat' | 'round' | 'index'> {
+  const seat = element.getAttribute(SEAT_ATTR)
+  if (seat !== null) return { seat }
+  const round = element.getAttribute(ROUND_ATTR)
+  if (round === null) return {}
+  let index = -1
+  for (const row of scroller.querySelectorAll<HTMLElement>(ROW_SELECTOR)) {
+    if (row.getAttribute(ROUND_ATTR) !== round) continue
+    index += 1
+    if (row === element) return { round, index }
+  }
+  return { round }
 }
 
 /** 一批的帧时钟：rAF 每帧补一次，尺寸观察在布局之后补准的那一次。 */
@@ -348,9 +460,28 @@ class ViewportOwner implements ChatViewport {
   private spacerElement: HTMLElement | null = null
   private reader: ViewportReader | null = null
   private batch: Batch | null = null
-  /** `'smooth'` 那一档的逐帧补间；null = 没有在跑。 */
-  private tween: { readonly from: number; readonly to: number; readonly start: number; readonly duration: number } | null =
-    null
+  /**
+   * 「按身份也没找回锚点行」的次数（本视口实例内累计）。
+   *
+   * 只做观测：每发生一次就把它写到 `.chat` 的 `data-fold-anchor-fallback`，给
+   * `desktop/shots/_verify-fold-anchor-remount.mjs` 断言「重挂之后不该掉进降级」。
+   * 为什么挂成 DOM 属性：探针在页面外，读不到视口实例；这条属性不改布局，也不进批次的
+   * 那几只观察器（它们的 `attributeFilter` 只有 `hidden` / `style` / `class`）。
+   */
+  private anchorFallbacks = 0
+  /**
+   * `'smooth'` 那一档的逐帧补间；null = 没有在跑。
+   *
+   * `jump` 记着这次补间是「读者主动跳转」还是普通跟随写入：补间收尾时只有跳转要把落点
+   * 交回跟随策略（见 {@link ViewportReader.jumped}），跟随写入不用多这一道。
+   */
+  private tween: {
+    readonly from: number
+    readonly to: number
+    readonly start: number
+    readonly duration: number
+    readonly jump: boolean
+  } | null = null
   private tweenRaf = 0
 
   get scroller(): HTMLElement | null {
@@ -384,6 +515,9 @@ class ViewportOwner implements ChatViewport {
     this.detach()
     this.container = scroller
     this.spacerElement = scroller.querySelector<HTMLElement>(SPACER_SELECTOR)
+    // 降级计数跟着容器走：换容器（换会话 / 整屏重挂）就从 0 开始，别把上一屏的次数带过来。
+    this.anchorFallbacks = 0
+    delete scroller.dataset.foldAnchorFallback
   }
 
   detach(): void {
@@ -432,9 +566,9 @@ class ViewportOwner implements ChatViewport {
 
   atFloor(slack = 0): boolean {
     if (this.hidden()) return false
-    // `floor() === 0` = 内容还没撑满可视区（或占位把内容底垫到了 0）：这一态没有「底」
-    // 可分，判它贴底会让短会话永远高亮最后一轮（见接口注释）。
-    if (this.floor() <= 0) return false
+    // 短会话（`floor() === 0`）与长会话停在 floor 上是同一个结论：`floorSlack()` 都是 0。
+    // 以前这里多一道 `floor() > 0` 的守卫，于是同一个「到底」在短会话里给 false、在
+    // 长会话里给 true，跟随与刻度条各读各的（见接口注释）。
     return this.floorSlack() <= slack
   }
 
@@ -453,7 +587,7 @@ class ViewportOwner implements ChatViewport {
     return this.container?.getBoundingClientRect() ?? null
   }
 
-  scrollToOffset(top: number, behavior: ScrollBehaviorKind = 'instant'): number {
+  scrollToOffset(top: number, behavior: ScrollBehaviorKind = 'instant', intent: ScrollIntent = 'follow'): number {
     const scroller = this.container
     if (scroller === null) return 0
     // 藏起来的时候写 scrollTop 会被夹成 0（同 pin）：原样返回，不制造一条假的滚动。
@@ -461,14 +595,25 @@ class ViewportOwner implements ChatViewport {
     const target = Math.max(0, Math.min(this.floor(), top))
     // 新手势/新指令到了：先把上一条补间停掉，否则两个 rAF 会互相覆盖。
     this.stopTween()
-    if (behavior === 'instant') return this.write(target)
+    const jump = intent === 'jump'
+    if (behavior === 'instant') {
+      const landed = this.write(target)
+      // 主动跳转的落点当场交回策略：位置就是读者的意图（参考实现的 `jump()` 同义）。
+      if (jump) this.reader?.jumped?.(landed)
+      return landed
+    }
     const from = scroller.scrollTop
-    if (Math.abs(target - from) <= MOVE_EPS) return from
+    if (Math.abs(target - from) <= MOVE_EPS) {
+      // 已经在落点上（点的就是当前这一轮）：没有补间要跑，但这仍是一次主动跳转的落定，
+      // 跟随意图照样要按落点重算，否则状态会停在跳转之前的那份意图上。
+      if (jump) this.reader?.jumped?.(from)
+      return from
+    }
     // 为什么不用 `scroller.scrollTo({ behavior: 'smooth' })`：中间那几十帧是浏览器在写
     // `scrollTop`，本文件与 `follow.ts` 都收不到「这是我们自己写的」的回报，follow 的
     // 「只认自己的写」会把它们当成读者动手，下一帧就钉回底部（跳轮当场被撤销）。
     // 逐帧写就还是同一条写入通道，每帧都经 `write()` 回报，语义与瞬移完全一致。
-    this.tween = { from, to: target, start: performance.now(), duration: readSlowMs() }
+    this.tween = { from, to: target, start: performance.now(), duration: readSlowMs(), jump }
     this.tweenRaf = requestAnimationFrame(this.stepTween)
     return from
   }
@@ -480,9 +625,12 @@ class ViewportOwner implements ChatViewport {
     const progress = Math.min(1, (performance.now() - tween.start) / tween.duration)
     // ease-out：起手快、收尾稳，与折叠那套 CSS 过渡的观感一致。
     const eased = 1 - Math.pow(1 - progress, 3)
-    this.write(tween.from + (tween.to - tween.from) * eased)
+    // 标成 `'tween'`：这一帧就是补间自己写的，不许它把自己停掉（见 `write`）。
+    const landed = this.write(tween.from + (tween.to - tween.from) * eased, 'tween')
     if (progress >= 1) {
       this.tween = null
+      // 补间收尾 = 落点到了：主动跳转要把落点交回策略，由它按位置重算跟随意图。
+      if (tween.jump) this.reader?.jumped?.(landed)
       return
     }
     this.tweenRaf = requestAnimationFrame(this.stepTween)
@@ -492,6 +640,14 @@ class ViewportOwner implements ChatViewport {
     if (this.tweenRaf !== 0) cancelAnimationFrame(this.tweenRaf)
     this.tweenRaf = 0
     this.tween = null
+  }
+
+  motionActive(): boolean {
+    return this.tween !== null
+  }
+
+  cancelMotion(): void {
+    this.stopTween()
   }
 
   hidden(): boolean {
@@ -518,17 +674,70 @@ class ViewportOwner implements ChatViewport {
     if (scroller === null) return null
     const element = scroller.querySelector<HTMLElement>('[data-round-seat]')
     if (element === null) return null
-    return { element, top: element.getBoundingClientRect().top - scroller.getBoundingClientRect().top }
+    return {
+      element,
+      top: element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+      ...identityOf(element, scroller),
+    }
   }
 
-  restoreAnchor(anchor: ScrollAnchor): number {
+  restoreAnchor(pending: ScrollAnchor): number {
     const scroller = this.container
-    if (scroller === null || !anchor.element.isConnected) return 0
+    if (scroller === null) return 0
+    // 元素若在这一拍里被重挂，先按身份换回同一行的新节点；换不回来才是降级（原地不动）。
+    const anchor = this.resolveAnchor(pending)
+    if (anchor === null || !anchor.element.isConnected) {
+      this.noteAnchorFallback()
+      return 0
+    }
     const before = scroller.scrollTop
     const top = anchor.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top
     if (Math.abs(top - anchor.top) <= MOVE_EPS) return 0
     this.write(before + (top - anchor.top))
     return scroller.scrollTop - before
+  }
+
+  /**
+   * 把锚点解析成「此刻 DOM 里的那一个元素」：这是「按行、不按节点」的落点规矩。
+   *
+   * 顺序：
+   *   1. 元素还挂在文档里 → 原样返回（99% 的帧走这条，一次 `isConnected` 而已）；
+   *   2. 脱开了但记着座位键 → 按 `data-round-seat` 找回同一个座位；
+   *   3. 脱开了、是普通行 → 按「`data-round` + 同轮行序号」找回同一行；
+   *   4. 都没有 → null，调用方按降级处理（记计数 + 几何兜底）。
+   *
+   * 为什么这一条成立：React 重挂换的是 DOM 节点，`data-round-seat` / `data-round` 与
+   * 「同一轮里的第几行」都是**内容**的身份，重挂之后原样还在（见 `fold-seats.tsx` 的
+   * `data-round` 与 `render.tsx` 的 `data-round={seat.round}`）。
+   *
+   * @returns 换过元素的新锚点（`top` 仍是批次开始时的那个）；找不回给 null
+   */
+  private resolveAnchor(anchor: ScrollAnchor): ScrollAnchor | null {
+    if (anchor.element.isConnected) return anchor
+    const scroller = this.container
+    if (scroller === null) return null
+    const seat = anchor.seat
+    if (seat !== undefined && seat !== null) {
+      const element = scroller.querySelector<HTMLElement>(`[${SEAT_ATTR}="${attrValue(seat)}"]`)
+      return element === null ? null : { ...anchor, element }
+    }
+    const round = anchor.round
+    const index = anchor.index
+    if (round === undefined || round === null || index === undefined) return null
+    let seen = -1
+    for (const row of scroller.querySelectorAll<HTMLElement>(ROW_SELECTOR)) {
+      if (row.getAttribute(ROUND_ATTR) !== round) continue
+      seen += 1
+      if (seen === index) return { ...anchor, element: row }
+    }
+    return null
+  }
+
+  /** 记一次「按身份也没找回锚点」的降级；挂到 `.chat` 上供探针读。 */
+  private noteAnchorFallback(): void {
+    this.anchorFallbacks += 1
+    const scroller = this.container
+    if (scroller !== null) scroller.dataset.foldAnchorFallback = String(this.anchorFallbacks)
   }
 
   bindReader(reader: ViewportReader | null): () => void {
@@ -584,13 +793,27 @@ class ViewportOwner implements ChatViewport {
       return
     }
     const anchor = batch.anchor
-    if (anchor === null || !anchor.element.isConnected) return
-    const rect = anchor.element.getBoundingClientRect()
+    if (anchor === null) return
+    // 锚点每帧**按身份重新解析**，而不是只用批次开始时那个元素引用：React 重挂（历史回填、
+    // 设置到位、座位重新分组）会把节点换掉，只认引用的话这一帧起就再也补不动了
+    // （2026-11-12 复现：段高 331px 收掉、锚点行漂了 166px）。
+    const row = this.resolveAnchor(anchor)
+    if (row === null) {
+      // 按身份也找不回这一行（那一轮被删了、或座位整体重排到别的轮号）：这一帧没有可信的
+      // 尺子。记一次降级给探针，并且只做几何兜底——内容缩到当前位置之下时把 `scrollTop`
+      // 夹回 floor，至少不让人停在空白上（浏览器本来也会在收缩后自己夹，这里只是写明白）。
+      this.noteAnchorFallback()
+      const floor = this.floor()
+      if (scroller.scrollTop > floor + MOVE_EPS) this.write(floor)
+      return
+    }
+    const rect = row.element.getBoundingClientRect()
     // 锚点行这一帧被藏起来了（收起末尾挂了 hidden）：剩下几帧已经没有可信的尺子，
     // 停手比拿一个 0 高度的矩形去补要好——乱补一下就是一次真的跳动。
     if (rect.height === 0) return
     const top = rect.top - scroller.getBoundingClientRect().top
-    const drift = top - anchor.top
+    // `row.top` 与 `anchor.top` 是同一个值（`resolveAnchor` 只换元素，不换位置基准）。
+    const drift = top - row.top
     if (Math.abs(drift) <= MOVE_EPS) return
     this.write(scroller.scrollTop + drift)
   }
@@ -616,15 +839,26 @@ class ViewportOwner implements ChatViewport {
       const rect = row.getBoundingClientRect()
       if (rect.height === 0 || rect.bottom <= view.top) continue
       if (rect.top >= view.bottom) break
-      const anchor: ScrollAnchor = { element: row, top: rect.top - view.top }
+      const anchor: ScrollAnchor = {
+        element: row,
+        top: rect.top - view.top,
+        ...identityOf(row, scroller),
+      }
       if (!moving.some((scope) => scope.contains(row))) return anchor
       fallback ??= anchor
     }
     return fallback
   }
 
-  /** 唯一的 `scrollTop` 写入口：写完把实际值回报给跟随策略。 */
-  private write(target: number): number {
+  /**
+   * 唯一的 `scrollTop` 写入口：写完把实际值回报给跟随策略。
+   *
+   * `source` 只区分一件事：这一下是不是补间自己写的。**不是补间写的就当场把补间停掉**——
+   * `pin()`、批次的 `land()`、`restoreAnchor()`、瞬移跳转都走这里，它们的位置意图比正在
+   * 跑的补间新，留着补间就会让下一帧把这一下覆盖回去（审查 P2）。
+   */
+  private write(target: number, source: 'write' | 'tween' = 'write'): number {
+    if (source !== 'tween') this.stopTween()
     const scroller = this.container
     if (scroller === null) return 0
     scroller.scrollTop = target

@@ -157,10 +157,21 @@ console.log('[3] 测量与落点在 viewport，策略在 follow')
   )
   check('follow.ts 的钉底走 viewport.pin()', /written\.current = viewport\.pin\(\)/.test(followSrc))
   check('贴底判定仍是 24px', /FOLLOW_BOTTOM_PX = 24\b/.test(followSrc))
-  check(
-    '贴底判定比的是 floor() 到 scrollTop 的距离（没改成离 scrollHeight）',
-    /floor\(\) - viewport\.scrollTop\(\) <= FOLLOW_BOTTOM_PX/.test(followSrc),
-  )
+  // 「离底够近」的口径只有一份，在视口（`atFloor` → `floorSlack() <= slack`）。以前这里钉的是
+  // `floor() - viewport.scrollTop() <= FOLLOW_BOTTOM_PX` 这个表达式——那等于允许 follow 自己
+  // 再实现一遍门限，短会话（`floor() === 0`）与长会话就会给出两个答案。现在钉两件事：
+  //   1) follow 真的问视口（`viewport.atFloor(FOLLOW_BOTTOM_PX)`）；
+  //   2) follow 里**没有**旧的 `floor() - viewport.scrollTop()` 比较（回归就红）。
+  // 查的是去掉注释后的代码：迁移说明写在注释里，不算实现。
+  {
+    const followCode = withoutComments(followSrc)
+    check(
+      '贴底判定问视口（atFloor(FOLLOW_BOTTOM_PX)），不自己算 floor() - scrollTop',
+      /viewport\.atFloor\(FOLLOW_BOTTOM_PX\)/.test(followCode)
+        && !followCode.includes('floor() - viewport.scrollTop()'),
+      'follow.ts 里要么没问视口，要么还留着自己算 floor() - scrollTop 的旧门限',
+    )
+  }
   // 第③阶段的硬口径：`getBoundingClientRect` 只许出现在视口里（follow 与 ui.tsx 都归零）。
   // 去掉注释再查：注释里提到这个方法名是说明，不是读数。
   check('follow.ts 里没有 getBoundingClientRect', !withoutComments(followSrc).includes('getBoundingClientRect'))
