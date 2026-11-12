@@ -68,13 +68,19 @@ export interface ToolContext {
 /**
  * 一次工具调用的呈现数据（可选）。
  *
- * 谁写：dsh 兼容层——它把 dsh 工具的 presentCall / presentResult / presentationMeta
- * 的产物塞进来（形状见 `core/dsh-compat/presentation.ts`）。
+ * 谁写：① dsh 兼容层——它把 dsh 工具的 presentCall / presentResult / presentationMeta
+ * 的产物塞进来（形状见 `core/dsh-compat/presentation.ts`）；② Pneuma 自己的工具也开始写
+ * （`web_search` 交 `card: 'web'` 的来源清单）。后者不是「借 dsh 的词汇」，而是这条槽在宿主里
+ * 已经通到底了：落盘、刷新会话后的重放、按 callId 缝回工具卡都是现成的。
  * 谁读：适配层把它缝到工具卡上（`ToolCallView.presentation`），界面按 `card` 标签
  * 挑渲染形态；没认出来的卡片不至于丢数据，界面回落通用工具卡。
  *
- * 为什么放在核心契约而不是兼容层：它是「工具能对界面说什么」的一个槽，Pneuma 自己
- * 的工具将来也可能往里写；词汇（六种卡片）属于 dsh 兼容层，槽本身不属于。
+ * 为什么放在核心契约而不是兼容层：它是「工具能对界面说什么」的一个槽；词汇（六种卡片）
+ * 属于 dsh 兼容层，槽本身不属于。
+ *
+ * **脱敏**：这个槽里的字符串不经过工具结果那条观察者链（`session-core/loop.ts` 的
+ * `guards.observe`），却照样落进会话日志——写它的工具要自己保证不带凭据
+ * （`web-search` 每个字段都过了 `core/secrets.ts` 的 `redact`）。
  */
 export interface ToolPresentation {
   /** 调用阶段的卡片（还没跑完时长什么样）。 */

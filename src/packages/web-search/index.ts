@@ -13,6 +13,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import { redact } from '@pneuma/runtime/core/secrets.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
@@ -230,13 +231,41 @@ export const webSearchPlugin: Plugin.Object = {
                 : await search(current.provider, query, current.maxResults, runCtx.signal)
             if (hits.length === 0) return `「${query}」没有搜到结果。换个更具体的关键词再试。`
             // 搜索结果里出现的「指令」不是命令：包一层围栏，模型只能把它当资料读。
-            return wrapUntrusted(
+            const text = wrapUntrusted(
               'web-search',
               `搜索「${query}」共 ${String(hits.length)} 条结果（提供方 ${current.provider}）：\n` +
                 hits
                   .map((hit, index) => `${String(index + 1)}. ${hit.title}\n   ${hit.url}\n   ${hit.snippet}`)
                   .join('\n'),
             )
+            return {
+              text,
+              // 界面要把同一批结果画成「来源清单」（可点标题 + 摘要），不能拿上面那段文本反解：
+              // 摘要自己可能跨行、也可能以数字编号开头，文本分不清哪一行是新结果。
+              // 这里按 dsh 的 `web` 卡词汇（`core/dsh-compat/presentation.ts:24`）把结构化元数据
+              // 交出去——宿主原样写进会话日志（`core/session.ts:990-1000`），刷新会话后重放
+              // （`adapter/transcript.ts` 的 `tool/presentation` 分支）还能还原同一张卡。
+              //
+              // 每个字段都过一遍 `redact`（`core/secrets.ts`，与工具结果走的是同一份脱敏）：
+              // 上面那段 `text` 会被宿主的观察者链扫一遍（`session-core/loop.ts:751` 的
+              // `guards.observe` → `approval` 的 `redact` 观察者），卡片数据**不经过**那条链，
+              // 而它同样会落进日志——搜索来的标题/摘要/URL 里一旦有密钥形状的串，不在这里
+              // 抹掉就等于从数据面开了个后门。
+              presentation: {
+                result: {
+                  card: 'web',
+                  kind: 'search',
+                  sources: hits.map((hit) => ({
+                    title: redact(hit.title),
+                    url: redact(hit.url),
+                    snippet: redact(hit.snippet),
+                  })),
+                  // 提供方都按 maxResults 截过（见本文件的 search()）：正好顶到上限时上游可能还有，
+                  // 界面据此说一句「只列了前 N 条」，少给了就什么都不说。
+                  truncated: hits.length >= current.maxResults,
+                },
+              },
+            }
           })(),
       }
       return ctx.effect(() => ctx.tools.register(tool), 'web-search: tools.register')

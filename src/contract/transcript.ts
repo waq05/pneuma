@@ -62,12 +62,18 @@ export interface ToolCallView {
    */
   change?: ChangedFileView
   /**
-   * 这次调用带给界面的**卡片数据**（dsh 插件才有）。
+   * 这次调用带给界面的**卡片数据**（dsh 的插件词汇，Pneuma 自己的工具也会写）。
    *
    * dsh 的工具用 presentCall / presentResult 声明怎么画自己的卡（六种：generic /
    * terminal / diff / search / read / web，字段见 `core/dsh-compat/presentation.ts`），
    * 兼容层把产物原样带进来。界面按 `card` 标签挑形态，**认不出来的回落通用工具卡**
-   * （数据不丢，只是没画成专用形态）。Pneuma 自己的工具没有这一项。
+   * （数据不丢，只是没画成专用形态）。
+   *
+   * Pneuma 自己的工具从 2026-11 起也往这里写：`web_search` 把结果按 `card: 'web'` 交出来
+   * （`packages/web-search/index.ts`），界面据此画来源清单。这么做的理由不是「借用 dsh 的
+   * 词汇」，而是这条槽**已经在宿主里跑通了**——落盘、刷新会话后的重放、按 `callId` 缝回工具卡
+   * 三件事都是现成的（`core/session.ts` 的 tool 记录、`adapter/transcript.ts` 的
+   * `tool/presentation` 分支）；另起一份字段就要把这三件事再实现一遍。
    */
   presentation?: ToolPresentationView
   /**
