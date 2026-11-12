@@ -333,9 +333,10 @@
 
 | 门禁 | 结果 |
 | --- | --- |
-| `node scripts/check-core.mjs` | **120/120 通过**，退出码 0（733.3s） |
-| `node scripts/package-tests.mjs` | 89 包 / 98 用例 / 602 断言 / 0 失败 |
+| `node scripts/check-core.mjs` | **120/120 通过**，退出码 0（727.0s） |
+| `node scripts/package-tests.mjs` | 89 包 / 98 用例 / 612 断言 / 0 失败 |
 | `plugin-model-check --strict` / `plugin-standard-check` / `plugin-compose-check` / `plugin-list-test` / `readme-test` / `plugin-locale-test` / `plugin-inventory-check` | 全部退出码 0；standard 报「0 条问题」 |
 | `node scripts/style-check.mjs` | 1319 个文件通过 |
 | `node scripts/sandbox-win-token-test.mjs` | 86 通过 / 0 失败 |
-| 各包内测试 | sandbox 3 个文件、checkpoint 12 用例、self-improve 23 条、skills 8 条、plugin-manager 12 条、desktop-dock 9 条，全过 |
+| `node scripts/mention-multi-root-test.mjs` / `ui-mention-roots-test.mjs` | 30 项 / 19 项通过 |
+| 各包内测试 | sandbox 3 个文件、checkpoint 16 用例、self-improve 23 条、skills 8 条、plugin-manager 12 条、desktop-dock 11 条，全过 |

@@ -8,11 +8,13 @@
 - 工具 `skill` 按名字取正文，返回 `<skill_content>`；名字必须来自目录（index.ts:350-373）。
 - 每个 user-invocable 的技能自动注册 `/技能名` 命令，正文随用户消息一起提交（index.ts:129-154、197-211）。
 - 停用的技能既不进目录，也不能通过工具加载（index.ts:107、369）。
+- 老化归档的档位也会被目录过滤：`stale`（14 天未命中）与 `archived`（30 天）不出现在 `<available_skills>` 里，但 `skill` 工具仍能按名字读到——用户可能就是要显式用那一条（见 `core/skills.ts` 的 `readSkillLifecycles` 与 `catalogEntries`）。
 - 插件注册的远端技能只展示、不能在本机启停（index.ts:8-9、265）。
 
 ## Known Limitations（已知限制）
 
 - 目录是缓存：切会话只在 cwd 变了时重扫，同工作区内换会话不重扫（index.ts:77-84、396-404）。
+- 档位信息来自 `~/.dsc/skills/.usage.json`，文件缺失或坏掉时一律按 `active` 处理（技能的发现不该被一份遥测文件拖住）。
 - 每条描述截到 500 字、命令说明截到 36 字；目录为空时整段不出现（index.ts:42-43、106-108、147）。
 - 内置命令名不能被技能占用（new/resume/compact/model/help/exit/effort/plugins/skills）（index.ts:45-46）。
 - 本地技能每次 `read` 都重扫目录，远端技能每次都重新拉取（index.ts:238-260）。
