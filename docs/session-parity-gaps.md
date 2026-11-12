@@ -337,7 +337,7 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 - **验收**：摄影一张带代码块的思考展开图；`ui-transcript-render-test` 加一条「思考正文走
   markdown」的形态钉。
 
-### S4 工具卡只有一张通用卡（部分对齐：命令类 + 读文件 / 检索 / 待办共四张已换专用卡）
+### S4 工具卡只有一张通用卡（部分对齐：命令类 + 读文件 / 检索 / 待办 / 网页 / 图片共六张已换专用卡）
 
 > **第一批（2026-11-10）**：`bash` / `shell` / `pwsh` 三种名字（且参数里真有 `command` 字段）
 > 换成一张终端块——`$ 命令` / 输出（限高 `min(240px,30vh)` 内滚）/ 退出码徽章 / 耗时。
@@ -364,17 +364,51 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 > 重新展开可见；**切到轨迹页后三张卡一个都不出现**、原始参数 JSON 与结果原文都在；悬停头行时
 > 「在轨迹中查看」药丸亮、三枚读数淡出）。截图 `_tool-views.png` / `_tool-views-todo.png`。
 >
-> **仍欠的六张，逐条给理由**（不是「没来得及」，是「现在做会做出一张假卡」）：
-> - `web`：本仓 `web_search` / `webfetch` 的结果是纯文本 + URL，画成带标题/站点/摘要的卡
->   需要宿主先给结构化元数据——**要改数据面**；
+> **第三批（2026-11-12）**：`web`（`web_search` / `webfetch`）与 `read_image` 两张卡落地。
+>
+> - **web 卡**：头行一枚读数（`3 条结果` / `HTTP 200`），展开体是来源清单——可点标题 + 两行摘要 +
+>   截断说明；`http(s)` 之外（空串、`javascript:`）**不画成链接**（口径同 `markdown.tsx:561-570`）。
+>   **数据面这一次动了**（也就是上一版说的「要改数据面」）：`packages/web-search/index.ts` 现在
+>   返回 `{ text, presentation }`，卡片数据按 dsh 的 `web` 卡词汇放进 `presentation.result`
+>   （`card: 'web'` + `sources[]` + `truncated`）。为什么不是界面去反解那段文本：摘要自己会换行、
+>   也可能以 `2. ` 开头，文本分不清哪一行是新结果。落盘与重放走的是**早就存在的一条链**
+>   （`core/session.ts:990-1000` 写进 tool 记录 → `session.presentations` → `adapter` 的
+>   `tool/presentation` 分支），由 `scripts/ui-dsh-card-replay-test.mjs` 钉着；老会话没有卡片数据时
+>   才回头严格解析宿主那段文本（`web-model.ts` 的 `webTextResultOf`，认不出就摊原文，不留空壳）。
+>   判据与实现在 `tool-card/web-model.ts` + `web-view.tsx`，装配在 `factory.tsx`（判据是
+>   「名字 + 参数字段」**或**「卡片数据按 `card: 'web'`」+ `variant === 'chat'`）。
+>   **文本兜底要处理「界面侧文本被截断」**（评审揪出来的）：`adapter/transcript.ts:49` 的
+>   `RESULT_TEXT_LIMIT = 1500` 会把结果截到 1500 字再补一个省略号，切点可能落在编号块的任何
+>   位置。现在的判法是「长度正好 1501 且以省略号收尾」才算被截，命中时**丢掉末尾那个不完整的
+>   块、留在前面已收好的来源，并把 `truncated` 置真**——半截 `https://a.exa…` 绝不画成可点
+>   链接。卡片数据里的每个外部字段都过了一遍 `core/secrets.ts` 的 `redact`：这个槽不经过工具
+>   结果那条观察者链，却同样落进会话日志。
+> - **read_image 卡**：头行 `PNG · 6.2 KB` + 与 read 同一枚可点路径（`fileTargetOf` 的白名单加了
+>   这个名字，预览页签本来就画得了图），展开体是**这张图本身** + `64×48`。
+>   **上一版说「要改数据面（ToolCallView 缺附件列表）」——查完发现不必改**：`read_image` 的参数里
+>   永远有路径，而 `dock` 的 `fs-read`（`packages/desktop-dock/index.ts:467-489`，图片 ≤5MB）
+>   本来就把图片按 base64 交给界面（markdown 的贴图、预览页签、pdf 视图走的都是它）。卡片展开时
+>   现读一次，比把 8MB 的 base64 塞进每次会话快照划算得多（`image-tool.ts:30-31` 那条 6MB 红线
+>   正是按 base64 膨胀定的）。代价写在卡片文件头：盘上那张图后来被删/改了，卡里看到的就是「读不到」。
+>   判据与实现在 `tool-card/read-image-model.ts` + `read-image-view.tsx`。
+> - 验收：`scripts/ui-tool-web-test.mjs` 127 项（模型与 `wrapUntrusted` 都是真代码，含三种截断
+>   落法与「摘要自己以省略号结尾」的反面对照）、
+>   `scripts/ui-tool-read-image-test.mjs` 48 项（回执 → 四种状态的判法也跑真代码）、
+>   `desktop/shots/_verify-web-image-cards.mjs` 38 项真机
+>   （web 卡走**重放**——真搜索要 API key 与外网；图片卡走**真跑**，假模型喊 `read_image`，宿主真读盘，
+>   断言 `<img>` 的 `naturalWidth=64`、屏幕上有高度、点图开预览页签、两张卡标记不串、
+>   轨迹页两张都不出现且原文都在）。截图 `_web-image-cards.png` / `_web-image-cards-image.png`。
+>
+> **仍欠的四张，逐条给理由**（不是「没来得及」，是「现在做会做出一张假卡」）：
 > - `file-mutation`：本仓已有等价形态（write/edit 的「将做的改动 / 这次改动」diff 块 + 可点路径），
 >   再画一张是重复；
 > - `details`：参考实现那张是「一次调用的明细折叠面板」，本仓展开体已是输入字段表 + 输出首行 +
 >   「展开更多」，等价；
 > - `ask-question`：本仓问答有独立卡片（在 `ui-ask`），不走工具卡；
-> - `read-image`：`read_image` 的结果是「已加载图片…」文本 + 图片附件，而 `ToolCallView` 上
->   **没有附件列表字段**——硬做只能画个空框；
 > - `read-family`：它本身只是「read 与 read_image 共用的一段组装函数」，不是新视图。
+>
+> （`web` 与 `read-image` 已由第三批做掉：前者动了数据面，后者查完**不必**动数据面——
+> 上一版那条「`ToolCallView` 缺附件列表所以只能画空框」的判断是错的，见上。）
 
 - **现象**：`bash` 在 dsh 是一块终端（黑底、退出码徽章），本仓是「执行了命令 · 摘要」。
 - **不成立的那半句**：`read` 在 dsh 里是「可点文件路径 + 行号」，本仓**当时已经是**可点路径了
@@ -384,10 +418,10 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
   `read-image-row`、`GenericToolCard`（`packages/client/ui-tool/src/client/tool/toolviews/`，
   原文漏了 `read-row.tsx`，这里补上）。
 - **本仓**：通用卡是 `ToolCardView`（`tool-card/factory.tsx`）+ 工具名匹配表 + 参数表
-  `toolArgFields` + diff + 结果尾巴；上面四张专用卡在它前面拦一道。
-- **代价**：第一批 bash 是「中」，第二批三张也是「中」。剩下六张里 `web` 与 `read-image`
-  要**先改数据面**（结构化元数据 / 附件列表），另四张是重复或已有等价形态——所以不是排期问题，
-  是值不值得动数据面的问题。
+  `toolArgFields` + diff + 结果尾巴；上面六张专用卡在它前面拦一道。
+- **代价**：第一批 bash 是「中」，第二批三张也是「中」，第三批两张还是「中」（web 多一处数据面
+  改动：一个插件多返回一个字段；read-image 一处没改）。剩下四张是重复或已有等价形态——
+  所以不是排期问题，是值不值得再养一套画法的问题。
 - **验收**：每张卡一条隔离截图 + 一条断言；与 dsh 对应截图并排放 `docs/` 里。
 
 ### S5 滚动是「CSS + 钉底」，dsh 是「视口协调器」（已对齐 2026-11-11：一个 owner）
