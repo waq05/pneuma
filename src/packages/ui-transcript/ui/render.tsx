@@ -52,8 +52,12 @@ interface MiddleBlock {
  * 这里再写一遍 case 会让它切到本函数上，四节点槽那几条断言当场误红。
  */
 const ROW_FOLD_KEY_KINDS: ReadonlySet<string> = new Set([
-  'thinking', 'tool', 'system-prompt', 'context-injection',
+  'thinking', 'tool',
 ])
+// 为什么只有这两类：这张表是给「整轮收起时抹掉这一行自己的展开存档」用的（见下面 `rowFoldKey`
+// 与 `RowSeat` 的 `onHidden`）。系统提示卡与上下文注入卡虽然也有展开体，但它们属于
+// `TURN_INDEPENDENT`（`round-fold.tsx:80`）——整轮收起永远不藏它们，`onHidden` 也就永远
+// 不会为它们触发，把这两类写进来只会让人以为它们会被藏。
 
 /**
  * 这一行自己的折叠存档键（没有展开体的行返回 undefined）。

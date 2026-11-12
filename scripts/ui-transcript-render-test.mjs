@@ -225,20 +225,33 @@ console.log('[3b] 行的稳定身份（2026-11-10：直播 → 定稿不换键�
   )
   check('工具卡的存档键不再用 row.at', !renderSrc.includes('${sessionId ?? \'\'}:${String(row.at)}') && renderSrc.includes('const storeKey = `${sessionId ?? \'\'}:${row.stable}`'))
   check('阶段组的键由首行稳定身份派生', renderSrc.includes('stepGroupFoldKey(sessionId, first?.stable') && foldState.includes('export function stepGroupFoldKey(sessionId: string | null, headStable: string)'))
-  // 2026-11-11 第二次修：整轮收起时**不再由父级统一复位**里层的展开态（旧结构里那段
-  // 「从展开变收起就按轮前缀清存档」的副作用删了：行级键根本不存在、组的键也盖不全，
-  // 而且它不看焦点、不看这一层是不是真的在藏）。现在谁被藏谁自己关，判据是
-  // 「已经挂上 hidden 或正在收起」（hiddenOrCollapsing），不是「应该收起」——
-  // 焦点保护放行的那一层因此不会被跟着关掉。
+  // 2026-11-12 第三次修：阶段组那段「从展开变收起」的布局效果删了——它永远只会空转
+  // （等到真提交时 openRef 已被 turnHidden 置假）。现在关组只有 turnHidden 一处入口，
+  // 由 useSearchableHidden 在 hidden **真的挂上**那一刻调用，有无 FoldScope 都一样。
   check(
-    '整轮收起不靠父级复位（里层谁被藏谁自己关，判据 hiddenOrCollapsing）',
+    '整轮收起不靠父级复位（关组只有 turnHidden 一处入口，hidden 真挂上才调）',
     // 父级那套整轮复位已经删干净；剩下的 clearPrefixes 只归「同一轮改完重答」那一条路。
     !uiSrc.includes('collapsedRounds')
       && !uiSrc.includes('foldMemory.reset(settled)')
       && (uiSrc.match(/foldMemory\.clearPrefixes\(/g) ?? []).length === 1
-      // 替代它的路真的在：座位在「整轮真的进入收起那一拍」自己关，判据从 scope 取。
-      && seatsSrc.includes('const entering = !wasTurnCollapsed.current && props.turnCollapsed')
-      && seatsSrc.includes('scope.hiddenOrCollapsing(element)'),
+      // 唯一入口：turnHidden 作为 useSearchableHidden 的第四参（有无 scope 都传）。
+      && seatsSrc.includes('useSearchableHidden(props.turnCollapsed, revealTurn, scope?.transition, turnHidden)')
+      // turnHidden 里依次关组、抹组内行存档、推复位代次（顺序不能反，见 fold-hook.ts 的复位分支）。
+      && /const turnHidden = useStableCallback\(\(\): void => \{[\s\S]{0,200}?closeGroup\(\)[\s\S]{0,300}?props\.onTurnHidden\(\)[\s\S]{0,300}?resetSource\.bump\(\)/.test(seatsSrc)
+      // onHidden 只在真挂上 hidden 的分支里调：夹在 setAttribute('hidden') 之后、
+      // removeAttribute('hidden') 之前。挪到分支外（展开那一拍也调）会被这条抓住。
+      && (() => {
+        const setAt = seatsSrc.indexOf("element.setAttribute('hidden', 'until-found')")
+        const hiddenAt = seatsSrc.indexOf('onHidden?.()', setAt)
+        const removeAt = seatsSrc.indexOf("element.removeAttribute('hidden')")
+        return setAt >= 0 && hiddenAt > setAt && (removeAt < 0 || hiddenAt < removeAt)
+      })()
+      // 关组只有一处调用：加回第二个入口（哪怕改名）就红。
+      && (seatsSrc.match(/closeGroup\(\)/g) ?? []).length === 1
+      // 旧判据连同那段布局效果一起删了；不能悄悄回到「按应该收起判」。
+      && !seatsSrc.includes('wasTurnCollapsed')
+      && !seatsSrc.includes('const entering')
+      && !/const hiding = [\s\S]{0,120}?props\.turnCollapsed/.test(seatsSrc),
   )
   check('运行中尾组一条也成组（对齐 dsh 首条即建组）', /if \(isRunning\(round\.index\)\) \{\s*flush\(false\)/.test(pgsSrc))
   // 注释里还留着「原来用 @starting-style」的解释，判据前先剥注释，免得自己打脸。

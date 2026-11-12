@@ -191,27 +191,40 @@ console.log('[3] 源码钉：渲染层确实按这两个返回值走')
   // 2026-11-10 改口径（对齐 dsh）：复位不挂在「轮收尾」上，只挂在「这一轮从展开变成收起」
   // 那一拍——参考实现在整轮被折叠隐藏、且隐藏动画进行中时才推进 disclosureReset
   // （ChatNodeSeat.tsx:122-131）。旧断言钉的 `reset(settled)` / `reopened` 已经删掉。
-  // 2026-11-11 第二次修：复位权从**父级**下放到**元素自己**。原来那段「整轮从展开变收起就
-  // 按轮前缀把这一轮的行与组存档清掉」的 effect 删了（行级键根本不存在、组的键也盖不全、
-  // 而且它不看焦点、不看这一层是不是真的在藏）。现在由阶段组座位在「整轮真的开始藏」那一拍
-  // 自己关，判据是「已经挂上 hidden 或正在收起」，不是「应该收起」。
+  // 2026-11-11 复位权从**父级**下放到**元素自己**。
+  // 2026-11-12 第三次修：阶段组那段「从展开变收起」的布局效果删了（它永远只会空转——
+  // 等到真提交时 `openRef` 已被 `turnHidden` 置假）。现在关组只有 `turnHidden` 一处入口，
+  // 由 `useSearchableHidden` 在 hidden **真的挂上**那一刻调，有无 FoldScope 都一样。
   check(
-    '整轮收起不靠父级复位：父级不再按前缀清存档，改由阶段组座位在「真的开始藏」那一拍自己关',
+    '整轮收起不靠父级复位：关组只有 turnHidden 一处入口，hidden 真挂上才调',
     // ① 父级那套复位没了；`clearPrefixes` 只剩「同一轮改完重答」那一条路（不是全文件禁用）。
     !ui.includes('collapsedRounds')
       && !ui.includes('clearPrefixes(entering)')
       && (ui.match(/foldMemory\.clearPrefixes\(/g) ?? []).length === 1
       && !/foldMemory\.reset\(settled\)/.test(ui)
-      // ② 替代它的路真的在：只在「展开 → 收起」那一拍、只在组开着时动手；判据取自 scope。
+      // ② 唯一入口：turnHidden 作为 useSearchableHidden 的第四参（有无 scope 都传），
+      //    里面依次关组、抹组内行存档、推复位代次。
+      && seats.includes('useSearchableHidden(props.turnCollapsed, revealTurn, scope?.transition, turnHidden)')
       && inOrder(
         seats,
-        'const entering = !wasTurnCollapsed.current && props.turnCollapsed',
-        'if (!entering || !props.open) return',
-        'scope.hiddenOrCollapsing(element)',
-        'if (!hiding) return',
-        'toggleRef.current()',
+        'const turnHidden = useStableCallback((): void => {',
+        'closeGroup()',
+        'props.onTurnHidden()',
+        'resetSource.bump()',
       )
-      // 判据不能退回「应该收起」：那样焦点保护放行的组也会被关掉。
+      // ③ onHidden 只在真挂上 hidden 的分支里调：夹在 setAttribute('hidden') 之后、
+      //    removeAttribute('hidden') 之前。挪到分支外（展开那一拍也调）会被这条抓住。
+      && (() => {
+        const setAt = seats.indexOf("element.setAttribute('hidden', 'until-found')")
+        const hiddenAt = seats.indexOf('onHidden?.()', setAt)
+        const removeAt = seats.indexOf("element.removeAttribute('hidden')")
+        return setAt >= 0 && hiddenAt > setAt && (removeAt < 0 || hiddenAt < removeAt)
+      })()
+      // ④ 关组只有一处调用：加回第二个入口（哪怕改名）就红。
+      && (seats.match(/closeGroup\(\)/g) ?? []).length === 1
+      // ⑤ 旧判据不能回流：那段布局效果连同 `wasTurnCollapsed` / `entering` / `hiding` 一起删了。
+      && !seats.includes('wasTurnCollapsed')
+      && !seats.includes('const entering')
       && !/const hiding = [\s\S]{0,120}?props\.turnCollapsed/.test(seats),
   )
   check(

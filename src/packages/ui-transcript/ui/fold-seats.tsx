@@ -72,11 +72,13 @@ export type HiddenTransition = (element: HTMLElement, hidden: boolean, commit: H
  * 一层「被隐藏」的归属：执行隐藏的那次操作 + 「此刻是不是真的在藏」的只读查询。
  *
  * 为什么两样都要：`transition` 决定怎么藏（第一次挂上来的元素同步藏、见过的走动画）；
- * `hiddenOrCollapsing` 给里层（阶段组）判「这一拍真的开始藏了没有」——不是「应该收起」，
- * 是「已经挂上或真的在跑」（对照 dsh 的 `flow-motion.ts:104-106`）。
+ * `hiddenOrCollapsing` 回答「此刻真的在藏或正在收起」（对照 dsh 的 `flow-motion.ts:104-106`），
+ * 由 `fold-motion.ts` 自己给重复的收起/放行判重用（`register` 那两条）。座位不再用它判
+ * 「这一拍该不该关组」——那条判据在 2026-11-12 删了，现在只有 `StepGroupSeat` 的
+ * `turnHidden` 一处入口。
  *
- * 注意它**不包括**「刚登记、还等开批」那一段：那一刻还没有任何东西在动，而已开始的
- * 放行动作要等下一次提交才生效——按它关里层会误伤（见 `StepGroupSeat` 的守卫注释）。
+ * 注意它**不包括**「刚登记、还等开批」那一段：那一刻还没有任何东西在动，按它判会误伤
+ * （`register` 因此把重复登记挡在外面）。
  */
 export interface FoldScope {
   readonly transition: HiddenTransition
@@ -432,12 +434,12 @@ export function StepGroupSeat(props: {
    * 整轮**真的**挂上 `hidden` 的那一拍：关掉这一组，并让调用方抹掉组里行的展开存档
    * （对照 dsh 的 `ChatGroupSeat.tsx:168-170`）。
    *
-   * 为什么挂在提交闭包里，而不是在下面那个布局效果里判「这一拍开始藏了没有」：
-   * 收起动画把元素先登记进 `waiting`、批次还要等一个微任务才开。那段窗口里
-   * `hiddenOrCollapsing` 已经为真，而**另一层**的放行（焦点在那一行里）要等下一次提交
-   * 才生效——在窗口里关组，就会出现「整轮最后是展开的、组却被关掉还写进了存档」
-   * （2026-11-11 报障）。提交闭包只在**这一层真的挂上 `hidden`** 时跑，放行时不跑，
-   * 时机与判据合一。
+   * 为什么挂在提交闭包里：收起动画把元素先登记进 `waiting`、批次还要等一个微任务才开。
+   * 早先这里有一段布局效果，按「这一拍开始藏了没有」判——那段窗口里 `hiddenOrCollapsing`
+   * 已经为真，而**另一层**的放行（焦点在那一行里）要等下一次提交才生效，在窗口里关组会
+   * 出现「整轮最后是展开的、组却被关掉还写进了存档」（2026-11-11 报障）。那段效果因为
+   * 永远只会空转已经删掉（见下面 `return` 前的说明）。提交闭包只在**这一层真的挂上
+   * `hidden`** 时跑，放行时不跑，时机与判据合一。
    */
   const turnHidden = useStableCallback((): void => {
     closeGroup()
@@ -460,28 +462,12 @@ export function StepGroupSeat(props: {
   const contentRef = useRef<HTMLDivElement | null>(null)
   // 组体自己的滚动与渐隐：跑动中的组贴底跟随，已结束的组从顶部开始（见 useProcessScroll）
   const edges = useProcessScroll(bodyRef, contentRef, props.open, !props.group.closed)
-  /**
-   * 「从展开变收起」那一拍的兜底：没有动画作用域的视图（前导行、团队页签）是同步提交的，
-   * 这一拍 `hidden` 已经挂上，关一次就够。
-   *
-   * 有作用域时不在这里关：这一刻元素大多只是进了 `waiting`、批次还没开
-   * （`hiddenOrCollapsing` 的说明见 `FoldScope`），真正关的时机在 `turnHidden` 里。
-   * 两个入口都走幂等的 {@link closeGroup}，先后到也只关一次。
-   */
-  const wasTurnCollapsed = useRef(props.turnCollapsed)
-  const toggleRef = useRef<() => void>(closeGroup)
-  toggleRef.current = closeGroup
-  useLayoutEffect(() => {
-    const entering = !wasTurnCollapsed.current && props.turnCollapsed
-    wasTurnCollapsed.current = props.turnCollapsed
-    if (!entering || !props.open) return
-    const element = seatRef.current
-    if (element === null) return
-    const hiding = scope === undefined ? element.hasAttribute('hidden') : scope.hiddenOrCollapsing(element)
-    if (!hiding) return
-    if (!openRef.current) return
-    toggleRef.current()
-  }, [props.turnCollapsed, props.open, scope, seatRef])
+  // 关组只有一处真入口：`turnHidden`（上面那个提交闭包）。它由 `useSearchableHidden` 在
+  // `hidden` **真的挂上**那一刻调用，同步提交与动画末帧都走它，有无 `FoldScope` 都一样。
+  // 所以这里不再做一次「从展开变收起」的布局效果兜底：那一刻元素大多只是进了 `waiting`、
+  // 批次还没开，判「开始藏了没有」判不准；而等到真的提交，`openRef` 已经被 `turnHidden`
+  // 置假，这段永远只会空转。留一段永远不执行的兜底，比没有更坏——下一个人会以为关组有
+  // 第二个入口，或者以为主路径坏了这里还能救。
   return (
     <FoldResetContext.Provider value={resetSource}>
       <div ref={seatRef} className="step-seat">
