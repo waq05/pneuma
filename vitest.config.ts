@@ -110,7 +110,10 @@ export default defineConfig({
           exclude: ['src/packages/*/ui/**'],
           environment: 'node',
           testTimeout: 60_000,
-          hookTimeout: 30_000,
+          // hook 60s 而不是 30s：每个文件都要起一次真内核（build 产物 + 插件装配），
+          // 机器被别的活占住时 30s 会直接超时。实测四个代理并行时 4 个文件撞了 30s 线，
+          // 单跑全过——那种红会把人引向错误方向。
+          hookTimeout: 60_000,
           // 只给网络与时序抖动一次机会，连续两次红仍是红——不拿重试掩盖真失败。
           retry: 1,
           // 线程池共享端口与全局状态，起真内核的用例会互相踩。
@@ -142,7 +145,10 @@ export default defineConfig({
           include: ['tests/snapshots/**/*.snapshot.ts'],
           environment: 'node',
           testTimeout: 60_000,
-          hookTimeout: 30_000,
+          // hook 60s 而不是 30s：每个文件都要起一次真内核（build 产物 + 插件装配），
+          // 机器被别的活占住时 30s 会直接超时。实测四个代理并行时 4 个文件撞了 30s 线，
+          // 单跑全过——那种红会把人引向错误方向。
+          hookTimeout: 60_000,
           retry: 1,
           // 录制回放要读写磁盘文件，线程间共享工作目录会互相覆盖。
           pool: 'forks',
