@@ -30,6 +30,8 @@
 | B13 | P2-I / `update-check` | 19 条桌面侧断言：主进程登记两个原生操作、上电排期、退出停定时器、下载地址只挑自己资产、装完启动安装程序 | 全在 `desktop/electron/main/`，进程内没有接缝，只能读源码文本。迁进 unit 时按「源码文本一律不搬」删了 | 要补得先有桌面主进程的测试通道（`desktop/` 目前只有 typecheck + shots）。P7 决定要不要做 |
 | B14 | P2-I / `skills-roots` | 界面：两类全局技能各有标签、三个作用域筛选项、按发现根分组、行内不再打来源徽章 | 要渲染技能页，not in-process | ui project（技能页渲染断言） |
 | B15 | P2-I / `readme` `release-notes` | README 的块形态/相对路径/锚点/数字口径；发版脚本的纯函数 | 被测对象是文档与 `scripts/*.mjs`，不是 `src/**` 产品代码 | 留 `scripts/`，P7 决定是否并进文档闸门（`check:style` 那类） |
+| B16 | P2-F / `permission-presets` | 6 条界面渲染断言：settings 与 ui-plugins 的 `derived` 出口、未识别值的兜底展示 | 要渲染设置页与插件页，集成层没有接缝 | ui project |
+| B17 | P2-F / `runtime-api` | 2 条代码形状断言：「纯函数零运行时依赖」「不在闭包里各写一份」 | 属实现写法，没有可观察行为；行为面已由真调 `runtime_api` 覆盖 | 不补（记录在案即可） |
 
 ## 三、永远留在 Node 侧（不是欠账，是设计）
 
