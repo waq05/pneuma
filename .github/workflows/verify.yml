@@ -6,7 +6,8 @@
 # 文件兜着，谁也没发现。
 #
 # 推门与夜跑分工：
-#   - 推 / PR：只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）；
+#   - 推 / PR：放「值得等」的门（装依赖 + 三处 typecheck + 排版，一分钟级；
+#     加上 2026-11-13 补的插件包级测试 job，量级是分钟，与其余 job 并行跑，不叠加等待）；
 #   - 夜跑 / 手动：两套探针（内核 + 界面）。内核那批每条都要 import 编译产物，所以先
 #     pnpm build；界面那批要读插件产物，所以先 pnpm -C ui-shell build。
 #
@@ -51,6 +52,10 @@ jobs:
         run: pnpm typecheck
       - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
         run: pnpm run check:style
+      # 单元与界面测试：78 条，四秒级（本地量 3.9s）。它只解析 src/**，不 import lib/，
+      # 所以不需要先 build，可以就放在这道一分钟级的门里。
+      - name: 单元与界面测试
+        run: pnpm test
 
   ui:
     name: 界面壳编译
@@ -69,6 +74,38 @@ jobs:
       - name: 编译界面壳
         working-directory: ui-shell
         run: pnpm typecheck
+
+  plugin:
+    name: 插件包与包级测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # 包级测试 import 的是 lib/ 下的编译结果（scripts/package-tests.mjs:96 会先
+      # 检查 lib/packages 在不在），不先 build 整片报「缺少构建产物」。
+      - name: 编译内核
+        run: pnpm build
+      # 为什么单独一个 job 而不是接在上面的 core 后面：core 是「装依赖 + 三处 typecheck
+      # + 排版」，一分钟级；这条要 build 再跑 119 个用例，本地量下来 72.7 秒。串进去会
+      # 让每个 PR 多等一段，拆成并行 job 则墙钟时间不变（GitHub 的 job 并发跑）。
+      # 为什么重要：这 119 条测试此前只活在 package.json 的 check:plugin 里，而
+      # check:plugin 在所有 workflow 里零引用——写好了却没人自动跑，等于没有。
+      #
+      # 为什么只跑这一条、不跑整串 check:plugin：那串里还有 plugin-inventory-check，
+      # 它要读 lib/ui/plugins/（界面单元），而那批产物得先 `pnpm -C ui-shell build`——
+      # 把界面壳整个编一遍的重活。为了 119 条测试让每个 PR 等界面壳构建不划算。
+      # 完整那串放进夜跑 probe job：那里本来就为了跑界面探针先构建了界面壳。
+      - name: 包级测试（119 条）
+        run: node scripts/package-tests.mjs
 
   desktop:
     name: 桌面端编译
@@ -120,3 +157,9 @@ jobs:
         run: pnpm -C ui-shell build
       - name: 界面自检
         run: pnpm run check:ui
+      # 完整那串插件门禁放这里而不是 PR 门：它包含 plugin-inventory-check，
+      # 需要上面刚刚构建出来的 lib/ui/plugins/。到这里两份产物都齐了，加这条不多花构建时间。
+      # 与 PR 门里那条 `node scripts/package-tests.mjs` 的关系：这里是全量（模型、包标准、
+      # 包级测试、清单快照、装配、热替换），PR 那边只挑「不依赖界面壳产物」的包级测试。
+      - name: 插件门禁全量（模型 / 包标准 / 包级测试 / 清单快照 / 装配 / 热替换）
+        run: pnpm run check:plugin
