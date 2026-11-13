@@ -1052,6 +1052,15 @@ export interface TeamService {
    * @returns 给用户看的一句话；名字不存在或还在干活，这句话就是明确的错误说明（不抛错）。
    */
   remove(name: string): Promise<string>
+  /**
+   * 收掉某个会话派出的**全部**队友。
+   *
+   * 为什么要有：superagent 的 worker 停了之后，它派出去的队友不该继续跑——那些
+   * 队友的父会话已经没人认领了。上游同一步是 `stopSubagents`
+   * （`executor/background.ts:141-153`），由执行器在工单结束时调。
+   * @returns 收掉的队友名；一个都没收就是空数组。单个收不掉不影响其它的。
+   */
+  stopBySession(sessionId: string): Promise<string[]>
 }
 
 /**

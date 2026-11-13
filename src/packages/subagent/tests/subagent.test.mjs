@@ -70,7 +70,8 @@ function fakeContext() {
       gate: () => ({ action: 'defer' }),
       observe: () => {},
     },
-    agent: {},
+    // 内核会话表：默认查不到任何会话（`subagent` 工具查不到父会话就报错，见 G6 那条用例）。
+    agent: { sessionById: () => undefined },
     get: () => undefined,
   }
   return { ctx, captured }
@@ -215,6 +216,29 @@ test('subagent 工具有 keep 开关，缺省留用，描述里讲清一次性�
   assert.ok(keep.description.includes('一次性'), 'keep 的描述要说出「一次性」三个字')
   assert.equal((tool.parameters.required ?? []).includes('keep'), false, 'keep 不填默认留用，不能必填')
   assert.ok(tool.description.includes('一次性'), '工具描述要讲清 keep=false 的后果')
+  passed += 1
+})
+
+// G6：superagent 的 worker 会话是执行器自己造的，不经常驻 agent 名册。它调这个工具时
+// 父会话必须查得到（内核 `ctx.agent.attach` 登记过）；查不到要报错，**不能**回落
+// `ctx.session.current()`——那会把队友派到用户正看着的会话名下，名册、额度、任务板
+// 全落到错的那条会话上。
+test('subagent 工具：父会话查不到就报错，查得到就按那条会话干活', async () => {
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')
+  const runCtx = {
+    cwd: process.cwd(),
+    sessionId: 'worker-t1',
+    sessionPath: join(home, 'nowhere.jsonl'),
+    signal: new AbortController().signal,
+  }
+  // 查不到：同步报错（不是 rejected promise），错误里点明「不在内核的会话表里」与怎么补。
+  assert.throws(() => tool.run({ action: 'list' }, runCtx), /不在内核的会话表里/)
+  // 查得到：按那条会话报名单（假会话没有队友，所以是空名单 + 角色表）。
+  ctx.agent.sessionById = (sessionId) => (sessionId === 'worker-t1' ? { meta: { id: 'worker-t1' } } : undefined)
+  const listed = await tool.run({ action: 'list' }, runCtx)
+  assert.match(listed, /本会话没有在队或收工的队友/, '查得到就按那条会话报名单')
   passed += 1
 })
 

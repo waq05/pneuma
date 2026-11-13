@@ -215,8 +215,8 @@ function makeTicket(seed, title) {
 }
 
 /** 假宿主：模型不会被调用，工具只要名字对得上，守卫一律 defer。 */
-function fakeHost(jobs) {
-  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'superagent_report', 'web_search']
+function fakeHost(jobs, team) {
+  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'subagent', 'superagent_report', 'web_search']
   const tools = names.map((name) => ({ name, description: name, inputSchema: {}, risk: 'read', run: async () => '' }))
   return {
     llm: {
@@ -229,6 +229,7 @@ function fakeHost(jobs) {
     tools: { list: () => tools },
     guards: { gate: async () => ({ action: 'defer' }), observe: (_name, text) => text },
     ...(jobs === undefined ? {} : { jobs }),
+    ...(team === undefined ? {} : { team }),
   }
 }
 
@@ -318,7 +319,7 @@ function setup(label, options = {}) {
   const queue = new MemoryEffects()
 
   const executor = new WorkerExecutor(null, {
-    host: fakeHost(options.jobs),
+    host: fakeHost(options.jobs, options.team),
     repo: join(root, 'repo'),
     maxWorkers: options.maxWorkers ?? 2,
     effects: queue,
@@ -1004,6 +1005,31 @@ test('停工单：它的后台作业一并终止', async () => {
 
     s.executor.stop(ticket, assignment, '用户停止')
     assert.deepEqual(jobs.killed, [jobId], '工单停了，作业不该继续跑')
+  } finally {
+    s.cleanup()
+  }
+})
+
+// G6：worker 派出去的队友在工单停下之后没人认领（父会话已停），所以要一并收掉。
+// 上游同一步是 `stopSubagents`（`executor/background.ts:141-153`）。
+test('停工单：它派出去的队友一并收掉', async () => {
+  const stopped = []
+  const team = {
+    stopBySession: async (sessionId) => {
+      stopped.push(sessionId)
+      return ['explorer-1']
+    },
+  }
+  const s = setup('team-stop', { team })
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c45', '停工单收队友')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+
+    s.executor.stop(ticket, assignment, '用户停止')
+    await tick()
+    assert.deepEqual(stopped, [agent.session.meta.id], '要按 worker 会话 id 收队友')
   } finally {
     s.cleanup()
   }

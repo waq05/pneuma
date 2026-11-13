@@ -73,7 +73,7 @@ import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardChain, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import type { PromptSectionView } from '@pneuma/runtime/contract.js'
-import type { CompactService, JobsService, LlmService, SandboxService, ToolService } from '@pneuma/runtime/services/types.js'
+import type { CompactService, JobsService, LlmService, SandboxService, TeamService, ToolService } from '@pneuma/runtime/services/types.js'
 import { MiniAgent, type AgentDeps } from '@pneuma/session-core/loop.js'
 import { writePermissions } from '@pneuma/permission-core/permission-scope.js'
 import { latestAssignment, runningAssignment, type Assignment, type Executor, type EngineForExecutor, type Ticket,
@@ -111,6 +111,13 @@ export interface WorkerHost {
    * 就按老行为「`turn/end` 一到就报交付」，作业继续跑、工单已结束。
    */
   jobs?: JobsService
+  /**
+   * 智能体团队（subagent 插件提供；插件关着时不存在）。
+   *
+   * 有它，工单结束时会收掉 worker 派出去的队友（backlog G6，对齐上游
+   * `stopSubagents`）；没有它就只收 worker 自己。
+   */
+  team?: Pick<TeamService, 'stopBySession'>
 }
 
 /** 无人值守审批档（设计文档 §7.2）：`deny` 保守、`allow` 自动化、`ask` 有人在旁边。 */
@@ -279,7 +286,7 @@ interface Worker {
 }
 
 /**
- * worker 的工具目录（设计文档 §6.2 的表格 + G7 的报告工具 + G3 的三件作业工具）。
+ * worker 的工具目录（设计文档 §6.2 的表格 + G7 的报告工具 + G3 的三件作业工具 + G6 的子智能体）。
  *
  * 报告工具必须在这里出现，否则 worker 拿到了工具名却调不到：`tools()` 是 worker 的
  * 全部目录，它按这张固定名单做减法，不看主会话的模式投影。
@@ -287,10 +294,16 @@ interface Worker {
  * 三件作业工具（`job_output` / `job_list` / `job_kill`）为什么必须有：`bash` 的
  * `run_in_background` 对 worker 同样开着，起了作业却读不到输出等于把长活锁死。
  * 上游的 `WORK_TOOLS` 也含这三个（`app/sessions.ts:61`）。
+ *
+ * `subagent` 为什么必须有：上游的 worker 能起子智能体并行干活（`app/sessions.ts:61-62`
+ * 的白名单含 `subagent`，preset 里也配了 `tool-subagent`）。DSC 的 `subagent` 工具
+ * 按调用方的 `sessionId` 认父会话，worker 会话登记过就能用（见 `attachSession`）。
+ * 它不在注册表里时 `tools()` 自动跳过，不会让 worker 拿到一个调不到的名字。
  */
 const WORKER_TOOL_NAMES: readonly string[] = [
   'bash', 'read', 'write', 'edit', 'glob', 'grep',
   'job_output', 'job_list', 'job_kill',
+  'subagent',
   'superagent_report',
 ]
 
@@ -637,6 +650,7 @@ function hostFromContext(ctx: Context): { host: WorkerHost | null; missing: stri
       sandbox: ctx.get('sandbox') as WorkerHost['sandbox'],
       compact: ctx.get('compact') as WorkerHost['compact'],
       jobs: ctx.get('jobs') as WorkerHost['jobs'],
+      team: ctx.get('team') as WorkerHost['team'],
     },
     missing,
   }
@@ -1478,6 +1492,14 @@ export class WorkerExecutor implements Executor {
     // 工单停了，它的后台作业也停：会话一关，这些进程就没人认领了。
     // 上游同一步在 `stopBackground` 里（`executor/background.ts:110-119` 的 `killJobs`）。
     this.killBackgroundJobs(worker)
+    // worker 派出去的队友也收：它们的父会话已经没人认领了（上游 `stopSubagents`，
+    // `executor/background.ts:141-153`）。不 await：收队友要取消它们的回合，
+    // 等它会把「停工单」这件事拖住，而工单的停止不该依赖队友收得多快。
+    void this.host?.team?.stopBySession(worker.session.meta.id).then((names) => {
+      if (names.length > 0) this.log(`[superagent] 工单 ${worker.ticketId} 停止，已收掉队友：${names.join('、')}`)
+    }).catch((error: unknown) => {
+      this.log(`[superagent] 收工单 ${worker.ticketId} 的队友失败：${describe(error)}`)
+    })
     const agent = worker.agent
     this.workers.delete(worker.ticketId)
     try {
