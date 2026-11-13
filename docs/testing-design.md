@@ -496,9 +496,17 @@ B（transcript 6）、C（llm/context/injection 12）。已判定**不归这一�
 
 ### P3 ui 层 + e2e + 覆盖率开关
 
-1. 79 条 `ui-*` 拆两类：纯模型（约 40 条）→ `*.spec.ts`；组件渲染（约 39 条）→ `*.spec.tsx`，现有源码文本断言逐步换成真渲染断言。
-2. 启用 `e2e` project，迁 11 条 `*-e2e.mjs`。
+**实测家底（2026-11-13）**：`scripts/ui-*-test.mjs` 是 **80 条、1.2 MB**（初稿写 79）。
+另有 7 条 `tui-*` 与 `session-picker-mouse`、`settings-test` 也归这一层（见 D26/D28）。
+
+1. 80 条 `ui-*` 拆三类：
+   - **纯模型 / 纯派生**（约 35 条）→ `src/packages/<id>/ui/**/*.spec.ts`，jsdom 即可，几十毫秒
+   - **组件渲染**（约 40 条）→ `*.spec.tsx`，jsdom + `@testing-library/react`
+   - **整屏帧 / ANSI / 鼠标序列**（约 5 条，含新归过来的 tui 那批）→ `tui` project（node 环境 + 假 stdin/stdout），逐帧比对
+2. 启用 `e2e` project，迁 11 条 `*-e2e.mjs`（要真 Chromium）。
 3. 覆盖率报告上线（只出报告，不设门）。
+4. **承接 P2 转来的缺口**：D29 的 `ui-plugins` 实验档渲染断言、D26 的
+   `session-picker-mouse` 与 `session-title-live`。
 
 ### P4 快照层（对齐 DSH 的 snapshots、codex 的 insta）
 
