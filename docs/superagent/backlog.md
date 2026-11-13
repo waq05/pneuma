@@ -55,8 +55,7 @@
 | 缺的后果 | 长任务（跑一整轮测试、装依赖）不能跨回合续跑；要么一轮跑完，要么超时被取消 |
 | 补的话动哪 | `adapters/executor.ts` 的 `launch()`：接 `MiniAgent` 的后台任务事件；`stop()` 加等待窗口 |
 | 验收 | 一张单在 worker 回合结束后仍有子进程在跑，且工单阶段显示「空闲」而不是「已完成」 |
-| 状态 | 未补 |
-| 值得补吗 | **按需**。取决于 DSC 的 `MiniAgent` 是否暴露后台任务；不暴露就只能等内核先支持 |
+| 状态 | **不做（依赖内核）**：DSC 的 `MiniAgent` 没有暴露后台任务事件，接不了；等内核先支持 |
 
 ### G4 执行器的 prepare 命令（工作区准备）
 
@@ -91,8 +90,7 @@
 | 缺的后果 | 大任务不能拆并行；只能串行做 |
 | 补的话动哪 | 依赖 DSC 内核是否提供子智能体能力（`src/packages/subagent` 的宿主服务）；本包只能接 |
 | 验收 | 一张单里 worker 起两个子任务并行跑，报告里能看到两个的结果 |
-| 状态 | 未补 |
-| 值得补吗 | **不建议单独做**。等内核的子智能体接口稳定再接 |
+| 状态 | **不做（依赖内核）**：等内核的子智能体接口稳定再接 |
 
 ### G7 报告语义补齐（`blocked` / `waiting` / `progress` / `dropped`）
 
@@ -211,8 +209,7 @@
 | 现状 | 执行会话时间线要手动点刷新才看得到新条目；只有工单阶段变了才自动重读整页 |
 | 补的话动哪 | 详情页加一个轮询（读 `superagentPeekSession`），或让泵推一次「转录变了」 |
 | 验收 | 详情页开着不动，worker 写新条目后几秒内自己出现 |
-| 状态 | 未补 |
-| 值得补吗 | **按需**。轮询会给宿主加读压力 |
+| 状态 | **已补**：详情页在 `working` / `idle` 时每 5 秒静默重读，已结束与等人档位不轮询；静默刷新不动 loading、不弹错误 |
 
 ### U3 补 `branch` / `changedFiles` 两个字段
 
@@ -267,7 +264,7 @@
 | 当前怎么样 | 只有设置页的几个字段，没有引导；用户不知道「repoPath 是必填、不填发不了单」 |
 | 补的话动哪 | 设置页加一段「第一次使用」引导，或 `apply` 时检测到 `repoPath` 为空就提示一次 |
 | 验收 | 全新装好、打开 Super Agent 页，能看到「先填仓库路径」的可点引导 |
-| 状态 | **已补（待统一验证）**：快照面在 `ready: true` 但 `repoPath` 为空时返回 `problem.code = 'repo_missing'`，界面在页签下方画一条黄底警告，不挡页面 |
+| 状态 | **已补**：快照面在 `ready: true` 但 `repoPath` 为空时返回 `problem.code = 'repo_missing'`，界面在页签下方画一条黄底警告，不挡页面 |
 | 值得补吗 | **建议补**。现在第一次用的人一定会卡在「发布后没反应」 |
 
 ### O2 机器校验（`deployment.ts` 的等价物）
@@ -278,7 +275,7 @@
 | 当前怎么样 | 缺依赖只在日志里说一句；`lark-cli` 缺了不报错 |
 | 补的话动哪 | 体检项里加一项「依赖」：`git --version`、`lark-cli --version` 各跑一次 |
 | 验收 | 体检页能看到「git 2.55 ✓ / lark-cli 未安装 ✗」 |
-| 状态 | **已补（待统一验证）**：新增体检项 `superagent/dependencies`，git 与 lark-cli 各跑一次 `--version`，缺失记 `warn` 不阻塞启动 |
+| 状态 | **已补**：新增体检项 `superagent/dependencies`，git 与 lark-cli 各跑一次 `--version`，缺失记 `warn` 不阻塞启动 |
 | 值得补吗 | **按需**。体检项已经有 orchestrator 与飞书两项，加依赖项成本低 |
 
 ### O3 构建与测试门禁
@@ -289,7 +286,7 @@
 | 缺什么 | 没有 Super Agent 专属的「全链路」门禁脚本（真模型、真 worktree 那种，现在只有 `scripts/_sa-resume-e2e.mjs`，下划线前缀不进测试电池） |
 | 补的话动哪 | 把 `_sa-resume-e2e.mjs` 改造成可入电池的探针，或新增一条「发单 → 改文件 → 提交」的假模型用例 |
 | 验收 | `node scripts/check-core.mjs superagent-e2e-test.mjs` exit 0 |
-| 状态 | **已补（待统一构建验证）**：`scripts/superagent-e2e-test.mjs`，假模型端点 + 真宿主 / 真工具 / 真 worktree / 真 git，24 条断言。落 `check-core`（文件名以 `-test.mjs` 结尾即自动发现），**不是** `package-tests`——那闸只扫包内 `tests/`，把起宿主的用例塞进去会破坏分工 |
+| 状态 | **已补**：`scripts/superagent-e2e-test.mjs`，假模型端点 + 真宿主 / 真工具 / 真 worktree / 真 git，24 条断言。落 `check-core`（文件名以 `-test.mjs` 结尾即自动发现），**不是** `package-tests`——那闸只扫包内 `tests/`，把起宿主的用例塞进去会破坏分工 |
 | 值得补吗 | **建议补**。现在「发一单真的改出东西」只有人工跑过，没有自动化回归 |
 
 ### O4 崩溃恢复的边角：出站消息那一批
