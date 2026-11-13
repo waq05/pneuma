@@ -251,12 +251,20 @@ interface Worker {
 }
 
 /**
- * 七件套：worker 只拿这些工具（设计文档 §6.2 的表格 + G7 的报告工具）。
+ * worker 的工具目录（设计文档 §6.2 的表格 + G7 的报告工具 + G3 的三件作业工具）。
  *
  * 报告工具必须在这里出现，否则 worker 拿到了工具名却调不到：`tools()` 是 worker 的
  * 全部目录，它按这张固定名单做减法，不看主会话的模式投影。
+ *
+ * 三件作业工具（`job_output` / `job_list` / `job_kill`）为什么必须有：`bash` 的
+ * `run_in_background` 对 worker 同样开着，起了作业却读不到输出等于把长活锁死。
+ * 上游的 `WORK_TOOLS` 也含这三个（`app/sessions.ts:61`）。
  */
-const WORKER_TOOL_NAMES: readonly string[] = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'superagent_report']
+const WORKER_TOOL_NAMES: readonly string[] = [
+  'bash', 'read', 'write', 'edit', 'glob', 'grep',
+  'job_output', 'job_list', 'job_kill',
+  'superagent_report',
+]
 
 /** 并发上限的缺省值：设计文档写 2；设置项可覆盖。 */
 const DEFAULT_MAX_WORKERS = 2
@@ -832,7 +840,7 @@ export class WorkerExecutor implements Executor {
   }
 
   /**
-   * 模型面前的那份工具目录：只挑七件套（设计文档 §6.2 的表格 + 报告工具）。
+   * 模型面前的那份工具目录：只挑 {@link WORKER_TOOL_NAMES} 里那几个。
    *
    * 用 `list()` 而不是 `visible()`：worker 没有「当前查看的会话」，模式白名单那套投影
    * 按会话算，拿不到它的档位；这里按固定名单做减法，结果与用户当前模式无关。
@@ -1049,7 +1057,7 @@ export class WorkerExecutor implements Executor {
    * | --- | --- |
    * | `route` | 设置里的 provider/model，缺省跟随当前选路 |
    * | `systemPrompt` | {@link buildWorkerPrompt} 的三段模板，环境事实直接写进去 |
-   * | `tools` | 七件套（`tools()`） |
+   * | `tools` | {@link WORKER_TOOL_NAMES}（`tools()`） |
    * | `guards` | 全局链 + 无人值守入口（{@link WorkerExecutor.guardsFor}） |
    * | `stream` | `ctx.llm.stream` |
    * | `emit` | 回合事件 → 引擎报告（{@link WorkerExecutor.emitOf}） |

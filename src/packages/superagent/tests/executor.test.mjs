@@ -216,7 +216,7 @@ function makeTicket(seed, title) {
 
 /** 假宿主：模型不会被调用，工具只要名字对得上，守卫一律 defer。 */
 function fakeHost() {
-  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'superagent_report', 'web_search']
+  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'superagent_report', 'web_search']
   const tools = names.map((name) => ({ name, description: name, inputSchema: {}, risk: 'read', run: async () => '' }))
   return {
     llm: {
@@ -750,6 +750,25 @@ function reportContextOf(agent) {
   }
 }
 
+test('worker 工具目录：有三件作业工具，不含主会话才有的 web_search', async () => {
+  const s = setup('worker-tools')
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c3e', '工具目录')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const names = s.executor.tools().map((entry) => entry.name)
+    // 三件作业工具必须有：bash 的 run_in_background 对 worker 同样开着，
+    // 起了作业却读不到输出等于把长活锁死（backlog G3）。
+    for (const name of ['job_output', 'job_list', 'job_kill']) {
+      assert.ok(names.includes(name), `worker 的工具目录里要有 ${name}`)
+    }
+    // 主会话能力不能漏进来：固定名单做减法，注册表里有什么都不影响结果。
+    assert.ok(!names.includes('web_search'), 'worker 不该拿到 web_search')
+  } finally {
+    s.cleanup()
+  }
+})
+
 test('报告工具报 blocked：回合正常结束时不再改写回 ready，问题带在报告上', async () => {
   const s = setup('report-blocked')
   try {
@@ -759,7 +778,7 @@ test('报告工具报 blocked：回合正常结束时不再改写回 ready，问
     const agent = s.agents[0]
     assert.ok(
       s.executor.tools().some((entry) => entry.name === 'superagent_report'),
-      'worker 的工具目录里要有报告工具（七件套）',
+      'worker 的工具目录里要有报告工具',
     )
     const tool = createReportTool({ report: (sessionId, report) => s.executor.reportBySession(sessionId, report) })
     const context = reportContextOf(agent)
