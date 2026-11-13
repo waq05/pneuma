@@ -11,15 +11,26 @@
  * - `watch` 里的 `enabled(ctx)` 与 `available(ctx)`（`feishu-loops.ts:35-66`）：前者是「设置里
  *   这个来源开着吗」，后者是「CLI 与机器人探活过了吗」。两者都是接线层的事；缺了它们，本模块
  *   被叫起来就会一直收，谁决定不启动由接线层负责（本来源默认关，见插件设置）。
- * - `refreshChatNames` / `chatNamesLoop`（`feishu-loops.ts:107-127`）：拉 `im +chat-list` 写
- *   群名。群名只用于界面展示（`ctx.threads.describe`），DSC 的话题没有那个展示面；缺了它
- *   只是界面上群显示成 `oc_...`，不影响事件、准入与派活。
+ * - `refreshChatNames` / `chatNamesLoop`（`feishu-loops.ts:107-127`）里的**群名**：它只用于
+ *   界面展示（`ctx.threads.describe`），DSC 的话题没有那个展示面，群显示成 `oc_...` 不影响
+ *   事件、准入与派活。同一条命令里的**群 id** 用了——见下面「新群发现」。
  * - `receive` 里给话题写 URL 与事实的那几行（`feishu-loops.ts:26-34`）：要 `ctx.threads.describe`。
  *   缺了它是界面上的话题没标题、没群名，同上。
  * - `pollThreads` 的「哪些订阅话题还在 14 天视野内」（上游 `sources/poll.ts:8-14` 的 `polled`）：
  *   判断要「这张话题上有没有活着的工单」，而本模块拿不到工单表。办法是把过滤放在注入的
  *   `threads.subscribed()` 里——接线层传进来的必须已经按视野筛过（与 `adapters/github/source.ts:22-26`
  *   同一条取舍）。缺了这层过滤，轮询会一直读早就结束的老话题，多花配额，但不会读错。
+ *
+ * **加了一段上游没有的：新群发现。** 上游只把 `im +chat-list` 当成「群名刷新」，补收的群
+ * 永远只有设置里点名的那些加已见过的私聊（`feishu-loops.ts:138-140`）；新群靠长连接实时
+ * 收到消息，进程不在线那段时间的历史就漏了。这里把同一条命令的 chat_id 也拿来用：
+ * 机器人开机之后才被拉进去的群并进补收名单（`discovered`，纯内存），日志写「发现新群
+ * oc_xxx，已开始补收」；群清单里不再出现的群（机器人被踢了）移出名单，免得每轮都报一次
+ * 232011。两条边界是刻意的：
+ *   - **只在开机后才发现的群才算新**。第一轮清单当基线，否则机器人已经在了几十个群时，
+ *     一启动就把几十个群的整段历史拉一遍，配额会在十分钟内打光。
+ *   - **不写回设置、也不落库**。写回设置等于替用户改配置；落库则会让机器人被移出很久之后
+ *     仍在补收一个已经不在的群。重启后重新发现一次，代价只有一次 `+chat-list`。
  *
  * **加了一段上游没有的：已投递名单。** 游标每次回退 5 秒（`cursorAt`，`sources/poll.ts:16`），
  * 为的是不漏掉迟到的事件；代价是下一轮会把重叠段再读一遍。上游靠核心 `Intake` 按 Trigger id
@@ -30,6 +41,7 @@
  *
  * @module dsc/packages/superagent/adapters/feishu/loops
  */
+import { z } from 'zod'
 import type { Trigger } from '../../core/model.js'
 import {
   lark, validItems, type CliConsume, type CliRun, type CliStream, type Tally,
@@ -48,6 +60,25 @@ const READY_TIMEOUT_MS = 45_000
 
 /** 单条事件的字节上限；超过就丢弃，免得一条畸形事件把内存吃满（`feishu-loops.ts:88`）。 */
 const MAX_EVENT_BYTES = 1_048_576
+
+/**
+ * 列「机器人所在的群」的那条命令，逐字照上游 `feishu-loops.ts:111`。
+ *
+ * `+chat-list` 是 lark-cli 的「高层子命令」（带加号的那一批，同 `+messages-reply`）；
+ * `--page-all` 由 CLI 自己翻页，所以这里只发一次调用、只解一个信封。`--as bot --format json`
+ * 由 `lark()` 统一补（`cli.ts:142`），与上游 `infra/commands.ts:106` 同一条路。
+ */
+const CHAT_LIST_ARGS = ['im', '+chat-list', '--page-all', '--page-size', '100']
+
+/**
+ * `im +chat-list` 的信封。
+ *
+ * 只要 `chat_id`：群名在 DSC 里没有展示面（见文件头），但漏读一个字段就整条发现失效，
+ * 所以这里对多出来的字段一律放宽（`looseObject`），只钉住「chats 是可选的数组」。
+ */
+const ChatListSchema = z.looseObject({
+  chats: z.array(z.looseObject({ chat_id: z.string() })).optional(),
+})
 
 /** `node:sqlite` 的语句对象在本层用到的那几个方法（同 `adapters/github/state.ts:16-20`）。 */
 export interface FeishuKvStatement {
@@ -146,7 +177,12 @@ export interface FeishuThreads {
 
 /** 补收要看的那部分来源设置（`sources/feishu.ts:21-29` 的 `chats` / `directMessages` / `readPageSize`）。 */
 export interface FeishuLoopConfig {
-  /** 设置里列出的群；监听「仅 @」还是「全部消息」由准入层决定，补收看的是「要不要补」。 */
+  /**
+   * 设置里列出的群；监听「仅 @」还是「全部消息」由准入层决定，补收看的是「要不要补」。
+   *
+   * 这份清单是**只读**的：运行期发现的群放在模块内存里并进补收（见文件头「新群发现」），
+   * 不回写这里——写回等于替用户改设置。
+   */
   chats: readonly { chatId: string }[]
   /** 收到过的私聊要不要一起补。 */
   directMessages: boolean
@@ -237,6 +273,12 @@ export function createFeishuSource(options: FeishuLoopOptions): FeishuSource {
   let pollError: string | null = null
   let lastPollAt: string | null = null
   let round: Promise<void> | null = null
+  /** 第一轮群清单：这批群不算「新发现」，理由见文件头。`null` = 还没成功读到过清单。 */
+  let baseline: Set<string> | null = null
+  /** 开机之后才被拉进去的群。内存态：不写回设置、不落库（理由见文件头）。 */
+  const discovered = new Set<string>()
+  /** 上一次「刷新群清单」失败的原因：同样的一句只记一次日志，免得每轮刷屏。 */
+  let chatListError: string | null = null
 
   /** 已投递名单：先读进内存，一轮结束再按窗口裁剪后写回。 */
   function deliveredFor(chatId: string): Record<string, string> {
@@ -254,14 +296,50 @@ export function createFeishuSource(options: FeishuLoopOptions): FeishuSource {
     for (const [id, at] of Object.entries(map)) if (!(Date.parse(at) >= floor)) delete map[id]
   }
 
-  /** 要补的群：设置里列出的，加上事件里见过的私聊（`feishu-loops.ts:138-140`）。 */
+  /** 要补的群：设置里列出的，加上新发现的群，加上事件里见过的私聊（`feishu-loops.ts:138-140`）。 */
   function chats(): [string, boolean][] {
     const seen = kv.get<Record<string, boolean>>(FEISHU_KEYS.chats) ?? {}
     const learned = Object.entries(seen).filter(([, direct]) => direct && options.config.directMessages)
     return Object.entries({
       ...Object.fromEntries(options.config.chats.map(chat => [chat.chatId, false])),
+      // 新群与设置里点名的群同权：第一拍只记起点，之后按窗口补收（见 `runRound`）。
+      ...Object.fromEntries([...discovered].map(chatId => [chatId, false])),
       ...Object.fromEntries(learned),
     })
+  }
+
+  /**
+   * 刷一次群清单，把开机后才被拉进去的群并进补收名单。
+   *
+   * 三处边界都只在特定情形下咬人，所以写在代码里而不是文件头：
+   *   - **第一轮当基线**。机器人已经在几十个群里时，一启动就把几十个群的历史各拉一遍，
+   *     配额会在十分钟内打光；上游干脆不补收没点名的群（`feishu-loops.ts:138-140`）。
+   *   - **新群的旧游标删掉**。被踢出去又拉回来时，沿用上次的游标会把离开那几周的历史整段
+   *     倒进来；删掉之后 `runRound` 按「第一次见到这个群」只记起点。
+   *   - **读成功才剔除**。清单读失败时一律当「不知道」，不能拿空清单当「群都没了」，否则
+   *     一次限流就把所有新群从名单里清掉。
+   */
+  async function refreshChats(): Promise<void> {
+    const result = ChatListSchema.parse(await lark(run, CHAT_LIST_ARGS))
+    const listed = new Set((result.chats ?? []).map(chat => chat.chat_id))
+    chatListError = null
+    const known = baseline
+    if (known === null) {
+      baseline = listed
+      return
+    }
+    for (const id of [...discovered]) {
+      if (listed.has(id)) continue
+      discovered.delete(id)
+      log(`feishu: 机器人已不在群 ${id} 里，停止补收`)
+    }
+    const configured = new Set(options.config.chats.map(chat => chat.chatId))
+    for (const id of listed) {
+      if (known.has(id) || configured.has(id) || discovered.has(id)) continue
+      discovered.add(id)
+      kv.set(FEISHU_KEYS.history(id), undefined)
+      log(`feishu: 发现新群 ${id}，已开始补收`)
+    }
   }
 
   /** 被订阅话题跟着的话题 id：这些即使静了两周也还要读（`feishu-loops.ts:197-199`）。 */
@@ -423,6 +501,15 @@ export function createFeishuSource(options: FeishuLoopOptions): FeishuSource {
     const started = now()
     lastPollAt = started
     const failures: string[] = []
+    try {
+      await refreshChats()
+    } catch (error) {
+      // 清单读不到不影响已有的群：补收照跑，只是这一轮发现不了新群。同样的错只记一次，
+      // 不写进 `status().lastError`——老版本 lark-cli 没有这条子命令时，来源本身仍是好的。
+      const message = error instanceof Error ? error.message : String(error)
+      if (message !== chatListError) log(`feishu: 刷新群清单失败，新群要等它恢复才会被补收：${message}`)
+      chatListError = message
+    }
     for (const [chatId, direct] of chats()) {
       if (halted) break
       const key = FEISHU_KEYS.history(chatId)

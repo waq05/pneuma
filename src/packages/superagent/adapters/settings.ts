@@ -34,6 +34,15 @@ export const MANUAL_SOURCE = 'manual'
 export const GITHUB_SOURCE = 'github'
 
 /**
+ * 飞书来源的名字。
+ *
+ * 必须与 `adapters/feishu/trigger.ts` 里 `Trigger.source` 的取值逐字一致，也必须与
+ * `policy.sources` 的键一致——三处差一个字母，症状是「消息收得到、一条工单也建不出来」，
+ * 而准入闸只会回一句 `not_a_member`，看不出是键写错了。
+ */
+export const FEISHU_SOURCE = 'feishu'
+
+/**
  * 一个接进来的 GitHub 仓库。
  *
  * 为什么只有这三样：`repository` 决定轮询哪个仓库，`login` 是机器人自己的登录名（用来丢掉
@@ -50,6 +59,21 @@ export interface GithubAccount {
 }
 
 /**
+ * 接进来的飞书来源。
+ *
+ * 只有一样：允许派活的飞书用户（`open_id`，`ou_` 开头）。
+ *
+ * 为什么必须显式给名单、不能「群里谁 @ 都算」：核心的准入闸只认
+ * `policy.sources[source].allowed` 里的精确 id（`core/policy.ts:132` 的 `allowedSender`），
+ * 没有通配。不登记这个来源，每条飞书人类消息都会以 `not_a_member` 被拒——这正是修之前
+ * 的状态：消息收得到，工单一张也建不出来。
+ */
+export interface FeishuAccount {
+  /** 允许派活的飞书 `open_id`。 */
+  allowed: readonly string[]
+}
+
+/**
  * 造一份默认设置。
  *
  * 每次调用返回**新对象**，不共享可变单例：设置将来要能按分区保存（`save` 改一块），
@@ -58,9 +82,12 @@ export interface GithubAccount {
  *
  * @param github - 配了就把 GitHub 来源登记进来。**不配就一个字节都不加**：没配仓库却把来源
  *   记成「开着」，设置页会显示一个永远不工作的来源，准入闸也会多出一条空名单。
+ * @param feishu - 配了就把飞书来源登记进来。判据是「名单里至少一个人」：空名单等于
+ *   「谁也不许派活」，登记它只会让准入闸对每条消息都回 `not_a_member`，不如不登记。
  */
-export function defaultSettings(github?: GithubAccount): Settings {
+export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount): Settings {
   const account = normalizeGithubAccount(github)
+  const chat = normalizeFeishuAccount(feishu)
   return SettingsSchema.parse({
     paused: false,
     // 来源实例表：登记「这个来源是开着的」。它不参与准入判定（准入只看 policy.sources），
@@ -68,6 +95,7 @@ export function defaultSettings(github?: GithubAccount): Settings {
     sources: {
       [MANUAL_SOURCE]: { enabled: true },
       ...(account === undefined ? {} : { [GITHUB_SOURCE]: { enabled: true } }),
+      ...(chat === undefined ? {} : { [FEISHU_SOURCE]: { enabled: true } }),
     },
     policy: {
       // 名单只有一个人：终端前敲命令的这个人。
@@ -76,10 +104,24 @@ export function defaultSettings(github?: GithubAccount): Settings {
         // GitHub 的名单是「谁的 @ 能被接单」。空名单不等于「谁都可以」——准入闸对没命中名单的
         // 人会走准入表，那一格默认给 ignore，症状正好是「轮询在跑、就是没有工单」。
         ...(account === undefined ? {} : { [GITHUB_SOURCE]: { allowed: account.allowed.map((id) => ({ id })) } }),
+        // 飞书同理：不登记这个来源，飞书消息会被判 `not_a_member`（不是「没连上」）。
+        ...(chat === undefined ? {} : { [FEISHU_SOURCE]: { allowed: chat.allowed.map((id) => ({ id })) } }),
       },
     },
     eval: { mode: 'observe' },
   })
+}
+
+/**
+ * 把外面的飞书配置收成一个能直接进设置的值；名单空就是「没配」。
+ *
+ * 为什么不给默认值：默认放行任何人是授权边界上的大洞，默认拒绝至少是安全的失败方式。
+ */
+export function normalizeFeishuAccount(input: FeishuAccount | undefined): FeishuAccount | undefined {
+  if (input === undefined) return undefined
+  const allowed = input.allowed.map((id) => id.trim()).filter((id) => id !== '')
+  if (allowed.length === 0) return undefined
+  return { allowed }
 }
 
 /**

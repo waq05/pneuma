@@ -23,6 +23,8 @@
   "field.feishuCli.help": "Leave it empty to use lark-cli from PATH, or give an absolute path to pick a different build. When the CLI cannot be found the source does not start; the log says so once. Restart the host after changing it.",
   "field.feishuChats.label": "Chats to watch",
   "field.feishuChats.help": "Chat ids (starting with oc_), comma separated. Empty means no chats, and the source will not start. Restart the host after changing it.",
+  "field.feishuAllowed.label": "Feishu users allowed to assign work",
+  "field.feishuAllowed.help": "Feishu open_ids (starting with ou_), comma separated. Without this list every Feishu message is rejected as not on the list: messages arrive but no ticket is ever created. If you do not know your open_id, put any value in, send one message, and the host log prints the rejected id.",
   "field.feishuDirect.label": "Direct messages",
   "field.feishuDirect.help": "When on, direct messages to the bot also count as requests. Off by default: only group messages that mention it are read.",
   "field.assessorModel.label": "Model for assessment",

@@ -23,6 +23,8 @@
   "field.feishuCli.help": "留空就用 PATH 上的 lark-cli；也可以填绝对路径，指定另一个版本。找不到 CLI 时来源不启动，只在日志里说一句。改完要重开宿主才生效。",
   "field.feishuChats.label": "要收的群",
   "field.feishuChats.help": "群的 chat_id（以 oc_ 开头），逗号分隔。留空就不收任何群，来源也不会启动。改完要重开宿主才生效。",
+  "field.feishuAllowed.label": "允许派活的飞书用户",
+  "field.feishuAllowed.help": "飞书 open_id（以 ou_ 开头），逗号分隔。不填这个名单，飞书消息会被准入闸判成「不在名单里」——消息收得到，工单一张也建不出来。不确定自己的 open_id 就先随便填一个、发一条消息，宿主日志里会打印被拒的那个 id。",
   "field.feishuDirect.label": "收私聊",
   "field.feishuDirect.help": "打开后，机器人收到的私聊也当需求。默认关：只听群里 @ 它的消息。",
   "field.assessorModel.label": "判定用的模型",

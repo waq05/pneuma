@@ -1,9 +1,10 @@
 /**
  * Super Agent 的界面面：快照（§8.2）与执行会话的只读转录。
  *
- * 这里只做两件界面要的事，不碰编排库的写路径：
+ * 这里只做三件界面要的事，不碰编排库的写路径：
  *   1. `buildSurface(runtime)`：把 `runtime.list()` 与最近动态装配成 `SuperagentSurface`；
- *   2. `readSessionTranscript(ticketId)`：读 `<DSC_HOME>/superagent/sessions/<id>/*.jsonl`
+ *   2. `withRepoGuide(surface, repoPath)`：仓库路径空着时补一条「先填路径」的引导（O1）；
+ *   3. `readSessionTranscript(ticketId)`：读 `<DSC_HOME>/superagent/sessions/<id>/*.jsonl`
  *      并按普通会话重放成 `TranscriptEntry[]`（只读，不拿写租约）。
  *
  * 快照面的登记也在这里（{@link registerSurface}）：`ctx.effect` 包住
@@ -55,6 +56,40 @@ export function buildSurface(runtime: SuperagentRuntime): SuperagentSurface {
     else counts.running += 1
   }
   return { ready: true, counts, tickets, recent: runtime.recent() }
+}
+
+/**
+ * 仓库路径没填时给界面的一条引导（O1 首次使用）。
+ *
+ * 为什么文案是完整的操作步骤：全新装好后 `repoPath` 是空的，用户发布的第一张工单会在派工
+ * 那一刻失败（`adapters/executor.ts:732`），而失败到面板上只剩「派工失败」四个字。这里把
+ * 「去哪儿填」直接写出来，用户不必去翻日志猜。
+ */
+const REPO_MISSING_PROBLEM: { code: string; detail: string } = {
+  code: 'repo_missing',
+  detail: '先填仓库路径（设置 → Super Agent → 默认仓库路径），否则发布的任务会停在待派工',
+}
+
+/**
+ * 给已经能用的快照面补一条「仓库路径没填」的引导。
+ *
+ * 为什么补在登记快照面这一层，而不是 `buildSurface` 里：`buildSurface` 只拿到运行期，
+ * 设置归装配层（`index.ts` 现读磁盘）读；它的调用方 `service.ts` 是薄层，不碰配置。
+ * 所以在 `index.ts` 登记快照面那一刻把两者拼起来。
+ *
+ * 为什么复用 `problem` 而不是加字段：契约（`src/contract/runtime.ts` 的
+ * `SuperagentSurface`）已经有 `problem?: { code, detail }`，界面也已经在摊这一项；加字段
+ * 要改契约，而契约此刻冻结。`ready: true` 带上 `problem` 在这里的含义收窄成
+ * 「能用，但有一件事没配」，界面据此只画一条警告，不挡页面。
+ *
+ * @param surface - `service.surface()` 装好的快照面
+ * @param repoPath - 设置里的仓库路径（空串 = 没配）
+ */
+export function withRepoGuide(surface: SuperagentSurface, repoPath: string): SuperagentSurface {
+  // 运行期没起来时那条 problem 更要紧（库都打不开，路径填了也没用），不覆盖它。
+  if (!surface.ready || surface.problem !== undefined) return surface
+  if (repoPath.trim() !== '') return surface
+  return { ...surface, problem: REPO_MISSING_PROBLEM }
 }
 
 /**

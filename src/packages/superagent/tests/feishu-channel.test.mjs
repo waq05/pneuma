@@ -1,13 +1,14 @@
 /**
  * @pneuma/superagent 飞书渠道与后台循环的离线用例。
  *
- * 钉六件事，每件坏了都不报错、只是静默跑歪：
+ * 钉七件事，每件坏了都不报错、只是静默跑歪：
  *   1. 回消息的命令行：少一个 `--idempotency-key` 就会把同一句话贴两遍；参数拼错，飞书直接拒；
  *   2. 长连接事件归一：一条 `im.message.receive_v1` 必须变成带正确 id / 话题 / 作者的 Trigger；
  *   3. 机器人自己的消息不进：不跳过它，它自己的回复会被当成新需求再派一遍；
  *   4. 补漏轮询：历史消息归一、游标落 `kv`、重叠窗口不重复投递；
- *   5. 不可回复与可重试：撤回 / 删除不重试，其余照抛——混为一谈会永远重试或错误丢弃；
- *   6. `status()`：连上、连不上、读失败三种情况各留下什么。
+ *   5. 群清单刷新：开机后被拉进去的群要并进补收，被移出要停（见下面对应的用例）；
+ *   6. 不可回复与可重试：撤回 / 删除不重试，其余照抛——混为一谈会永远重试或错误丢弃；
+ *   7. `status()`：连上、连不上、读失败三种情况各留下什么。
  * 另加一条话题轮询的用例：首轮只建立已读基线、之后按已读名单只投新回复。
  *
  * 全程离线：`run` / `consume` 都是假函数，没有真 CLI、没有网络；`kv` 用临时目录里的真库，
@@ -105,10 +106,10 @@ function readKv(store, key) {
 }
 
 /** 一条历史接口的消息；`at` 是 ISO，`create_time` 用毫秒串（飞书的形状）。 */
-function historical(messageId, at) {
+function historical(messageId, at, chatId = 'oc_chat') {
   return {
     message_id: messageId,
-    chat_id: 'oc_chat',
+    chat_id: chatId,
     create_time: String(Date.parse(at)),
     sender: { id: 'ou_alice', sender_type: 'user' },
     body: { content: JSON.stringify({ text: `改 ${messageId}` }) },
@@ -211,6 +212,8 @@ test('长连接：机器人自己发的消息（两种 id）都不进 engine.rec
 test('补漏轮询：历史归一成 Trigger、游标写进 kv、重叠窗口不重复投递', async () => {
   const messages = [historical('om_a', '2026-01-01T00:00:30.000Z'), historical('om_b', '2026-01-01T00:00:58.000Z')]
   const { calls, run } = fakeRun((args) => {
+    // 每轮补收开头会刷一次群清单：这里只回空清单（本用例不测发现，只测补收）。
+    if (args[0] === 'im' && args[1] === '+chat-list') return ok({ chats: [] })
     // 只走历史接口；按接口的 start_time / end_time 过滤，模拟服务端窗口。
     const params = JSON.parse(args[args.indexOf('--params') + 1])
     const from = Number(params.start_time) * 1000
@@ -255,6 +258,71 @@ test('补漏轮询：历史归一成 Trigger、游标写进 kv、重叠窗口不
   await source.tick()
   assert.equal(received.length, 2, '重叠窗口里的消息不该再进一次 engine.receive')
   assert.equal(readKv(store, FEISHU_KEYS.history('oc_chat')), '2026-01-01T00:01:25.000Z')
+})
+
+test('群清单刷新：开机后被拉进去的群并进补收，被移出就停', async () => {
+  let listing = ['oc_keep']
+  const messages = { oc_new: [historical('om_new', '2026-01-01T00:01:10.000Z', 'oc_new')] }
+  const { calls, run } = fakeRun((args) => {
+    if (args[0] === 'im' && args[1] === '+chat-list') return ok({ chats: listing.map((chatId) => ({ chat_id: chatId })) })
+    const params = JSON.parse(args[args.indexOf('--params') + 1])
+    const from = Number(params.start_time) * 1000
+    const to = Number(params.end_time) * 1000
+    const items = (messages[params.container_id] ?? []).filter((message) => {
+      const at = Number(message.create_time)
+      return at >= from && at < to
+    })
+    return ok({ items, has_more: false })
+  })
+  const logs = []
+  const received = []
+  const store = newStore('discover')
+  let clock = '2026-01-01T00:00:10.000Z'
+  const source = createFeishuSource({
+    run,
+    bot: BOT,
+    engine: { receive(trigger) { received.push(trigger); return 'stored' } },
+    store,
+    config: { chats: [{ chatId: 'oc_keep' }], directMessages: false },
+    now: () => clock,
+    log: (line) => logs.push(line),
+  })
+  const discoveredLines = () => logs.filter((line) => line.includes('发现新群'))
+
+  // 第一拍：清单只用来当基线，一个群都不算新（否则一启动就把机器人所在的群全拉一遍）。
+  await source.tick()
+  assert.deepEqual(discoveredLines(), [])
+
+  // 机器人被拉进 oc_new：下一拍发现它，并按「第一次见到这个群」只记起点，不倒历史。
+  listing = ['oc_keep', 'oc_new']
+  clock = '2026-01-01T00:01:00.000Z'
+  await source.tick()
+  assert.deepEqual(discoveredLines(), ['feishu: 发现新群 oc_new，已开始补收'])
+  assert.equal(readKv(store, FEISHU_KEYS.history('oc_new')), '2026-01-01T00:01:00.000Z')
+  assert.deepEqual(received, [], '发现的那一拍只记起点')
+
+  // 再下一拍：新群里那条消息进 engine.receive，与设置里点名的群同一条管线。
+  clock = '2026-01-01T00:01:30.000Z'
+  await source.tick()
+  assert.deepEqual(received.map((trigger) => trigger.id), [feishuTriggerId('om_new')])
+  assert.equal(received[0].meta.chatId, 'oc_new')
+  assert.equal(discoveredLines().length, 1, '同一个群不该每轮都报一次「发现新群」')
+
+  // 机器人被移出群：清单里没有它了，停止补收，并留下一句为什么。
+  listing = ['oc_keep']
+  clock = '2026-01-01T00:02:00.000Z'
+  received.length = 0
+  messages.oc_new.push(historical('om_new2', '2026-01-01T00:01:50.000Z', 'oc_new'))
+  await source.tick()
+  assert.deepEqual(received, [], '已经被移出的群不该继续补收')
+  assert.ok(logs.some((line) => line.includes('机器人已不在群 oc_new')), '被移出要留一句日志')
+
+  // 命令行照上游：`im +chat-list --page-all --page-size 100`，`--as bot --format json` 由 lark 补。
+  const chatListCalls = calls.filter((call) => call.args[1] === '+chat-list')
+  assert.equal(chatListCalls.length, 4, '每轮补收刷一次清单')
+  assert.deepEqual(chatListCalls[0].args, [
+    'im', '+chat-list', '--page-all', '--page-size', '100', '--as', 'bot', '--format', 'json',
+  ])
 })
 
 test('不可回复与可重试：撤回 / 删除回 gone，限流与连不上照抛', async () => {
@@ -337,6 +405,7 @@ test('话题轮询：首轮只建立已读基线，之后只投递新回复', as
   const reply2 = page('om_r2', '2026-01-01T00:02:00.000Z')
   let listing = [rootMessage, old, reply1]
   const { run } = fakeRun((args) => {
+    if (args[0] === 'im' && args[1] === '+chat-list') return ok({ chats: [] })
     if (args[0] === 'api' && args[2] === '/open-apis/im/v1/messages/mget') return ok({ items: [source] })
     if (args[0] === 'im' && args[1] === '+threads-messages-list') {
       return ok({ thread_id: 'omt_1', has_more: false, messages: listing })

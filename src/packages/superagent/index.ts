@@ -10,8 +10,8 @@
  *   3. 起一个 2 秒的泵，调 `service.tick()`（`runtime.pump()` + 阶段变样时推快照）；
  *   4. 懒建 `SuperagentRuntime`：第一次用到（发命令 / 界面拉快照 / 调五个方法）才打开编排库；
  *   5. provide `superagent` 服务并把快照面登记进 `ctx.surfaces`（`service.ts` / `surface.ts`）；
- *   6. 向 doctor 的 `ctx.health` 登记两项体检：编排库能不能写、锁被占没有、几张工单卡在
- *      running；以及飞书来源连上没有、最近一条错误是什么。
+ *   6. 向 doctor 的 `ctx.health` 登记三项体检：编排库能不能写、锁被占没有、几张工单卡在
+ *      running；飞书来源连上没有、最近一条错误是什么；机器上 git 与 lark-cli 在不在。
  *
  * **两个外部来源，同一条节奏**：GitHub 靠 `startGithub`、飞书靠 `startFeishu`，都在
  * `ensure()` 建好运行期之后才起，都不在 `apply` 里做任何 IO；来源起来之前的三样前置条件
@@ -48,18 +48,18 @@ import { sendGithub } from './adapters/github/channel.js'
 import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
 import { bindAgentPulls, pollTicketChecks, type OpenPull } from './adapters/github/bind.js'
 import { sendFeishu } from './adapters/feishu/channel.js'
-import { resolveFeishuCli, readFeishuBot, type FeishuCli } from './adapters/feishu/cli-run.js'
+import { resolveFeishuCli, readFeishuBot, DEFAULT_FEISHU_CLI, type FeishuCli } from './adapters/feishu/cli-run.js'
 import { createFeishuSource, type FeishuSource } from './adapters/feishu/loops.js'
 import { SOURCE as FEISHU_SOURCE } from './adapters/feishu/trigger.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
-import { defaultSettings, GITHUB_SOURCE, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
+import { defaultSettings, GITHUB_SOURCE, normalizeFeishuAccount, normalizeGithubAccount, type FeishuAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
-import { createFeishuHealth, createSuperagentHealth } from './health.js'
+import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth } from './health.js'
 import { SuperagentRuntime } from './runtime.js'
 import { SuperagentService } from './service.js'
-import { registerSurface } from './surface.js'
+import { registerSurface, withRepoGuide } from './surface.js'
 
 /** 行身份：与 `cordis.patch.yml` 的 `id`、产物目录名三处一致。 */
 export const name = 'superagent'
@@ -114,6 +114,14 @@ const FEISHU_ENABLED_KEY = 'feishuEnabled'
 const FEISHU_CLI_KEY = 'feishuCli'
 const FEISHU_CHATS_KEY = 'feishuChats'
 const FEISHU_DIRECT_KEY = 'feishuDirect'
+/**
+ * 允许派活的飞书 `open_id`（`ou_` 开头，逗号分隔）。
+ *
+ * 为什么必须单独一个名单：核心准入闸只认 `policy.sources[source].allowed` 里的精确 id
+ * （`core/policy.ts:132`），没有通配。不填这个字段，飞书来源就没被登记进准入表，
+ * 每条消息都会被判 `not_a_member`——消息收得到，工单一张也建不出来。
+ */
+const FEISHU_ALLOWED_KEY = 'feishuAllowed'
 
 /** 令牌环境变量的缺省名。 */
 const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
@@ -200,6 +208,8 @@ export interface SuperagentConfig {
   feishuCli: string
   /** 要收的群 `chat_id`（已按逗号拆开、去空、去重）；空 = 不收任何群。 */
   feishuChats: string[]
+  /** 允许派活的飞书 `open_id`（已按逗号拆开、去空、去重）；空 = 这个来源没接进准入表。 */
+  feishuAllowed: string[]
   /** 收不收私聊；默认关。 */
   feishuDirect: boolean
   /** 判定用模型（`provider/model`）；空 = 不调模型。 */
@@ -244,6 +254,9 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     // 群名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。空串 = 没有群。
     feishuChats: [...new Set(
       textOf(raw[FEISHU_CHATS_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
+    )],
+    feishuAllowed: [...new Set(
+      textOf(raw[FEISHU_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
     )],
     feishuDirect: raw[FEISHU_DIRECT_KEY] === true,
     assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
@@ -372,6 +385,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           help: t('field.feishuChats.help'),
         },
         {
+          type: 'text',
+          key: FEISHU_ALLOWED_KEY,
+          label: t('field.feishuAllowed.label'),
+          placeholder: 'ou_xxx, ou_yyy',
+          mono: true,
+          help: t('field.feishuAllowed.help'),
+        },
+        {
           type: 'switch',
           key: FEISHU_DIRECT_KEY,
           label: t('field.feishuDirect.label'),
@@ -404,6 +425,8 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [FEISHU_CLI_KEY]: config.feishuCli,
         // 与 githubAllowed 一样：磁盘上存一行逗号分隔的文本，设置面只认标量。
         [FEISHU_CHATS_KEY]: config.feishuChats.join(', '),
+        // 与 githubAllowed 同一种写法：磁盘上一行逗号分隔的 open_id。
+        [FEISHU_ALLOWED_KEY]: config.feishuAllowed.join(', '),
         [FEISHU_DIRECT_KEY]: config.feishuDirect,
         [ASSESSOR_MODEL_KEY]: config.assessorModel,
       }
@@ -486,6 +509,12 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           writePluginConfig(CONFIG_KEY, { [FEISHU_DIRECT_KEY]: value === true })
           return
         }
+        case FEISHU_ALLOWED_KEY: {
+          // 与 githubAllowed 同一种整理：去空白、去重，存成一行逗号分隔的文本。
+          const ids = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
+          saveText(FEISHU_ALLOWED_KEY, ids.join(', '))
+          return
+        }
         case ASSESSOR_MODEL_KEY: {
           saveText(ASSESSOR_MODEL_KEY, String(value).trim())
           return
@@ -522,6 +551,18 @@ export function apply(ctx: Context, passed?: unknown): void {
       login: current.githubLogin,
       allowed: current.githubAllowed,
     })
+  }
+
+  /**
+   * 配好的飞书来源；名单空就是 `undefined`。
+   *
+   * 判据只有一条：名单里至少一个人。群清单**不**参与——它决定「收哪些群」，不决定
+   * 「谁的话算数」。把两件事混成一个判据，就会出现「配了群、没配人」这种看起来能用、
+   * 实际一条单也建不出来的状态（修之前就是这个状态：消息收得到，全被判 `not_a_member`）。
+   */
+  const feishuAccount = (): FeishuAccount | undefined => {
+    const current = config()
+    return normalizeFeishuAccount({ allowed: current.feishuAllowed })
   }
 
   const offSection = ctx.settings.registerSection(createSettingsSection(passed))
@@ -829,8 +870,8 @@ export function apply(ctx: Context, passed?: unknown): void {
         worker: { repo: () => config().repoPath, maxWorkers: config().maxWorkers, prepare: () => config().prepareCommand, model: null },
         timeoutSeconds: () => config().ticketTimeoutSeconds,
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
-        settings: () => defaultSettings(githubAccount()),
-        scope: superagentScope(githubAccount),
+        settings: () => defaultSettings(githubAccount(), feishuAccount()),
+        scope: superagentScope(githubAccount, feishuAccount),
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),
         ...(complete === undefined ? {} : { assessorComplete: complete }),
@@ -886,7 +927,9 @@ export function apply(ctx: Context, passed?: unknown): void {
   })
   ctx.provide('superagent', service)
   // 面登记包在 ctx.effect 里（见 `surface.ts`），停用插件即摘掉这一格。
-  registerSurface(ctx, () => service.surface())
+  // 仓库路径在这里拼进快照面：`service.surface()` 是薄层、不读配置，而「路径没填」这条
+  // 引导要现读设置（见 `surface.ts` 的 `withRepoGuide`）。
+  registerSurface(ctx, () => withRepoGuide(service.surface(), config().repoPath))
 
   // ── 体检项：登记进 doctor 的 health 表 ──────────────────────────────────────
   // doctor 的 pneuma.order 是 3450，早于本插件的 3800，所以 apply 时它已经 provide 了
@@ -903,6 +946,12 @@ export function apply(ctx: Context, passed?: unknown): void {
       status: () => feishu?.source.status() ?? null,
     }))
     ctx.effect(() => offFeishuHealth, 'superagent: health.register (feishu)')
+    // 机器依赖那一项：git 与 lark-cli 在不在。只读设置、起两个 --version 子进程，缺了只报
+    // warn（见 `health.ts`），不影响插件启动。lark-cli 的默认名从适配器拿，别在这里再写一遍。
+    const offDependenciesHealth = health.register(createDependenciesHealth({
+      larkCli: () => config().feishuCli || DEFAULT_FEISHU_CLI,
+    }))
+    ctx.effect(() => offDependenciesHealth, 'superagent: health.register (dependencies)')
   }
 
   ctx.effect(() => {

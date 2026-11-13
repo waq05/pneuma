@@ -1,5 +1,6 @@
 /**
- * superagent 的两项体检：编排库（可写 / 锁 / running 工单）与飞书来源（连上 / 最近一条错误）。
+ * superagent 的三项体检：编排库（可写 / 锁 / running 工单）、飞书来源（连上 / 最近一条错误）、
+ * 机器依赖（git 与 lark-cli 在不在）。
  *
  * 为什么单独一个文件：`/doctor` 的登记表是 `ctx.health`（doctor 插件提供，见
  * `src/packages/doctor/index.ts:144`），登记进去的每一项只做「读一次、给一句结论」。
@@ -16,12 +17,20 @@
  * 飞书那项只读来源自己的 `status()`。没启动时**报 skip 而不是 ok**：「默认关」与「开了
  * 但一条消息也收不到」在面板上必须能分辨，两者都报 ok 等于把后者藏起来。
  *
+ * 依赖那项查 git 与 lark-cli 能不能拉起。为什么值得单项：缺 git 时症状是「派工失败」，
+ * 缺 lark-cli 时症状是「飞书来源没启动」——两处日志里都只有一句话，用户翻不到「其实是
+ * 没装命令行工具」。为什么缺了只报 warn 不报 fail：插件本身还能起来、编排队列还在，
+ * 而且飞书默认关，不用飞书的人缺 lark-cli 也该照常用其它功能。
+ *
  * 探测本身只读：写探测是一次 `BEGIN IMMEDIATE` 后立刻提交的空事务，锁探测是拿一次
- * 再立刻放掉——不写任何业务数据，也不留锁。飞书那项连库都不碰。
+ * 再立刻放掉——不写任何业务数据，也不留锁。飞书那项连库都不碰；依赖那项只起两个
+ * `--version` 子进程（各 5 秒上限），读不到就记一句原因，不抛。
  *
  * @module dsc/packages/superagent/health
  */
+import { spawnSync } from 'node:child_process'
 import type { HealthCheck, HealthResult } from '@pneuma/runtime/services/types.js'
+import { resolveExecutable } from '@pneuma/runtime/core/executable.js'
 import { acquireInstanceLock, StoreError, type DscStore } from './adapters/store.js'
 import { orchestratorDbPath } from './paths.js'
 
@@ -211,6 +220,146 @@ export function createFeishuHealth(probe: SuperagentFeishuProbe): HealthCheck {
         }
       }
       return { status: 'ok', summary: '飞书来源正常（长连接已连上）', detail: detail.join('\n') }
+    },
+  }
+}
+
+/** 依赖体检从装配处拿的一件读数。 */
+export interface SuperagentDependenciesProbe {
+  /** 设置里的 `feishuCli`（命令名或路径）；空串由装配层补默认名，这里只认非空。 */
+  larkCli(): string
+}
+
+/** 一条命令的 `--version` 探测结局。 */
+type VersionProbe =
+  | { state: 'ok'; version: string }
+  | { state: 'missing' }
+  | { state: 'failed'; why: string }
+
+/** 版本探测的超时（毫秒）：查「装没装」不该让 `/doctor` 站住更久。 */
+const VERSION_TIMEOUT_MS = 5_000
+
+/**
+ * 起一次 `--version`，只要版本号那一行。
+ *
+ * 为什么用内核那份 `resolveExecutable` 而不是直接 `spawnSync('lark-cli')`：Windows 上
+ * lark-cli 多半是 npm 装的 `.cmd` 包装脚本，Node 不挂 shell 直接 spawn 必然 EINVAL，
+ * 会得出「没装」的假结论。那份解析器会带回 `shell` 标记与已转义的路径
+ * （`src/core/executable.ts:50`），全仓库只有这一份，设置页与实际启动才不会是两套答案。
+ *
+ * @param command - 命令名或路径
+ * @returns 三种结局：跑通了带版本号、找不到、装了但跑不通
+ */
+function probeVersion(command: string): VersionProbe {
+  const target = resolveExecutable(command, process.env, process.cwd())
+  if (!target.found) return { state: 'missing' }
+  try {
+    const done = spawnSync(target.spawnFile, ['--version'], {
+      // `.cmd` / `.bat` 只能经 shell 起。参数是写死的 `--version`，没有外部输入拼进来。
+      shell: target.shell,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: VERSION_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    // 版本号有的 CLI 写 stdout、有的写 stderr，两边都收。
+    const firstLine = `${done.stdout ?? ''}\n${done.stderr ?? ''}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? ''
+    if (done.error !== undefined) {
+      // 超时与「进程起不来」分开说：前者是这台机器慢或 CLI 卡住，后者才是权限 / 包装脚本的问题。
+      const code = (done.error as NodeJS.ErrnoException).code
+      if (code === 'ETIMEDOUT') {
+        return { state: 'failed', why: `--version 超过 ${String(VERSION_TIMEOUT_MS / 1000)} 秒没结束` }
+      }
+      return { state: 'failed', why: `起不来（${done.error.message}）` }
+    }
+    if (done.status !== 0) {
+      const printed = firstLine === '' ? '' : `：${firstLine.slice(0, 120)}`
+      return { state: 'failed', why: `--version 退出码 ${String(done.status ?? -1)}${printed}` }
+    }
+    return { state: 'ok', version: firstLine === '' ? '（没打印版本号）' : firstLine.slice(0, 120) }
+  } catch (error) {
+    return { state: 'failed', why: describe(error) }
+  }
+}
+
+/**
+ * 建依赖体检项：git 与 lark-cli 能不能拉起。
+ *
+ * 判据只有 `--version` 跑不跑通，不探「git 能不能提交」「lark-cli 登没登录」：那两件事
+ * 各有自己的失败面（工作树、飞书来源的 `status()`），在这里再测一遍会得到第二份答案。
+ *
+ * 缺任何一条都只报 `warn`，不抛也不报 `fail`：插件本身还能起来，飞书默认关着，不用飞书
+ * 的人缺 lark-cli 也该照常用其它功能。detail 里写明「未安装」与后果，用户才知道要不要装。
+ *
+ * @param probe - 装配处给的 lark-cli 读数
+ * @returns 可以直接 `ctx.health.register(...)` 的一项
+ */
+export function createDependenciesHealth(probe: SuperagentDependenciesProbe): HealthCheck {
+  return {
+    // 与前两项同域不同项：`--json` 按 id 出键，三项都登记时不会撞。
+    id: 'superagent/dependencies',
+    title: 'Super Agent 依赖',
+    // 紧跟在飞书（101）后面：同一插件的三项排在一起。
+    order: 102,
+    run(): HealthResult {
+      try {
+        const git = probeVersion('git')
+        const lark = probeVersion(probe.larkCli())
+        const lineOf = (name: string, result: VersionProbe, missingHint: string): string => {
+          if (result.state === 'ok') return `${name}：${result.version}`
+          if (result.state === 'missing') return `${name}：未安装（${missingHint}）`
+          return `${name}：装了，但探不到版本（${result.why}）`
+        }
+        const detail = [
+          lineOf('git', git, 'PATH 上找不到 git'),
+          lineOf('lark-cli', lark, 'PATH 上找不到 lark-cli；飞书来源要用它'),
+        ]
+
+        const missing: string[] = []
+        if (git.state === 'missing') missing.push('git')
+        if (lark.state === 'missing') missing.push('lark-cli')
+        if (missing.length > 0) {
+          const fix: string[] = []
+          if (git.state === 'missing') {
+            fix.push('装 Git 并重开会话让 PATH 带上它；没 git 建不出工作树，派工必然失败')
+          }
+          if (lark.state === 'missing') {
+            // 说清「不装也能用」：飞书默认关，这句能省掉用户的误判。
+            fix.push('飞书来源才需要它：装上后重开会话，或在设置 → Super Agent 里填 lark-cli 的完整路径；不用飞书可以不管')
+          }
+          return {
+            status: 'warn',
+            summary: `缺 ${missing.join(' 与 ')}`,
+            detail: detail.join('\n'),
+            fix: fix.join('；'),
+          }
+        }
+
+        // 不是「没装」，而是装了却跑不通：把 reason 原样带出去，用户才知道是超时还是退出码。
+        const broken: string[] = []
+        if (git.state === 'failed') broken.push('git')
+        if (lark.state === 'failed') broken.push('lark-cli')
+        if (broken.length > 0) {
+          return {
+            status: 'warn',
+            summary: `${broken.join(' 与 ')} 的版本号读不出来`,
+            detail: detail.join('\n'),
+            fix: '看 detail 里那句原因：超时说明 CLI 卡住了，退出码说明它不认 --version 参数；装坏的话重装一次再试',
+          }
+        }
+        return { status: 'ok', summary: '正常（git 与 lark-cli 都能跑）', detail: detail.join('\n') }
+      } catch (error) {
+        // 设置读不出来这类意外也只记一条：体检项抛错会把整轮 `/doctor` 的结论弄脏。
+        return {
+          status: 'warn',
+          summary: '依赖探测没跑成',
+          detail: describe(error),
+          fix: '看 detail 里那句原因；多半是设置文件读不出来，去设置 → Super Agent 存一次再看',
+        }
+      }
     },
   }
 }

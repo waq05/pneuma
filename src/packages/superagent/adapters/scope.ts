@@ -20,20 +20,33 @@
  */
 import type { ScopeResult, SourceScope } from '../core/ports.js'
 import { manualScope } from './manual.js'
-import { GITHUB_SOURCE } from './settings.js'
+import { FEISHU_SOURCE, GITHUB_SOURCE } from './settings.js'
 
 /**
  * 造一个组合范围。
  *
  * @param github - 现读 GitHub 配置（getter）。用 getter 而不是值：设置页改了仓库名之后，
  *   范围判定要跟着变。返回 `undefined` = 没接 GitHub，这个来源的一切消息都判「没连上」。
+ * @param feishu - 现读飞书配置（getter）。判据是「名单里至少一个人」——名单空等于没接这个来源，
+ *   与 `defaultSettings` 的登记条件同一个判据，两处不能分叉。
  */
-export function superagentScope(github?: () => { repository: string } | undefined): SourceScope {
+export function superagentScope(
+  github?: () => { repository: string } | undefined,
+  feishu?: () => { allowed: readonly string[] } | undefined,
+): SourceScope {
   return {
     scope({ source, meta }): ScopeResult {
       if (source === GITHUB_SOURCE) {
         if (github?.() === undefined) return { listened: false, reason: 'source_not_connected' }
         // 仓库里由人发出的评论都算「对着这个仓库说的」，`observed` 记这一位。
+        return { listened: true, observed: true }
+      }
+      if (source === FEISHU_SOURCE) {
+        const chat = feishu?.()
+        if (chat === undefined || chat.allowed.length === 0) return { listened: false, reason: 'source_not_connected' }
+        // 与 GitHub 同一条理由：轮询器只补收设置里点名的群，别的群的消息进不了这条管线，
+        // 所以「能收到的都算这个来源看到的」。群清单本身不在这里比——`Trigger.meta` 里没有
+        // 可比的键，读一个不存在的键做闸只会得到一道永远放行的空防线（GitHub 那边踩过）。
         return { listened: true, observed: true }
       }
       return manualScope.scope({ source, meta })
