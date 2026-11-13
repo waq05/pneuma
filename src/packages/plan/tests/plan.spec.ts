@@ -126,7 +126,7 @@ function mount(): Harness {
       return typeof off === 'function' ? off : () => {}
     },
   }
-  planPlugin.apply(ctx as never)
+  planPlugin.apply(ctx as never, {} as never)
   return harness
 }
 
