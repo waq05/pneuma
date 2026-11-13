@@ -49,6 +49,9 @@ test('README：模型体验与已知限制两段都在', () => {
 })
 
 test('修剪：超长工具结果只切中间，两头与省掉的字数都在', () => {
+  // 口径是与 dsh 的 pruner 对齐的硬数字（8K 阈值 / 4K 头 / 1K 尾 / 最近留 4 条）。
+  // 不写死这组数，下面「用常量构造夹具再拿常量比对」就成了自证。
+  expect(DEFAULT_TOOL_RESULT_PRUNE).toEqual({ thresholdChars: 8192, headChars: 4096, tailChars: 1024, keepRecent: 4 })
   const long = 'x'.repeat(DEFAULT_TOOL_RESULT_PRUNE.thresholdChars + 500)
   const recent = Array.from({ length: DEFAULT_TOOL_RESULT_PRUNE.keepRecent }, () => ({ role: 'tool' as const, content: '最近的结果' }))
   const messages = [{ role: 'tool' as const, content: long }, ...recent]
