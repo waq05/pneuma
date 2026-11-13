@@ -161,7 +161,10 @@ export default defineConfig({
         test: {
           name: 'tui',
           include: ['src/packages/tui/**/*.spec.ts', 'src/packages/tui/**/*.spec.tsx'],
-          exclude: ['**/node_modules/**'],
+          // `*.spec.ts` 的星号跨点不跨目录：`scroll-model.int.spec.ts` 同样以 `.spec.ts`
+          // 结尾，不排掉会被 tui project 再跑一遍（integration 那份才是它的主）。
+          // 这是同一类错第三次了（见 unit project 的 exclude），凡按后缀收文件的 project 都要写。
+          exclude: ['src/**/*.int.spec.ts', '**/node_modules/**'],
           environment: 'node',
           testTimeout: 15_000,
           hookTimeout: 15_000,
