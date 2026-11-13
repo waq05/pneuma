@@ -11,6 +11,7 @@ DeepSeek Harness 上的「主动型编码智能体」，本文只讨论**移植�
 | 上游原型的领域模型 | 上游仓库 `docs/000-philosophy.md` ~ `docs/007-architecture.md`（P2 时另写一份概览） |
 | 插件怎么写、能挂哪些点 | [plugin-development.md](plugin-development.md) |
 | 界面契约与槽位 | [ui-design.md](ui-design.md) |
+| 还没做的事（按项编号） | [superagent/backlog.md](superagent/backlog.md) |
 
 ---
 
@@ -167,7 +168,8 @@ src/packages/ui-superagent/
 
 ### 4.1 搬运原则
 
-`core/` 里的文件从上游**逐文件复制**，只改 import 路径（`.ts` → `.js`）。这些文件不 import 任何
+`core/` 里的文件从上游**逐文件复制**，只改 import 路径（`.js` → `.ts`；上游用 `.js` 后缀，DSC 的
+TS 配置允许 `.ts`，实测 `core/model.ts` 353 行只差这一处）。这些文件不 import 任何
 DSC 模块，唯一的外部运行时依赖是 `zod`（`core/policy.ts:5`，上游 `src/policy.ts` 本来就用它）。
 
 `zod` 目前只是根 `devDependencies`，但仓库里已有同样的用法（`src/packages/ui-core/tui-plugins.ts:19`、
@@ -182,7 +184,7 @@ DSC 模块，唯一的外部运行时依赖是 `zod`（`core/policy.ts:5`，上�
 | 上游文件 | 处理 | 原因 |
 | --- | --- | --- |
 | `core/evals.ts`、`core/model.ts` | **原样搬**（原计划「改造」，已作废） | 原以为它们调模型；实测 0 处模型调用，`model.ts` 全是类型与纯函数，`evals.ts` 只 import core 内部模块。真正调模型的是 `app/prompts.ts` 与 `executor/dsh.ts` |
-| `app/effects.ts`、`app/outbox.ts` | 在适配层重写 | 不在 `core/` 下，属应用层；DSC 版落在 `adapters/notify.ts` 与 `passes.ts` |
+| `app/effects.ts`、`app/outbox.ts` | 在适配层重写 | 不在 `core/` 下，属应用层；DSC 版落在 `adapters/notify.ts`、`adapters/dispatch.ts`（发送泵）与 `runtime.pump()`（周期驱动）。**没有** `passes.ts` |
 | `executor/dsh.ts`、`executor/background.ts` | 重写 | DSH Session 专有 |
 | `app/migration.ts` | 丢弃 | 从旧 DSH 版本迁数据，我们没有旧数据 |
 | `app/http.ts`、`app/api.ts`、`app/resources.ts` | 丢弃 | 面板 HTTP 与部署校验，DSC 无对应入口 |
@@ -701,7 +703,7 @@ export interface SuperagentSurface {
 | 库版本载体 | `kv['store.schema']` = 11 | `PRAGMA user_version` = 1 | 库坏时也要读得出可信版本 |
 | 表结构 | 9 张 | 9 张原样 + `event` / `assignment` / `meta` | 时间线、分配、运行期元数据要有落点 |
 | 面板 | 自带 HTTP API | 快照面 + 白名单方法 | DSC 无插件路由入口 |
-| 直接消息 | 12 种 effect | 先实现 6 种 | 按需 |
+| 副作用队列 | 持久化 `effect` 表，6 种 kind（`assessment` / `launch` / `delivery` / `relay` / `notice` / `reply`） | 建表但**一次不读写**：端口直调 + 执行器内存队列 + 2 秒泵 | 少一层调度器；代价是崩溃时内存队列里那批活会丢，见 [补齐清单](superagent/backlog.md) |
 | 数据清理 | 无（自认无限增长） | P1 加保留策略 | 不能重复这个坑 |
 | 超时语义 | 工单报 `waiting`，等人回话再续 | 报 `failed`，`/sa retry` 继续 | P0 没有回复通道，`waiting` 没有出口（§9.4） |
 | 崩溃恢复 | 执行器保住会话，隔断后重连 | 起新分配 + 恢复提示词 | DSC 的 worker 是进程内 MiniAgent，宿主一死会话就没了（§9.3） |
