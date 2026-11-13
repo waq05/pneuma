@@ -28,7 +28,7 @@ const { defaultSettings, normalizeGithubAccount, GITHUB_SOURCE, MANUAL_SOURCE, D
 const { superagentScope } = await import('../../../../lib/packages/superagent/adapters/scope.js')
 const { manualScope } = await import('../../../../lib/packages/superagent/adapters/manual.js')
 const { settingsPolicy } = await import('../../../../lib/packages/superagent/core/policy.js')
-const { readSuperagentConfig, createSettingsSection } = await import('../../../../lib/packages/superagent/index.js')
+const { readSuperagentConfig, createSettingsSection, assessorTargetOf } = await import('../../../../lib/packages/superagent/index.js')
 
 after(() => { rmSync(home, { recursive: true, force: true }) })
 
@@ -152,4 +152,20 @@ test('设置面：四个 GitHub 字段能存能读，令牌环境变量缺省是
   section.save('githubRepository', '   ')
   assert.equal(section.values().githubRepository, '')
   assert.equal(readSuperagentConfig().githubRepository, '')
+})
+
+// ── 5. 判定模型：格式不对等于不配 ───────────────────────────────────────────
+
+test('判定模型：provider/model 拆得开，写不对就按「不调模型」处理', () => {
+  const of = (text) => assessorTargetOf({ ...readSuperagentConfig(), assessorModel: text })
+  assert.deepEqual(of('openai/gpt-5'), { provider: 'openai', model: 'gpt-5' })
+  // 端点名里允许带斜杠，所以按最后一个斜杠拆。
+  assert.deepEqual(of('acme/eu/claude'), { provider: 'acme/eu', model: 'claude' })
+  // 空 = 不调模型（`core/policy.ts:98` 的默认形态），不是错误。
+  assert.equal(of(''), null)
+  assert.equal(of('   '), null)
+  // 格式不对也按不配处理：模型名是手填的，写错不该让插件起不来。
+  assert.equal(of('no-slash'), null)
+  assert.equal(of('/model-only'), null)
+  assert.equal(of('provider/'), null)
 })

@@ -38,6 +38,7 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import { openStore, type DscStore } from './adapters/store.js'
 import { createGithubApi } from './adapters/github/api.js'
 import { createGithubSource } from './adapters/github/source.js'
+import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
@@ -83,6 +84,9 @@ const GITHUB_TOKEN_ENV_KEY = 'githubTokenEnv'
 
 /** 令牌环境变量的缺省名。 */
 const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
+
+/** 判定用的模型：写成 `provider/model`，空 = 不调模型（用同步规则）。 */
+const ASSESSOR_MODEL_KEY = 'assessorModel'
 
 /** 泵的间隔：设计文档 §6.3 写的是 2 秒。 */
 const PUMP_INTERVAL_MS = 2000
@@ -132,6 +136,8 @@ export interface SuperagentConfig {
   githubAllowed: string[]
   /** 令牌所在的环境变量名。 */
   githubTokenEnv: string
+  /** 判定用模型（`provider/model`）；空 = 不调模型。 */
+  assessorModel: string
 }
 
 /** 把一个配置值读成去空白的字符串；类型不对或没给都算空。 */
@@ -162,7 +168,23 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
       textOf(raw[GITHUB_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
     )],
     githubTokenEnv: textOf(raw[GITHUB_TOKEN_ENV_KEY]) || DEFAULT_TOKEN_ENV,
+    assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
   }
+}
+
+/**
+ * 把 `provider/model` 拆成判定器要的形状；空或格式不对返回 `null`（= 不调模型）。
+ *
+ * 只在这里拆一次：模型名是用户手填的，`null` 是「不调模型」的合法形态
+ * （`core/policy.ts:98`），所以格式不对时按「不配」处理，而不是抛错让插件起不来。
+ */
+export function assessorTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
+  const text = config.assessorModel.trim()
+  const cut = text.lastIndexOf('/')
+  if (cut <= 0 || cut === text.length - 1) return null
+  const provider = text.slice(0, cut).trim()
+  const model = text.slice(cut + 1).trim()
+  return provider === '' || model === '' ? null : { provider, model }
 }
 
 /**
@@ -240,6 +262,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           mono: true,
           help: t('field.githubTokenEnv.help'),
         },
+        {
+          type: 'text',
+          key: ASSESSOR_MODEL_KEY,
+          label: t('field.assessorModel.label'),
+          placeholder: 'provider/model',
+          mono: true,
+          help: t('field.assessorModel.help'),
+        },
       ]
     },
     values(): SettingsValues {
@@ -254,6 +284,7 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
         [GITHUB_ALLOWED_KEY]: config.githubAllowed.join(', '),
         [GITHUB_TOKEN_ENV_KEY]: config.githubTokenEnv,
+        [ASSESSOR_MODEL_KEY]: config.assessorModel,
       }
     },
     save(key: string, value: SettingsValue): string | void {
@@ -304,6 +335,10 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         }
         case GITHUB_TOKEN_ENV_KEY: {
           saveText(GITHUB_TOKEN_ENV_KEY, String(value).trim())
+          return
+        }
+        case ASSESSOR_MODEL_KEY: {
+          saveText(ASSESSOR_MODEL_KEY, String(value).trim())
           return
         }
         default:
@@ -427,6 +462,40 @@ export function apply(ctx: Context, passed?: unknown): void {
       .finally(() => { if (github !== null) github.busy = false })
   }
 
+  /**
+   * 判定器的一次问答：走宿主的模型服务，不建会话。
+   *
+   * 宿主没接 `llm` 时返回 `undefined`——那不是错误，是「这台机器上没有模型可用」，
+   * 判定器会退回同步规则（`adapters/assessor-select.ts`）。
+   *
+   * 为什么用窄接口而不是 import `LlmService`：本包只用到三个方法，写成本文件里的形状，
+   * 宿主那边换实现也不用跟着改（与本包执行器的做法一致）。
+   */
+  function oneShot(): AssessorComplete | undefined {
+    const llm = ctx.get('llm') as {
+      route(): { api: string; baseUrl: string; apiKey: string; model: string }
+      routeTo(provider: string, model: string, effort: string): { api: string; baseUrl: string; apiKey: string; model: string }
+      stream(api: string, request: Record<string, unknown>, handlers: { onDelta(delta: string): void }): Promise<{ text: string }>
+    } | undefined
+    if (llm === undefined) return undefined
+    return async (prompt) => {
+      const target = assessorTargetOf(config())
+      const route = target === null ? llm.route() : llm.routeTo(target.provider, target.model, 'medium')
+      const result = await llm.stream(route.api, {
+        baseUrl: route.baseUrl,
+        apiKey: route.apiKey,
+        model: route.model,
+        maxTokens: 800,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: '你只输出一个 JSON 对象，不要解释。' },
+          { role: 'user', content: prompt },
+        ],
+      }, { onDelta: () => {} })
+      return result.text
+    }
+  }
+
   function ensure(): SuperagentRuntime | null {
     if (runtime !== null) return runtime
     if (Date.now() < retryAt) return null
@@ -436,6 +505,7 @@ export function apply(ctx: Context, passed?: unknown): void {
       // 多认一个硬依赖。
       // 执行器从 `ctx` 取模型 / 工具 / 守卫；仓库路径、并发上限、超时都从设置现读——
       // 设置页改了，下一张工单 / 下一拍就用新值。
+      const complete = oneShot()
       const opened = new SuperagentRuntime(store, {
         log: (line) => { console.warn(line) },
         ctx,
@@ -444,6 +514,9 @@ export function apply(ctx: Context, passed?: unknown): void {
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
         settings: () => defaultSettings(githubAccount()),
         scope: superagentScope(githubAccount),
+        // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
+        assessorModel: assessorTargetOf(config()),
+        ...(complete === undefined ? {} : { assessorComplete: complete }),
       })
       runtime = opened
       warned = false

@@ -15,6 +15,8 @@
   "field.githubAllowed.help": "GitHub 登录名，逗号分隔。不在名单里的人 @ 机器人不会建单——这是授权边界，不是通知设置。",
   "field.githubTokenEnv.label": "令牌所在的环境变量",
   "field.githubTokenEnv.help": "默认读 GITHUB_TOKEN。令牌不落盘、不写进配置文件；想换一个令牌就改这个变量名或重启宿主。",
+  "field.assessorModel.label": "判定用的模型",
+  "field.assessorModel.help": "写成 provider/model。留空表示不调模型，只接「明确对智能体说」的请求；填了之后，拿不准的请求也交给模型判一次。改完要重开宿主。",
   "save.maxWorkersBad": "并发上限要填数字（1–16）",
   "save.timeoutBad": "超时秒数要填数字（0 表示不限）",
   "save.githubRepositoryBad": "仓库要写成 owner/name 的样子",
