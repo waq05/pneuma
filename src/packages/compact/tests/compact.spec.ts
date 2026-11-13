@@ -58,7 +58,7 @@ interface Harness {
 
 /** 假 ctx：apply 用到的面都实现，`effect` 真跑回调（否则注册不会发生）。 */
 function mount(): Harness {
-  const harness = {
+  const harness: Harness = {
     service: undefined as unknown as CompactService,
     section: undefined as unknown as SettingsSectionSpec,
     commands: new Map<
@@ -66,6 +66,8 @@ function mount(): Harness {
       { spec: { name: string; args: string; description: string }; handler: (input: unknown) => unknown }
     >(),
     notices: [] as string[],
+    // 真正的实现挂在 apply 之后（它要拿 ctx 里的假 llm 与假会话），这里先占位。
+    check: async () => [],
   }
   let scenario: Scenario = { window: 128_000, reserve: 8_192 }
   const session = {
@@ -125,7 +127,7 @@ function mount(): Harness {
       return typeof off === 'function' ? off : () => {}
     },
   }
-  compactPlugin.apply(ctx as never)
+  compactPlugin.apply(ctx as never, {} as never)
   harness.check = async (messages, next) => {
     scenario = next
     session.messages = messages
@@ -157,7 +159,7 @@ const harness = mount()
 test('插件对象：名字、提供服务、六个注入', () => {
   expect(compactPlugin.name).toBe('compact')
   expect(compactPlugin.provide).toBe('compact')
-  expect([...(compactPlugin.inject ?? [])]).toEqual(['llm', 'session', 'commands', 'settings', 'prompt', 'tools'])
+  expect(Array.from((compactPlugin.inject ?? []) as unknown as string[])).toEqual(['llm', 'session', 'commands', 'settings', 'prompt', 'tools'])
   expect(typeof compactPlugin.apply).toBe('function')
 })
 
