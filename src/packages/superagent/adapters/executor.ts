@@ -64,6 +64,7 @@
  */
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { CoreEvent } from '@pneuma/runtime/core/events.js'
@@ -403,23 +404,29 @@ export function worktreeNameOf(ticket: Pick<Ticket, 'id' | 'title' | 'execution'
   return `${readable === '' ? 'ticket' : readable}-${ticket.id.slice(0, 8)}`
 }
 
-/** 系统提示的三段模板（设计文档 §6.2.1 原文）；`sections` 给「系统提示」卡用。 */
-export function buildWorkerPrompt(input: WorkerPromptInput): { text: string; sections: PromptSectionView[] } {
-  const commands = input.blockedCommands?.length
-    ? `除内置禁用之外，以下命令不允许使用：${input.blockedCommands.join('、')}`
-    : '没有额外禁用的命令；禁止开 PR、禁止推远端。'
-  const text = `你是超级智能体的执行者，负责一个工单。工单在独立的工作目录里，改动不要越出这个目录。
+/** 提示词文件名：运行时读 `<包根>/prompts/worker.md`，构建时整目录抄进产物（`scripts/build-packages.mjs`）。 */
+const WORKER_PROMPT_FILE = 'worker.md'
+
+/**
+ * 内置兜底：与 `prompts/worker.md` 逐字一致（包级测试会把两边比一遍）。
+ *
+ * 为什么留兜底：`tsc` 只搬 `.ts`，`prompts/**` 是 `scripts/build-packages.mjs` 在打包那一步
+ * 抄进产物的。源码树里直接跑包级测试（`tests/` import 的是 `lib/`）时，产物可能还没拷过
+ * prompts；没有兜底就是「提示词读不到 → worker 一个都起不来」，而这条路径在 CI 门禁里必须
+ * 自己站得住。兜底只在读文件失败时用，正常运行走的仍然是 md。
+ */
+const FALLBACK_WORKER_PROMPT = `你是超级智能体的执行者，负责一个工单。工单在独立的工作目录里，改动不要越出这个目录。
 
 <工单>
-标题：${input.title}
-要求：${input.body}
-分支：${input.branch}
+标题：{{title}}
+要求：{{body}}
+分支：{{branch}}
 </工单>
 
 <环境>
-仓库：${input.repo}
-工作目录：${input.dir}
-可用命令：${commands}
+仓库：{{repo}}
+工作目录：{{dir}}
+可用命令：{{commands}}
 </环境>
 
 <交付要求>
@@ -442,6 +449,68 @@ export function buildWorkerPrompt(input: WorkerPromptInput): { text: string; sec
 
 只在真有必要时调；状态没变就别重复报。
 </报告状态>`
+
+/**
+ * 读一份提示词 md，并剥掉文件头的说明注释。
+ *
+ * 注释里写的是占位符约定，是给改文案的人看的，不是提示词的一部分：不剥掉就会连
+ * `{{title}}` 的说明一起交给模型，白占上下文还容易被当成指令。
+ *
+ * @returns 可供替换的模板；文件不在、读不出来、或者剥完是空文件，都给 null
+ */
+function readWorkerPromptFile(file: string): string | null {
+  try {
+    const body = readFileSync(file, 'utf8')
+      .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
+      .trim()
+    return body === '' ? null : body
+  } catch {
+    // 构建还没跑、或拷贝漏了文件：交给调用方用兜底，不在这里抛——一张提示词文件缺失
+    // 不该让整个插件起不来。
+    return null
+  }
+}
+
+/** 已经读过的模板：提示词在运行期不会变，一次进程只读一次盘。 */
+let cachedWorkerPrompt: string | undefined
+
+/** 默认位置：`<包根>/prompts/worker.md`（本文件编译后在 `adapters/` 下，包根是它的上一级）。 */
+function workerPromptTemplate(): string {
+  if (cachedWorkerPrompt === undefined) {
+    cachedWorkerPrompt =
+      readWorkerPromptFile(join(import.meta.dirname, '..', 'prompts', WORKER_PROMPT_FILE)) ?? FALLBACK_WORKER_PROMPT
+  }
+  return cachedWorkerPrompt
+}
+
+/**
+ * 系统提示的三段模板（设计文档 §6.2.1 原文，正文在 `prompts/worker.md`）；`sections` 给「系统提示」卡用。
+ *
+ * @param options.templatePath - 只给包级测试用：指向一个不存在的文件，确定性地验「产物缺 md」的兜底。
+ *   正常调用不要传。
+ */
+export function buildWorkerPrompt(
+  input: WorkerPromptInput,
+  options: { templatePath?: string } = {},
+): { text: string; sections: PromptSectionView[] } {
+  const template =
+    options.templatePath === undefined
+      ? workerPromptTemplate()
+      : (readWorkerPromptFile(options.templatePath) ?? FALLBACK_WORKER_PROMPT)
+  const commands = input.blockedCommands?.length
+    ? `除内置禁用之外，以下命令不允许使用：${input.blockedCommands.join('、')}`
+    : '没有额外禁用的命令；禁止开 PR、禁止推远端。'
+  const values: Record<string, string> = {
+    title: input.title,
+    body: input.body,
+    branch: input.branch,
+    repo: input.repo,
+    dir: input.dir,
+    commands,
+  }
+  // 一次 replace 走完所有占位符；表里没有的名字原样留着（宁可模型看到 `{{typo}}`，
+  // 也不要悄悄替换成空串——那样拼错的占位符永远发现不了）。
+  const text = template.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => values[name] ?? whole)
   return {
     text,
     // worker 的提示词不在内核的段注册表里（它是本包直接拼的），给「系统提示」卡一段合成的段：

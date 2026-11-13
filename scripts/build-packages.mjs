@@ -123,6 +123,30 @@ for (const pkg of packages) {
       }
     }
   }
+  /**
+   * 提示词不是模块：tsc 只搬 `.ts`，`prompts/*.md` 要在这里原样抄进产物。
+   *
+   * 与 locale 同一个理由的两个落点：
+   *   - 适配包目录（`lib/node_modules/@pneuma/<id>/prompts`）：发行版按包目录取文件；
+   *   - 真实模块目录（`lib/packages/<id>/prompts`）：包自己按 `import.meta.dirname` 读
+   *     （`adapters/executor.ts` 的 `buildWorkerPrompt`）。少了这一份，运行期就只剩内置兜底，
+   *     源码里改的文案在成品里永远不生效——这种漂移最难查。
+   *
+   * 只拷 `.md`：目录里可能还放着设计草图、截图之类，模型不该看见；目录不存在就跳过
+   * （绝大多数包没有提示词）。
+   */
+  const promptsSrc = join(pkg.dir, 'prompts')
+  if (existsSync(promptsSrc)) {
+    for (const file of walkFiles(promptsSrc)) {
+      if (!file.endsWith('.md')) continue
+      const rel = relative(promptsSrc, file)
+      for (const base of [dest, srcPkgDir]) {
+        const target = join(base, 'prompts', rel)
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, readFileSync(file))
+      }
+    }
+  }
   const pneuma = pkg.manifest.pneuma ?? {}
   /**
    * 只保留产物里**真的存在**的入口。
@@ -172,13 +196,14 @@ for (const pkg of packages) {
    * 就会出现「源码里 main 写着 index.js，装上去那份没有 main」——发行版解析落回默认，
    * 类型在编辑器里全丢，而且看不出来。
    *
-   * files 只列产物里真的有的：README 不进包（它留在源码树），locale 有才列。
+   * files 只列产物里真的有的：README 不进包（它留在源码树），locale / prompts 有才列。
    */
   const outFiles = [
     'index.js',
     'index.d.ts',
     ...(existsSync(pkg.patchFile) ? ['cordis.patch.yml'] : []),
     ...(existsSync(localeSrc) ? ['locale/**'] : []),
+    ...(existsSync(promptsSrc) ? ['prompts/**'] : []),
   ]
   const outManifest = {
     name: pkg.manifest.name ?? `@pneuma/${pkg.id}`,

@@ -18,7 +18,8 @@
  *  14. `deliver` 只入队，投递 handler 逐条重读工单、按顺序把输入交给 worker；
  *  15. 报告工具报 `blocked`：回合正常结束时不会被改写回 `ready`，问题带在报告上；
  *  16. 报告工具报 `progress`：只是中途进展，回合正常结束仍记 `ready`；
- *  17. 按会话反查不到 worker 时返回 false，工具据此抛错。
+ *  17. 按会话反查不到 worker 时返回 false，工具据此抛错；
+ *  18. 系统提示的内置兜底与 `prompts/worker.md` 逐字一致：产物缺 md 时文案不会漂移。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -30,12 +31,12 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
+const { WorkerExecutor, buildWorkerPrompt, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
   await import('../../../../lib/packages/superagent/adapters/executor.js')
 const { createReportTool } = await import('../../../../lib/packages/superagent/tools.js')
 const { ensureWorktree } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
@@ -449,6 +450,68 @@ test('报告映射：turn/end 正常收尾 → ready，error → failed', () => 
   // 主动停止 / 被打断不往已结束的分配上补报告。
   assert.equal(turnEndReport('aborted', '半截正文'), null)
   assert.equal(turnEndReport('completed', '收尾', undefined, true), null)
+})
+
+test('系统提示：内置兜底与 prompts/worker.md 逐字一致，产物缺 md 时照样拼得出来', () => {
+  const input = {
+    title: '改登录页文案',
+    body: '把「登录」按钮改成「进入」',
+    branch: 'agent/fix-login-8f9a1c69',
+    repo: join(tmpdir(), 'repo'),
+    dir: join(tmpdir(), 'worktrees', 'fix-login-8f9a1c69'),
+    blockedCommands: ['pnpm publish', 'git push'],
+  }
+  const values = {
+    title: input.title,
+    body: input.body,
+    branch: input.branch,
+    repo: input.repo,
+    dir: input.dir,
+    commands: `除内置禁用之外，以下命令不允许使用：${input.blockedCommands.join('、')}`,
+  }
+  // 文案真源是**源码树**里的 md（tests/../prompts/worker.md），不是产物里那一份：
+  // 拿产物当参照就成了自己跟自己比，构建漏拷也照样绿。
+  const template = readFileSync(new URL('../prompts/worker.md', import.meta.url), 'utf8')
+  const fromMd = template
+    .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
+    .trim()
+    .replace(/\{\{(\w+)\}\}/g, (whole, name) => values[name] ?? whole)
+
+  assert.match(fromMd, /^你是超级智能体的执行者，负责一个工单。/, 'md 正文应从定稿第一句开始（文件头注释要剥掉）')
+  assert.match(
+    fromMd,
+    /<工单>[\s\S]*<环境>[\s\S]*<交付要求>[\s\S]*<报告状态>/,
+    '三段（工单 / 环境 / 交付要求）与报告状态都应在',
+  )
+
+  // 正常路径：读产物里的 prompts/worker.md（构建还没拷 prompts 时会自动落到兜底）。
+  assert.equal(buildWorkerPrompt(input).text, fromMd, '运行时拼出的提示词必须与 md 逐字一致')
+
+  // 兜底路径：指向一个不存在的文件，确定性地模拟「产物缺 prompts/worker.md」。
+  const missing = join(tmpdir(), `superagent-no-prompt-${process.pid}`, 'worker.md')
+  assert.equal(existsSync(missing), false, '这个路径必须不存在，否则测的不是兜底')
+  assert.equal(
+    buildWorkerPrompt(input, { templatePath: missing }).text,
+    fromMd,
+    '兜底文案必须与 md 一字不差，否则改一句 md 就悄悄漂移',
+  )
+
+  // 认不出的占位符原样保留：拼错名字时模型会看到 {{typo}}，而不是被悄悄替换成空串。
+  const dir = mkdtempSync(join(tmpdir(), 'superagent-worker-prompt-'))
+  roots.push(dir)
+  try {
+    const custom = join(dir, 'worker.md')
+    writeFileSync(custom, '<!-- 说明 -->\n标题：{{title}}，未知：{{unknown}}\n', 'utf8')
+    assert.equal(buildWorkerPrompt(input, { templatePath: custom }).text, '标题：改登录页文案，未知：{{unknown}}')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // 段清单保持原样：一段合成段，字数是拼好的正文长度。
+  const prompt = buildWorkerPrompt(input)
+  assert.deepEqual(prompt.sections, [
+    { id: 'superagent-worker', order: 0, chars: prompt.text.length, from: 'plugin:superagent' },
+  ])
 })
 
 test('临时故障判据：状态码优先，文本兜底', () => {

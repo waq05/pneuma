@@ -24,6 +24,7 @@
     "core/**",
     "cordis.patch.yml",
     "locale/**",
+    "prompts/**",
     "README.md"
   ],
   "pneuma": {
