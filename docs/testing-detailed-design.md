@@ -968,7 +968,7 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 | 计数 | 文件末尾 `通过 N` + `process.exit(1)` | 不需要，runner 自己汇总 |
 | 源码文本断言 | `assert.match(source, /name: 'todo_write'/)` | **必须重写**：断言导出的对象字段，或把 schema 从 `apply` 里提出来导出后再断言 |
 
-第三条是重点。以 [todo.test.mjs](../src/packages/todo/tests/todo.test.mjs) 为例，现在有 4 条断言是 `assert.match(source, /.../)`：改引号就红、改逻辑但保留字符串就绿。迁移时要做的是：
+第三条是重点。以 src/packages/todo/tests/todo.test.mjs 为例（已迁为 	odo.spec.ts），现在有 4 条断言是 `assert.match(source, /.../)`：改引号就红、改逻辑但保留字符串就绿。迁移时要做的是：
 
 - 能看到工具定义的地方，断言真实对象（`todoPlugin` 上挂的东西、`ctx.tools.register` 收到的参数）。
 - 真拿不到的（工具在 `apply` 里现造的），**先把 schema 提成具名导出**，再断言它——这是对源码的小重构，但换来一条会红的测试，值得。

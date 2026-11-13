@@ -115,7 +115,7 @@ v1 用 Vitest 补上「细粒度单测 + 覆盖率 + PR 门禁」三项基础设
 
 **结论**：25 项里 22 项采纳，3 项不采纳。做完后，**核心能力全部达到 L1 或 L2**，没有一项留在 L3。
 
-**一条重要修正**：第 4、5 两项是 v1 设计漏掉的。仓库早就有 119 条包级测试（`src/packages/<id>/tests/*.test.mjs`，12,170 行，91 个包全覆盖），定位就是「本包自己的契约」（[package-tests.mjs](../scripts/package-tests.mjs) 第 16-20 行）。所以 dsc 不是「没有单测」，而是「插件包有单测但不在 CI、内核没有单测」。这让 P1 的性质从「从零建」变成「迁移 + 补齐」。
+**一条重要修正**：第 4、5 两项是 v1 设计漏掉的。仓库早就有 119 条包级测试（`src/packages/<id>/tests/*.test.mjs`，12,170 行，91 个包全覆盖），定位就是「本包自己的契约」（当时由 scripts/package-tests.mjs 跑，第 16-20 行说明它的边界；**该脚本已随 P1b 完成而删除**）。所以 dsc 不是「没有单测」，而是「插件包有单测但不在 CI、内核没有单测」。这让 P1 的性质从「从零建」变成「迁移 + 补齐」。
 
 ---
 
@@ -197,7 +197,7 @@ tests/snapshots/session/
 
 **这是 v1 设计最大的漏洞**：dsc 现在 46 条端到端探针全用假 SSE，等于「自己造的假模型验证自己的客户端」。LLM 适配层（SSE 解析、tool_call 格式、thinking 档位、token 计数）从没被真模型碰过。
 
-设计 5 条冒烟（对齐 DSH 的 with-key policy 与 [docs/testing.md:23-25](../../deepseek-harness/deepseek-harness/docs/testing.md)）：
+设计 5 条冒烟（对齐 DSH 的 with-key policy 与 DSH 的 docs/testing.md 第 23-25 行（外部仓库 D:\deepseek-harness））：
 
 | # | 冒烟 | 验什么 |
 | --- | --- | --- |
@@ -337,7 +337,7 @@ vitest.config.ts
 
 ### 9.2 明确不学 DSH 的 100% 门禁
 
-DSH 是 per-file 四项 100%，且它自己的 [docs/testing.md](../../deepseek-harness/deepseek-harness/docs/testing.md) 第 10 行写着「行覆盖必要但不充分」。dsc 存量几乎没有单测，一上来设 100% 只会逼出一批「调用一次不断言」的凑数测试，比没有更坏。
+DSH 是 per-file 四项 100%，且它自己的 docs/testing.md（外部仓库 D:\deepseek-harness） 第 10 行写着「行覆盖必要但不充分」。dsc 存量几乎没有单测，一上来设 100% 只会逼出一批「调用一次不断言」的凑数测试，比没有更坏。
 
 ### 9.3 排除项
 
@@ -725,7 +725,7 @@ I（技能与工具数据）、P（回合与命令）、Q（持久 shell 与工�
 3. 还原回归，跑，**必须变绿**。
 4. 在提交信息里写一句「反向验证：改了 X，测试 Y 变红」。
 
-这条对齐 DSH 的 [docs/testing.md:40](../../deepseek-harness/deepseek-harness/docs/testing.md)「A guard only guards if the regression fails it」。不做的后果就是「测试数量涨、回归拦不住」，这是 AI 协作写测试最容易翻车的地方。
+这条对齐 DSH 的 DSH 的 docs/testing.md 第 40 行（外部仓库 D:\deepseek-harness）「A guard only guards if the regression fails it」。不做的后果就是「测试数量涨、回归拦不住」，这是 AI 协作写测试最容易翻车的地方。
 
 ---
 
