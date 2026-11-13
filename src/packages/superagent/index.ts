@@ -889,6 +889,9 @@ export function apply(ctx: Context, passed?: unknown): void {
         ...(complete === undefined ? {} : { assessorComplete: complete }),
         // 发送方现读：两个来源在本函数返回之后才起来（`startGithub` / `startFeishu`）。
         senders: outboxSenders,
+        // 判定器的线程上下文要读 GitHub（backlog S1）：来源同样是本函数返回后才起，
+        // 所以给 getter；没配 GitHub 时它是 `null`，判定器就按没有上下文判。
+        githubApi: () => github?.api ?? null,
       })
       runtime = opened
       warned = false

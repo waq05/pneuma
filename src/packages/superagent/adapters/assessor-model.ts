@@ -53,11 +53,26 @@ const ModelOutputSchema = z.object({
 /** 一次问答：给提示词，拿回复正文。装配处接宿主模型，测试传假函数。 */
 export type AssessorComplete = (prompt: string) => Promise<string>
 
+/**
+ * 取一条 Trigger 的线程上下文（可读文本；没有就 `undefined`）。
+ *
+ * 为什么由外面注入而不是这里自己读 GitHub：判定器不认识来源，也不该认识。读窗口要令牌、
+ * 要分页、要按来源判「这条有没有对话」——都是适配层的事；这里只要一段能拼进提示词的文本。
+ */
+export type AssessorContext = (trigger: Trigger) => Promise<string | undefined>
+
 /** 装配参数。 */
 export interface ModelAssessorOptions {
   complete: AssessorComplete
   /** 现读设置：规则表与接单模式改了，下一条判定就用新的。 */
   settings: () => Settings
+  /**
+   * 线程上下文；不给 = 提示词里没有「上下文」这一节（与加它之前逐字一致）。
+   *
+   * 读失败由本文件兜住（记一行日志、按没有上下文继续判），不让「读不到前后文」变成
+   * 「这条判不了」——那会把一条本来能判的请求推给超时重排。
+   */
+  context?: AssessorContext
   onError?: (error: unknown, evalId: string) => void
   log?: (line: string) => void
 }
@@ -81,8 +96,13 @@ function jsonOf(reply: string): unknown {
  *
  * 规则表的每一行都是核心里的原文（`core/policy.ts:74-77` 的默认值或用户改过的），不在这里
  * 转述：转述就等于在这里藏了第二份规则表。
+ *
+ * `context` 是线程窗口渲染出来的可读文本（`runtime.ts` 的 `renderThreadContext`）。**必须写明
+ * 它只用来判断「这条消息是不是在请求干活」**：不带这句，模型会把上下文里的旧需求当成这张工单
+ * 的正文，于是「上一条评论要 A、这一条只是回一句收到」会被判成又一个 A。它也可能被截断 /
+ * 省略，所以再说一句「不是工单正文、可能不完整」，逼模型只把上下文当语气与指代线索。
  */
-export function assessmentPrompt(trigger: Trigger, settings: Settings): string {
+export function assessmentPrompt(trigger: Trigger, settings: Settings, context?: string): string {
   const rules = settings.policy.rules.filter((rule) => rule.enabled)
     .map((rule) => `- ${rule.id}（${rule.name}）：${rule.instruction}`)
     .join('\n')
@@ -99,6 +119,11 @@ export function assessmentPrompt(trigger: Trigger, settings: Settings): string {
     '正文：',
     trigger.text,
     '',
+    ...context === undefined ? [] : [
+      '上下文（只用来判断这条消息是不是在请求干活，不是工单正文；可能省略了中间的发言，不要把它当成本次要处理的需求）：',
+      context,
+      '',
+    ],
     '只输出一个 JSON 对象，不要解释、不要 Markdown 代码块。字段：',
     'decision: "accept" | "ignore" | "unavailable"',
     'direction: 方向判定，必须是对象 {implementation_requested: boolean（是不是要改代码）, ' +
@@ -145,6 +170,28 @@ export class ModelAssessor implements Assessor {
   }
 
   /**
+   * 取一条 Trigger 的线程上下文。
+   *
+   * 读失败只记一行、返回 `undefined`：判定器该在「没有前后文」的状态下照常判。把异常抛给
+   * `drainAsync` 的 catch 也不是不行，但那会走 `onError`（判定失败）；而这里的事实是
+   * 「上下文没读到」，不是「这一条判不了」——两者混在一起，日志里会多出误导人的失败记录。
+   */
+  private async contextOf(trigger: Trigger, evalId: string): Promise<string | undefined> {
+    const load = this.options.context
+    if (load === undefined) return undefined
+    try {
+      const text = await load(trigger)
+      return text === undefined || text.trim() === '' ? undefined : text
+    } catch (error) {
+      this.options.log?.(
+        `[superagent] 判定 ${evalId} 的线程上下文没读到（按没有上下文判定）：` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      )
+      return undefined
+    }
+  }
+
+  /**
    * 真正干活的那一份；测试直接 await 它。
    *
    * @returns 这一拍建出的工单 id。模型是异步的，这里必然为空——调用方不该拿它做判断。
@@ -163,7 +210,10 @@ export class ModelAssessor implements Assessor {
         // 先记「候选已投递」，截止时间才从这一刻开始算（见文件头第 1 条）。
         engine.candidateDelivered(item.evalId)
         const settings = this.options.settings()
-        const reply = await this.options.complete(assessmentPrompt(trigger, settings))
+        // 上下文要现读（一次网络往返），所以放在投递之后：读它花掉的时间也算在 Eval 的
+        // 截止时间里，而不是在「投递之前」偷偷攒一段不计时的等待。
+        const context = await this.contextOf(trigger, item.evalId)
+        const reply = await this.options.complete(assessmentPrompt(trigger, settings, context))
         const parsed = ModelOutputSchema.safeParse(jsonOf(reply))
         if (!parsed.success) {
           this.options.log?.(`[superagent] 判定 ${item.evalId} 的模型输出不合形状：${parsed.error.message.slice(0, 200)}`)

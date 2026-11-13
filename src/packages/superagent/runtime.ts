@@ -20,6 +20,8 @@ import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, t
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
+import type { GithubApi } from './adapters/github/api.js'
+import { readThreadWindow, type ThreadWindow } from './adapters/github/read.js'
 import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
 import { EffectQueue } from './adapters/effects.js'
 import type { FeishuThreads } from './adapters/feishu/loops.js'
@@ -168,6 +170,14 @@ export interface RuntimeOptions {
    * （P0 的行为，也是没配飞书 / 没令牌时的行为）。
    */
   senders?: () => Partial<Record<string, MessageSender>>
+  /**
+   * GitHub 来源的 API 客户端；不给 = 判定器拿不到线程上下文（不影响判定本身）。
+   *
+   * 为什么是 getter：GitHub 来源在运行期建好之后才起来（它要拿运行期的 `sourceBridge`），
+   * 令牌与仓库还在设置里；构造时算死就永远是 `null`。为什么由外面给而不是运行期自己建：
+   * 令牌从哪个环境变量读只有 `index.ts` 的设置分区知道，运行期再读一遍就是两套配置来源。
+   */
+  githubApi?: () => GithubApi | null
 }
 
 /**
@@ -206,6 +216,59 @@ function githubNumber(thread: string): number | undefined {
   if (!thread.startsWith(GITHUB_THREAD_PREFIX)) return undefined
   const number = Number(thread.slice(GITHUB_THREAD_PREFIX.length))
   return Number.isInteger(number) && number > 0 ? number : undefined
+}
+
+/**
+ * 一次判定的线程窗口最多读几页评论。上游缺省是 10 页（`deployment.ts:19`），这里照抄。
+ *
+ * 每页 100 条，10 页 = 1000 条；再长的线程里触发消息本来就找不到了，多读的只是配额。
+ */
+const THREAD_CONTEXT_MAX_PAGES = 10
+
+/** 窗口里普通消息保留的字符数（上游 `WINDOW_CHARS`，`app/assessment.ts:37`）。 */
+const THREAD_WINDOW_CHARS = 400
+
+/** 触发消息近邻保留的字符数（上游 `NEAR_CHARS`）：前后两条往往就是「在回谁」的答案。 */
+const THREAD_NEAR_CHARS = 1200
+
+/**
+ * 读上下文的硬上限：15 秒（上游 `admissionContextTimeoutMs` 的默认值）。
+ *
+ * 为什么必须有：判定器是**同步等**这份上下文的，而 GitHub 的 api 自带 30 秒请求超时、
+ * 最多读 10 页——最坏情况 300 秒，早把 Eval 的截止时间压穿了。上游也是 15 秒上限。
+ * 超时不取消在途请求（那要改 api 签名），只是不再等它：判定按「没有上下文」继续。
+ */
+const THREAD_CONTEXT_TIMEOUT_MS = 15_000
+
+/**
+ * 把窗口渲染成提示词里的一段可读文本。
+ *
+ * 为什么要限长：一条评论最长 65k 字，11 条拼起来会把 800 token 的判定回复挤没。上游同样
+ * 按 400 / 1200 字截断（`app/assessment.ts:198-202`），这里照抄那两档。
+ *
+ * 为什么触发消息本身不重复正文：提示词上面「正文」一节已经给了一次；重复只会让模型以为
+ * 有两份不同的需求，还白花 token。上游也是用 `trigger: true` 标记而不重复（`assessment.ts:200`）。
+ *
+ * 触发消息不在窗口里时（行内 review 评论不在这份会话列表里），标题直说「没找到」：
+ * 让模型知道上下文可能缺了它所在的那一段，而不是把「最早的 5 条」当成完整前后文。
+ */
+export function renderThreadContext(window: ThreadWindow, sourceId: string): string {
+  const trigger = window.messages.findIndex((message) => message.id === sourceId)
+  const omittedBefore = window.messages.reduce((sum, message) => sum + message.omittedBefore, 0)
+  const header = window.sourceFound
+    ? `对话上下文（本线程共 ${String(window.loaded)} 条，省略前 ${String(omittedBefore)} 条、后 ${String(window.omittedAfter)} 条）：`
+    : `对话上下文（本线程共 ${String(window.loaded)} 条，没找到这条消息，以下只列最早的几条）：`
+  const center = trigger >= 0 ? window.messages[trigger]!.position : -1
+  const lines = window.messages.map((message, index) => {
+    const who = `${message.at === '' ? '时刻未知' : message.at} ${message.author}${message.bot ? '（机器人）' : ''}`
+    if (index === trigger) return `- ${who}：（这条就是上面的请求正文）`
+    const limit = Math.abs(message.position - center) <= 2 ? THREAD_NEAR_CHARS : THREAD_WINDOW_CHARS
+    const text = message.text.length > limit
+      ? `${message.text.slice(0, limit)}…（共 ${String(message.text.length)} 字）`
+      : message.text
+    return `- ${who}：${text}`
+  })
+  return [header, ...lines].join('\n')
 }
 
 /**
@@ -257,6 +320,8 @@ export class SuperagentRuntime {
   private readonly settingsOf: () => Settings
   /** 来源范围：准入闸拿它判「这条消息这个来源收不收」（`core/policy.ts:186-187`）。 */
   private readonly scope: SourceScope
+  /** GitHub 来源的 API 客户端 getter；来源没起来时是 `null`（见 `RuntimeOptions.githubApi`）。 */
+  private readonly githubApi: () => GithubApi | null
   /** 上一次算出来的策略，连同算它用的设置版本戳；版本没变就复用。 */
   private policyCache: { stamp: string; policy: ReturnType<typeof settingsPolicy> } | null = null
   /** 单工单超时（秒）的 getter；每拍现读，设置页改完下一拍就按新上限判。 */
@@ -280,10 +345,14 @@ export class SuperagentRuntime {
     this.policyCache = null
     this.settingsOf = options.settings ?? (() => defaultSettings())
     this.scope = options.scope ?? manualScope
+    this.githubApi = options.githubApi ?? (() => null)
     // 配了模型且宿主给了模型出口才用模型版；否则是 P0 那套同步规则（`assessor-select.ts`）。
+    // `context` 走运行期自己的 `threadContext`：判定器只拿到「一条 Trigger → 一段文本」的函数，
+    // 它不需要知道 GitHub 的编号、令牌与分页都在运行期这一侧。
     this.assessor = selectAssessor({
       model: options.assessorModel ?? null,
       settings: this.settingsOf,
+      context: (trigger) => this.threadContext(trigger),
       ...(options.assessorComplete === undefined ? {} : { complete: options.assessorComplete }),
       onError: (error, evalId) => this.log(`[superagent] 判定 ${evalId} 失败：${describe(error)}`),
       log: (line) => this.log(line),
@@ -417,6 +486,56 @@ export class SuperagentRuntime {
     const meta = this.repos.threads.get(thread)?.meta
     if (typeof meta?.['isPr'] === 'boolean') return meta['isPr']
     return this.repos.triggers.latestOn(thread)?.meta['isPr'] === true
+  }
+
+  /**
+   * 一条 Trigger 的线程上下文，渲染成提示词里的一节（backlog S1，对齐上游 `admissionContext`
+   * 与 `githubThreadContext`）。
+   *
+   * 只对 GitHub 生效：飞书来源有自己的读法，判定器目前也只给 GitHub 的候选补上下文；别的来源
+   * 一律 `undefined`，提示词里就不会多出「上下文」那一节。
+   *
+   * 取编号只认 `trigger.meta.number`（`github/trigger.ts:163/192/203/255` 都写它）：默认分支 CI
+   * 的 Trigger 没有编号（`github:ci:main`），没有对话可读，直接 `undefined`。
+   *
+   * **失败只记日志、返回 `undefined`**：读上下文是判定的**加分项**。GitHub 抖一下、令牌过期、
+   * 行内 review 读不到根评论——这些都不该让一条本来能判的请求变成「判定器不可用」，否则一次
+   * 网络抽风就会把请求推给超时重排。
+   *
+   * 行内 review 评论不在会话窗口里（见 `readThreadWindow` 的注释）：那时 `sourceFound` 为
+   * false，渲染出的标题会说明「没找到这条消息」，模型据此知道上下文不完整。
+   */
+  async threadContext(trigger: Trigger): Promise<string | undefined> {
+    if (trigger.source !== GITHUB_SOURCE) return undefined
+    const number = Number(trigger.meta.number)
+    if (!Number.isInteger(number) || number <= 0) return undefined
+    const api = this.githubApi()
+    if (api === null) return undefined
+    const commentId = trigger.meta.commentId
+    // 触发消息的 id 与会话消息的 id 同形（网页地址）；没有网页地址时退回评论数字 id。
+    const messageId = trigger.url ?? (typeof commentId === 'number' ? String(commentId) : '')
+    try {
+      // 超时用 race 而不是 AbortSignal：`readThreadWindow` 不收 signal，加一个要改它的签名与
+      // 整个 api 层。判定器只需要「别无限等」，不需要真的把请求掐掉。
+      const window = await Promise.race([
+        readThreadWindow(api, number, messageId, THREAD_CONTEXT_MAX_PAGES),
+        new Promise<null>((resolve) => {
+          const timer = setTimeout(() => resolve(null), THREAD_CONTEXT_TIMEOUT_MS)
+          timer.unref?.()
+        }),
+      ])
+      if (window === null) {
+        this.log(
+          `[superagent] 触发器 ${trigger.id} 的对话上下文读超时（${String(THREAD_CONTEXT_TIMEOUT_MS / 1000)} 秒，按没有上下文判定）`,
+        )
+        return undefined
+      }
+      if (window.messages.length === 0) return undefined
+      return renderThreadContext(window, messageId)
+    } catch (error) {
+      this.log(`[superagent] 触发器 ${trigger.id} 的对话上下文没读到（按没有上下文判定）：${describe(error)}`)
+      return undefined
+    }
   }
 
   /**

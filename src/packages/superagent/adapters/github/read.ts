@@ -1,14 +1,18 @@
 /**
  * GitHub 的只读面：CI 快照，以及「把 Issue / PR / 评论读成人能看懂的几条消息」。
  *
- * 搬的是上游 `sources/github-read.ts:1-154` 的整个只读面（CI 快照 + 对话读法）；**没搬的是
- * `githubThreadContext`（`github-read.ts:159-177`）**，原因是它依赖上游 `sources/kind.ts` 的
- * `ThreadContext` / `ContextPart`——那套接口的语义是「按 part（root / parent / thread）增量读上下文，
- * 回一个 `{ messages, body, status, next }` 给评估器」，DSC 没有这个概念（`core/` 里上下文由
- * 执行器自己组织）。缺了它的后果不是丢事件：行内 review 评论的 Trigger 照样进来，只是**评估侧
- * 要自己补读一次 review 线程**才能看到前后文——用本文件的 `readGithub(api, 'github/pulls/9/thread/5')`
- * 就行，读法与上游一致。同样没搬的是 `readRepositoryPath`（`github-read.ts:47-57`）：DSC 的执行器
- * 在本地工作树里读文件，不需要走 API 读仓库内容。
+ * 搬的是上游 `sources/github-read.ts:1-154` 的整个只读面（CI 快照 + 对话读法）；`githubThreadContext`
+ * （`github-read.ts:159-177`）只搬了「会话窗口」这一半：{@link readThreadWindow} 按页读
+ * `issues/<n>/comments`，再用 {@link threadWindow} 选出上游 `admission-context.ts:6-17` 那套窗口。
+ * **没搬的是 `ThreadContext` / `ContextPart`**——那套接口的语义是「按 part（root / parent / thread）
+ * 增量读上下文，回一个 `{ messages, body, status, next }` 给评估器」，DSC 没有这个概念（`core/`
+ * 里上下文由执行器自己组织）。也**没把行内 review 讨论放进窗口**：它要读 `pulls/<n>/comments`
+ * 再按 `in_reply_to_id` 归并根评论（见本文件 `reviewThread`），是另一套读法；本窗口只覆盖
+ * Issue / PR 的会话评论，行内评论的 Trigger 进来时窗口里找不到它自己，这一点由调用方在提示词里
+ * 说明（见 `runtime.ts` 的 `renderThreadContext`）。
+ *
+ * 同样没搬的是 `readRepositoryPath`（`github-read.ts:47-57`）：DSC 的执行器在本地工作树里读文件，
+ * 不需要走 API 读仓库内容。
  *
  * @module dsc/packages/superagent/adapters/github/read
  */
@@ -222,4 +226,130 @@ export async function readGithub(api: GithubApi, resource: string): Promise<unkn
     // 满一页才可能有下一页：上游按「这一页正好 20 条」判断（`github-read.ts:140`），这里照抄。
     ...listed.length === 20 ? { next_resource: `github/${kind}/${number}/${section}/${String(Number(page) + 1)}` } : {},
   }
+}
+
+/**
+ * 会话里的一条消息（上游 `sources/kind.ts:58-61` 的 `ContextMessage` 的最小子集）。
+ *
+ * `id` 用网页地址而不是数字 id：Trigger 的 `url` 就是网页地址（`github/trigger.ts:161`），
+ * 窗口要靠它认出「哪条是触发消息」。没有网页地址的旧数据退回数字 id。
+ */
+export interface ThreadMessage {
+  id: string
+  author: string
+  at: string
+  text: string
+  /** GitHub 判定的机器人账号；给提示词标出来，因为机器的发言不构成授权。 */
+  bot?: true
+}
+
+/** 窗口里的一条：`position` 是它在整条线程里的序号（从 1 起），`omittedBefore` 是它前面被省略的条数。 */
+export interface ThreadWindowMessage extends ThreadMessage {
+  position: number
+  omittedBefore: number
+}
+
+/**
+ * 一次窗口读取的结果（上游 `admission-context.ts:40` 里的 `window` 那一块）。
+ *
+ * 返回数据而不是拼好的文本：拼接属于提示词那一层（`runtime.ts`），适配层只提供事实。
+ * `loaded` / `omittedAfter` 只描述**这次读到的快照**，不代表线程真实总条数。
+ */
+export interface ThreadWindow {
+  messages: ThreadWindowMessage[]
+  sourceFound: boolean
+  loaded: number
+  omittedAfter: number
+}
+
+/** 一页评论的条数；与上游 `conversationPage` 的 `per_page=100` 一致（`github-read.ts:149`）。 */
+const THREAD_PAGE_SIZE = 100
+
+/**
+ * 上游 `threadWindow` 的同一套选择规则（`admission-context.ts:6-17`）：
+ * 最早的 5 条（`index < 5`）+ 触发消息前后各 5 条，并记下每段空隙与末尾被省略的条数。
+ *
+ * 为什么不是「只留第一条 + 前后各 5 条」：上游 `index < 5` 留的是**前五条**，不是第一条。
+ * 判定「这条是不是在回答上一个问题」需要的不止开头一句，前五条是上游试出来的锚点数量；
+ * 这里逐字照搬，窗口形状与上游一致，比较两边提示词才有意义。
+ *
+ * 触发消息找不到时（例如行内 review 评论不在这份会话列表里），只留前五条，
+ * `sourceFound` 为 false——调用方据此告诉模型「上下文可能不完整」，而不是假装窗口是完整的。
+ */
+export function threadWindow(messages: ThreadMessage[], sourceId: string): ThreadWindow {
+  const trigger = messages.findIndex((message) => message.id === sourceId)
+  const selected = messages.map((message, index) => ({ message, index }))
+    .filter(({ index }) => index < 5 || (trigger >= 0 && Math.abs(index - trigger) <= 5))
+  let previous = -1
+  const window = selected.map(({ message, index }) => {
+    const omittedBefore = index - previous - 1
+    previous = index
+    return { ...message, position: index + 1, omittedBefore }
+  })
+  return {
+    messages: window,
+    sourceFound: trigger >= 0,
+    loaded: messages.length,
+    omittedAfter: messages.length - previous - 1,
+  }
+}
+
+/**
+ * 读一条 GitHub 线程的会话窗口（上游 `githubThreadContext.read` 的可搬部分，
+ * `github-read.ts:159-177` + `conversationPage`，`github-read.ts:142-154`）。
+ *
+ * 只读 `issues/<n>/comments`：PR 与 Issue 的会话评论是同一个接口（PR 的描述也由
+ * `issues/<n>` 返回）。**行内 review 讨论不在这个窗口里**：它要读 `pulls/<n>/comments`
+ * 再按 `in_reply_to_id` 归并，`readGithub(api, 'github/pulls/<n>/thread/<id>')` 已经能做，
+ * 但它的消息 id / 顺序与「会话」不同，混进同一个窗口会让位置编号失真。先不做。
+ *
+ * 为什么把描述也算第一条：上游 `conversationPage` 在页 1 先塞 Issue/PR 描述。新 Issue / 新 PR
+ * 的 Trigger 的 `url` 就是描述的网页地址，不读描述，窗口永远认不出这条触发消息（`sourceFound`
+ * 恒 false），窗口退化成「最早的 5 条」——对一条有上百条评论的 Issue 来说，那是完全无关的上下文。
+ *
+ * 为什么手动翻页而不是用 `api.slurp`：`maxPages` 要能封顶。`slurp` 会顺着 `Link` 读完全部页，
+ * 一条几百页的线程会把一次判定拖成几十次请求。上游同样按页读、受 `admissionContextMaxPages`
+ * 限制（`deployment.ts:19`，缺省 10 页）。
+ *
+ * @param api - 来源的 GitHub 客户端
+ * @param number - Issue / PR 编号
+ * @param messageId - 触发消息的 id（调用方传 `Trigger.url`；取不到时传空串）
+ * @param maxPages - 最多读几页评论；小于 1 时按 1 页处理（上游 limit 的最小值是 1）
+ */
+export async function readThreadWindow(
+  api: GithubApi,
+  number: number,
+  messageId: string,
+  maxPages: number,
+): Promise<ThreadWindow> {
+  const messages: ThreadMessage[] = []
+  const issue = IssueSchema.parse(await api.get(`issues/${String(number)}`))
+  messages.push({
+    id: issue.html_url,
+    author: issue.user.login,
+    at: issue.created_at,
+    text: `${issue.title}\n\n${issue.body ?? ''}`,
+    ...!isHumanLogin(issue.user) ? { bot: true as const } : {},
+  })
+  const pages = Math.max(1, Math.floor(maxPages))
+  const tally: Tally = { skipped: 0 }
+  for (let page = 1; page <= pages; page += 1) {
+    const listed = await api.get<unknown>(`issues/${String(number)}/comments?per_page=${String(THREAD_PAGE_SIZE)}&page=${String(page)}`)
+    // 列表端点回了非数组说明响应形状变了；静默当空列表会让这一页之后的评论永久消失。
+    if (!Array.isArray(listed)) throw new Error('GitHub returned a non-list response')
+    for (const comment of validItems(CommentSchema, listed, tally)) {
+      messages.push({
+        id: comment.html_url ?? String(comment.id),
+        author: comment.user.login,
+        at: comment.created_at ?? '',
+        text: comment.body ?? '',
+        ...!isHumanLogin(comment.user) ? { bot: true as const } : {},
+      })
+    }
+    // 不满一页就不可能有下一页（与上游 `conversationPage` 的 `listed.length === 100` 同一条判据）。
+    if (listed.length < THREAD_PAGE_SIZE) break
+  }
+  // 描述与评论是两次请求拼起来的，GitHub 各自有序、合起来未必；按时刻排序，位置编号才稳定。
+  messages.sort((left, right) => left.at.localeCompare(right.at))
+  return threadWindow(messages, messageId)
 }

@@ -14,7 +14,7 @@
 import type { Engine, Assessor } from '../core/index.js'
 import type { RoleModel, Settings } from '../core/policy.js'
 import { ManualAssessor } from './assessor.js'
-import { ModelAssessor, type AssessorComplete } from './assessor-model.js'
+import { ModelAssessor, type AssessorComplete, type AssessorContext } from './assessor-model.js'
 
 /** 本包用的判定器：核心端口 + 泵每拍要的两件事。 */
 export interface SuperagentAssessor extends Assessor {
@@ -32,6 +32,12 @@ export interface AssessorSelection {
   settings: () => Settings
   /** 一次问答。配了模型却没给它，等于配不出模型版——按没配处理。 */
   complete?: AssessorComplete
+  /**
+   * 线程上下文。运行期给的是「按 Trigger 现读来源的对话窗口」；不给就是没有这一节。
+   *
+   * 同步规则那一支不需要它：`ManualAssessor` 只看规则名单，从不问模型，也就不需要前后文。
+   */
+  context?: AssessorContext
   onError?: (error: unknown, evalId: string) => void
   log?: (line: string) => void
 }
@@ -47,6 +53,7 @@ export function selectAssessor(selection: AssessorSelection): SuperagentAssessor
     return new ModelAssessor({
       complete: selection.complete,
       settings: selection.settings,
+      ...(selection.context === undefined ? {} : { context: selection.context }),
       ...(selection.onError === undefined ? {} : { onError: selection.onError }),
       ...(selection.log === undefined ? {} : { log: selection.log }),
     })
