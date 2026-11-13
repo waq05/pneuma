@@ -169,6 +169,9 @@ console.log('[2] 端到端：父会话 cwd 换成临时目录，派队友抓它�
   await ctx.session.open(undefined, parentCwd)
   const tool = ctx.tools.list().find((entry) => entry.name === 'subagent')
   check('subagent 工具在场（allowDelegation 打开）', tool !== undefined, JSON.stringify(ctx.tools.list().map((t) => t.name)))
+  // 归属会话按这次调用算（`ToolContext.sessionId` 是必填的）：subagent 工具查不到父会话
+  // 就报错，不再回落 `ctx.session.current()`——回落会把队友派到别的会话名下。
+  const owner = ctx.session.current()
   const spawned = await tool.run(
     {
       action: 'spawn',
@@ -176,7 +179,7 @@ console.log('[2] 端到端：父会话 cwd 换成临时目录，派队友抓它�
       task: '读一下这个项目的 package.json，用一句话汇报项目名与版本，再说明主入口文件在哪',
       background: true,
     },
-    { cwd: parentCwd, signal: new AbortController().signal },
+    { cwd: parentCwd, sessionId: owner.meta.id, sessionPath: owner.filePath, signal: new AbortController().signal },
   )
   check('派活返回了队友名', typeof spawned === 'string' && spawned.includes('已派给'), spawned)
 
