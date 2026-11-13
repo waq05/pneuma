@@ -786,15 +786,26 @@ CI workflow 里两步：
 ```yaml
   core:
     steps:
-      # ... 现有：安装、typecheck、check:style
-      - name: 单元与界面测试（秒级）
+      # ... 现有：安装、typecheck
+      - name: 测试代码的类型检查（两份 tsconfig）
+        run: pnpm run typecheck:spec
+      # ... 现有：check:style
+      - name: 单元与界面测试
         run: pnpm test
+      - name: 集成测试
+        run: pnpm test:int          # 2026-11-13 提前到 PR 门，见下方说明
+
+  plugin:                            # 2026-11-13 新增（P1a 第 3 项）
+    steps:
+      # ... 安装、build
+      - name: 包级测试（119 条）
+        run: node scripts/package-tests.mjs
 
   probe:
     steps:
-      # ... 现有：build、check:core
-      - name: 集成测试
-        run: pnpm test:int
+      # ... 现有：build、check:core、pnpm -C ui-shell build、check:ui
+      - name: 插件门禁全量
+        run: pnpm run check:plugin   # 需要 lib/ui/plugins/，所以排在界面壳构建之后
       - name: 真入口 e2e
         run: pnpm test:cli
       - name: 覆盖率
@@ -802,6 +813,13 @@ CI workflow 里两步：
       - name: 性能基准
         run: pnpm test:bench
 ```
+
+两处与最初设想不同，都是实装时量出来的：
+
+| 项 | 最初设想 | 实装 |
+| --- | --- | --- |
+| `check:plugin` | PR 门整串跑 | PR 只跑 `package-tests.mjs`（119 条，72.7s，只需 `pnpm build`）；整串进夜跑，因为它含 `plugin-inventory-check`，要读 `lib/ui/plugins/`，得先编界面壳 |
+| `test:int` | 夜跑 | PR 门。15 条守线上事故（同一 callId 两条工具结果 → 网关 400），隔夜太慢；它只解析 `src/**` 不依赖 `lib/`，本地 905ms。超过两分钟再移回夜跑 |
 
 ### 12.2 新增 `test-live.yml`
 

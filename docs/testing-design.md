@@ -425,7 +425,12 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 
 1. `tests/harness.ts` 抽取（第 8 节前四个设施）。
 2. 24 条探针的假 SSE 收敛到 `fakeLLM`。
-3. **把 `check:plugin`（含 119 条包级测试）接进 verify.yml 的 PR 门禁**——这一步最便宜、见效最快：测试早就写好了，只是没人自动跑。先量它跑多久，超过 5 分钟就拆成独立 job。
+3. **把 `check:plugin`（含 119 条包级测试）接进 CI**——这一步最便宜、见效最快：测试早就写好了，只是没人自动跑。
+   实装结论（2026-11-13）：整串 `check:plugin` **不能**直接进 PR 门。它里面的
+   `plugin-inventory-check` 要读 `lib/ui/plugins/`（界面单元），那批产物得先把界面壳整个编一遍。
+   所以拆成两半：PR 门只跑 `node scripts/package-tests.mjs`（119 条，72.7 秒，只需 `pnpm build`）；
+   完整那串放夜跑 `probe` job 末尾——那里本来就为跑界面探针构建了界面壳，两份产物齐了，
+   加这条不多花构建时间。
 4. 为 `src/core/` 纯函数模块补 spec：`clamp`、`records`、`strings`、`json-text`、`shell-quote`、`terminal-env`、`token-estimate`、`err-text`、`transcript-text`、`git-surface`、`todo-reminder`、`microcompact`、`compact-*`、`session-*`。
 
 ### P1b 迁包级测试（119 条）
