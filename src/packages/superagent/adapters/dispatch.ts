@@ -27,14 +27,22 @@ import type { DscStore, OutboxItem } from './store.js'
 /** 一拍最多取多少行。50 与 `drainOutbox` 的默认批量一致；取不完的下一拍继续。 */
 const BATCH = 50
 
-/** 同一条消息最多试几次（含第一次）。到顶就丢弃并记一行：留一条永远发不出去的行没有意义。 */
-export const MAX_ATTEMPTS = 5
+/**
+ * 同一条消息最多试几次（含第一次）。
+ *
+ * 八次配下面那条退避算下来是「5 + 10 + 20 + 40 + 80 + 160 + 300 ≈ 10 分钟」：GitHub 或飞书
+ * 抖几分钟能自己好，抖一小时的（令牌过期、应用被停用）靠重试也救不回来，丢了并记日志更诚实。
+ */
+export const MAX_ATTEMPTS = 8
 
 /** 第一次失败的退避间隔；之后每次翻倍。 */
 export const BASE_DELAY_MS = 5000
 
-/** 退避上限；两分钟以上再重试，对面的问题多半不会自己好，但也不该永久放弃。 */
+/** 退避上限；两次五分钟之后还不行，就是「不是抖一下」的问题了。 */
 export const MAX_DELAY_MS = 300_000
+
+/** 写回队列失败时最多留多少条在内存里等下一拍重写：一批 50 条，留 500 够十批。 */
+const KEPT_CAP = 500
 
 /** 记住多少个「已经进过最近动态」的 id：只为一个目的——重投的消息不要在窗口里出现两遍。 */
 const SHOWN_CAP = 500
@@ -73,18 +81,23 @@ function messageOf(row: OutboxItem): OutboundMessage | undefined {
 }
 
 /**
- * 一行的 `value` 能不能解析成一个对象。
+ * 一行的 `value` 能不能被 `store.ts` 的 `decodeOutboxItem` 读成一条。
  *
- * 判据与 `store.ts` 的 `decodeOutboxItem` 一致：那边碰到同样的形状会抛 `outbox_corrupt`。
+ * 四道判据与那边逐条对齐（`store.ts:232-248`）：是字符串、是 JSON、是对象、`id` 与 `kind`
+ * 都是非空字符串。少判最后一道就会漏掉「能解析但缺 id/kind」的行——那种行让 `drainOutbox`
+ * 每次都抛，自救却认为它没问题，于是整批出站消息永久发不出去。
  */
 function readable(raw: unknown): boolean {
   if (typeof raw !== 'string') return false
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(raw)
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    parsed = JSON.parse(raw)
   } catch {
     return false
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+  const value = parsed as Record<string, unknown>
+  return typeof value.id === 'string' && value.id !== '' && typeof value.kind === 'string' && value.kind !== ''
 }
 
 /** 第 `count` 次失败之后等多久：5 秒、10 秒、20 秒、40 秒，封顶 5 分钟。 */
@@ -125,6 +138,8 @@ export class OutboxDispatcher {
   private readonly attempts = new Map<string, { count: number; nextAt: number }>()
   /** 已经进过最近动态的消息 id；重投的同一条不再重复显示。 */
   private readonly shown = new Set<string>()
+  /** 写回队列失败、只剩内存里这一份的行；下一拍最前面先处理它们。 */
+  private readonly kept: OutboxItem[] = []
 
   constructor(options: DispatchOptions) {
     this.options = options
@@ -144,13 +159,19 @@ export class OutboxDispatcher {
     this.busy = true
     try {
       await this.round()
+    } catch (error) {
+      // 走到这里的只有没被单独兜住的那几步（写回队列、记窗口；库被关掉是最常见的一种）。
+      // 一条消息出事不该让下一拍不跑，所以这里必须吞掉——「不抛」是 `flush` 的契约，
+      // 调用方（`runtime.flushOutbox`）那一层 catch 只是兜底，不该是常态。
+      this.options.log?.(`出站发送这一拍失败：${errorText(error)}`)
     } finally {
       this.busy = false
     }
   }
 
   private async round(): Promise<void> {
-    const rows = this.take()
+    // 上一拍写回队列失败的那几条排在最前面：它们已经从库里消失，只剩内存里这一份。
+    const rows = [...this.kept.splice(0), ...this.take()]
     if (rows.length === 0) return
     const fresh: RecentNotice[] = []
     const again: OutboxItem[] = []
@@ -268,6 +289,10 @@ export class OutboxDispatcher {
     try {
       this.options.store.enqueueOutbox({ id: row.id, kind: row.kind, payload: row.payload })
     } catch (error) {
+      // 写回失败时这条消息已经从库里消失了（`drainOutbox` 取走即删），留在内存里下一拍再写一次。
+      // 不这么做的话，「发失败 + 库写不进去」（磁盘满、库被锁、正在停用）会静默丢消息——
+      // 日志有痕迹，但没有人会去翻两秒一条的日志。进程退出才是真的丢。
+      if (this.kept.length < KEPT_CAP) this.kept.push(row)
       this.options.log?.(`出站消息 ${row.id} 写回队列失败：${errorText(error)}`)
     }
   }

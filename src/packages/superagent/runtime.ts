@@ -86,8 +86,8 @@ const SESSION_RETENTION_MS = SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000
 /**
  * 恢复通知的落点。
  *
- * 与 `adapters/notify.ts` 的 `NOTICE_CHANNEL` 同形：P0 没有真的发送方，这里只把一句话
- * 放进 `outbox`，下一拍 `notify.drain()` 会把它取进「最近动态」，界面就能看到。
+ * 与 `adapters/notify.ts` 的 `NOTICE_CHANNEL` 同形：`manual` 是「没有真实会话」的占位，
+ * 这句话只进「最近动态」，下一拍由发送泵取出来给界面看（`dispatch.ts` 里 `manual` 一律不发送）。
  * 不 import 那个常量：它在适配层内部，导出它等于把「通知发到哪」变成跨层契约。
  */
 const RECOVERY_CHANNEL: ChannelRef = { source: 'manual', thread: 'manual:notice', address: {} }
@@ -355,7 +355,7 @@ export class SuperagentRuntime {
    * - **写话题属性**：落在 `Thread.meta`——模型里就是给来源放原生属性的那一格
    *   （`core/model.ts:177-181`），话题 id 与最近一次读失败记在那儿。
    *
-   * 为什么 `patch` 要整行回写：`threads.save` 只认整条话题（`repositories.ts:134`）。读与写之间
+   * 为什么 `patch` 要整行回写：`threads.save` 只认整条话题（`repositories.ts:151`）。读与写之间
    * 没有 `await`，同一个 tick 里不会被别的写入插进来。
    */
   feishuThreads(): FeishuThreads {
@@ -370,11 +370,15 @@ export class SuperagentRuntime {
   /**
    * 一个话题还值不值得轮询（`loops.ts:138-139` 的契约）：有活工单订阅着，或者最近 14 天里有消息。
    *
-   * 「活工单」按 `ended` 判：结束的工单还会留在 `subscriptions` 里（历史），拿它当活就会让
-   * 一批早该停的话题永远被轮询。
+   * 「活工单」是「行在、且没结束」：结束的工单还会留在 `subscriptions` 里（历史），拿它当活
+   * 就会让一批早该停的话题永远被轮询；也不把「查不到的 id」当活——那种 id 只会凭空造出
+   * 一个永久轮询的话题（现状没有删工单的路径，但库里可能被手工改过）。
    */
   private worthPolling(thread: Thread): boolean {
-    if (thread.subscriptions.some((id) => this.repos.tickets.get(id)?.ended === undefined)) return true
+    if (thread.subscriptions.some((id) => {
+      const ticket = this.repos.tickets.get(id)
+      return ticket !== undefined && ticket.ended === undefined
+    })) return true
     const at = Date.parse(thread.lastAt ?? thread.createdAt)
     const now = Date.parse(this.clock())
     return Number.isFinite(at) && Number.isFinite(now) && now - at < POLL_HORIZON_MS

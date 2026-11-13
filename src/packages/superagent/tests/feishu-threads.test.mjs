@@ -105,7 +105,11 @@ test('2. 14 天视野：静了两周的话题出去', async () => {
 test('3. 有活工单订阅着：静了两周也还要轮询', async () => {
   await withRuntime(async ({ runtime, repos }) => {
     const ticketId = runtime.publish({ title: '改登录页文案', body: '把提示改成中文' })
+    // 先确认 publish 真建出了工单：这条用例区分不了「活工单」与「悬空 id」，就白写了。
+    assert.ok(repos.tickets.get(ticketId), '前提：publish 要真的建出一张工单')
     repos.threads.save(thread('feishu', 'oc_1:om_1', OLD, { subscriptions: [ticketId] }))
+    // 对照：订阅的是一个查不到的 id，不算活，静了两周就该出去。
+    repos.threads.save(thread('feishu', 'oc_1:om_2', OLD, { subscriptions: ['ticket-does-not-exist'] }))
     const topics = runtime.feishuThreads().subscribed('feishu')
     assert.deepEqual(topics.map((item) => item.key), ['feishu:oc_1:om_1'])
   })

@@ -1,16 +1,17 @@
 /**
  * @pneuma/superagent 的发送泵测试：离线、不联网、不读用户真实的 `~/.dsc`。
  *
- * 九条用例，每条钉一件「不做就会静默出事」的判断：
+ * 十条用例，每条钉一件「不做就会静默出事」的判断：
  *   1. 发出去：有发送方的消息被送出、行删掉、那句话进「最近动态」（时刻用入队时刻）；
  *   2. 发失败：行按原 id 写回队列，退避没到点时下一拍不再试；
  *   3. 退避到点：再试一次，成功就删行；
  *   4. 永久发不出（`'gone'`）：删行、不重试，日志说清是永久失败；
- *   5. 来源没起来：按退避等，试满五次才丢弃，日志两次口径不同；
+ *   5. 来源没起来：按退避等，试满八次才丢弃（约 10 分钟），日志两次口径不同；
  *   6. `manual` 通道：只进最近动态，不调发送方、不留行；
  *   7. 窗口容量：第 21 条挤掉最旧的；
  *   8. 别家写的行（读不出消息）：删掉，不抛、不进窗口；
- *   9. 坏行（不是 JSON）：自救删掉，同批的好消息照发——一行坏数据不能挡住所有回复。
+ *   9. 坏行（不是 JSON、或能解析但缺 id/kind）：自救删掉，同批的好消息照发——一行坏数据不能挡住所有回复；
+ *  10. 写回队列失败：那条消息只剩内存这一份，下一拍补写回去，不能静默丢。
  *
  * 时钟由 `now` 注入，库在 `tmpdir()` 下的临时 `DSC_HOME` 里。
  * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
@@ -167,13 +168,13 @@ test('4. 永久发不出：删行、不重试', async () => {
   })
 })
 
-test('5. 来源没起来：退避等着，试满五次才丢弃', async () => {
+test('5. 来源没起来：退避等着，试满八次才丢弃', async () => {
   await withStore(async (store) => {
     seed(store, message('m1'))
     const probe = makeDispatcher(store, { senders: () => ({}) })
 
-    // 前四次都在等：每拍之间把时钟推到退避到点。
-    const waits = [0, 5000, 10000, 20000]
+    // 前七次都在等：每拍之间把时钟推到这一次退避到点（5、10、20、40、80、160、300 秒）。
+    const waits = [0, 5000, 10000, 20000, 40000, 80000, 160_000]
     for (const ms of waits) {
       if (ms > 0) probe.tick(ms)
       await probe.dispatcher.flush()
@@ -181,9 +182,9 @@ test('5. 来源没起来：退避等着，试满五次才丢弃', async () => {
     }
     assert.match(probe.lines.at(-1), /还没起来/u)
 
-    probe.tick(40000)
+    probe.tick(300_000)
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), [], '第五次之后丢弃')
+    assert.deepEqual(probe.rows(), [], '第八次之后丢弃')
     assert.match(probe.lines.at(-1), /放弃投递/u)
   })
 })
@@ -239,7 +240,9 @@ test('8. 别家写的行：删掉，不抛、不进窗口', async () => {
 
 test('9. 坏行：自救删掉，同批的好消息照发', async () => {
   await withStore(async (store) => {
-    store.handle.prepare('INSERT INTO outbox (id, value) VALUES (?, ?)').run('bad', 'not json')
+    // 两种坏法都要认：不是 JSON，以及能解析但缺 id/kind（decodeOutboxItem 对两者都抛）。
+    store.handle.prepare('INSERT INTO outbox (id, value) VALUES (?, ?)').run('bad-json', 'not json')
+    store.handle.prepare('INSERT INTO outbox (id, value) VALUES (?, ?)').run('bad-shape', '{"hello":"world"}')
     seed(store, message('m1'))
     const probe = makeDispatcher(store)
     await probe.dispatcher.flush()
@@ -247,6 +250,32 @@ test('9. 坏行：自救删掉，同批的好消息照发', async () => {
     assert.equal(probe.sent.length, 1, '一行坏数据不能挡住所有回复')
     assert.deepEqual(probe.rows(), [], '坏行与好消息都应清掉')
     assert.ok(probe.lines.some((line) => line.includes('取出站消息失败')), '要先说清取队列失败了')
-    assert.ok(probe.lines.some((line) => line.includes('删掉 1 行读不出来的数据')), '再说清删了什么')
+    assert.ok(probe.lines.some((line) => line.includes('删掉 2 行读不出来的数据')), '两种坏行都要删掉')
+  })
+})
+
+test('10. 写回队列失败：留在内存里，下一拍补写回去', async () => {
+  await withStore(async (store) => {
+    seed(store, message('m1'))
+    let failing = true
+    const probe = makeDispatcher(store, {
+      send: async () => {
+        if (failing) throw new Error('502 bad gateway')
+        return 'sent'
+      },
+    })
+    // 让「写回队列」这一步失败：那一行已经被 drainOutbox 从库里取走删掉了，只剩内存这一份。
+    const original = store.enqueueOutbox.bind(store)
+    store.enqueueOutbox = () => { throw new Error('database is locked') }
+    await probe.dispatcher.flush()
+    assert.deepEqual(probe.rows(), [], '这一拍确实没写回库里')
+    assert.ok(probe.lines.some((line) => line.includes('写回队列失败')), '失败要留痕迹')
+
+    store.enqueueOutbox = original
+    failing = false
+    probe.tick(5000)
+    await probe.dispatcher.flush()
+    assert.equal(probe.sent.length, 2, '下一拍要重试那条消息')
+    assert.deepEqual(probe.rows(), [], '发成功之后不该留行')
   })
 })
