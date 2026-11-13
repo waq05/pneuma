@@ -10,7 +10,13 @@
  *   3. 起一个 2 秒的泵，调 `service.tick()`（`runtime.pump()` + 阶段变样时推快照）；
  *   4. 懒建 `SuperagentRuntime`：第一次用到（发命令 / 界面拉快照 / 调五个方法）才打开编排库；
  *   5. provide `superagent` 服务并把快照面登记进 `ctx.surfaces`（`service.ts` / `surface.ts`）；
- *   6. 向 doctor 的 `ctx.health` 登记一项体检（编排库能不能写、锁被占没有、几张工单卡在 running）。
+ *   6. 向 doctor 的 `ctx.health` 登记两项体检：编排库能不能写、锁被占没有、几张工单卡在
+ *      running；以及飞书来源连上没有、最近一条错误是什么。
+ *
+ * **两个外部来源，同一条节奏**：GitHub 靠 `startGithub`、飞书靠 `startFeishu`，都在
+ * `ensure()` 建好运行期之后才起，都不在 `apply` 里做任何 IO；来源起来之前的三样前置条件
+ * （开关、范围、口令/CLI）缺任何一样都只记一行日志、不启动、不抛。飞书默认关，所以不配
+ * 就一个 lark-cli 子进程都不会起。
  *
  * 为什么懒建而不是 `apply` 时就连库：插件在设置页里是「可停用」的一行，宿主启动时
  * 十几行插件都会 `apply`；谁在 `apply` 里开库，谁就把「打开数据库」变成宿主启动的
@@ -39,12 +45,14 @@ import { openStore, type DscStore } from './adapters/store.js'
 import { createGithubApi } from './adapters/github/api.js'
 import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
 import { pullOf, agentPull, ticketBranch } from './adapters/github/pull.js'
+import { resolveFeishuCli, readFeishuBot } from './adapters/feishu/cli-run.js'
+import { createFeishuSource, type FeishuSource } from './adapters/feishu/loops.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
-import { createSuperagentHealth } from './health.js'
+import { createFeishuHealth, createSuperagentHealth } from './health.js'
 import { SuperagentRuntime } from './runtime.js'
 import { SuperagentService } from './service.js'
 import { registerSurface } from './surface.js'
@@ -83,6 +91,17 @@ const GITHUB_LOGIN_KEY = 'githubLogin'
 const GITHUB_ALLOWED_KEY = 'githubAllowed'
 const GITHUB_TOKEN_ENV_KEY = 'githubTokenEnv'
 
+/**
+ * P2 的飞书来源：开关、CLI 路径、群清单、要不要收私聊。
+ *
+ * 两件事与 GitHub 不同，都是设置面的取舍：来源**默认关**（打开才起子进程），群清单只有
+ * 一行逗号分隔的 `chat_id`（设置表单没有多行控件，与 `githubAllowed` 同一种写法）。
+ */
+const FEISHU_ENABLED_KEY = 'feishuEnabled'
+const FEISHU_CLI_KEY = 'feishuCli'
+const FEISHU_CHATS_KEY = 'feishuChats'
+const FEISHU_DIRECT_KEY = 'feishuDirect'
+
 /** 令牌环境变量的缺省名。 */
 const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
 
@@ -100,6 +119,24 @@ const PUMP_INTERVAL_MS = 2000
  * 响应（上游的 60 秒是给多个仓库留的余量）。
  */
 const GITHUB_POLL_INTERVAL_MS = 30_000
+
+/**
+ * 飞书补收间隔：60 秒，与适配器自己的缺省一致（`adapters/feishu/loops.ts:230`）。
+ *
+ * 为什么不是一个更小的数：补收是按时间窗读历史的，飞书那边的窗口精度只到秒，读得再密
+ * 也换不来更快的响应，只会多花配额。事件本身走长连接，这条轮询只负责补漏。
+ */
+const FEISHU_POLL_INTERVAL_MS = 60_000
+
+/**
+ * 适配器内部那条补收循环的间隔：一天。
+ *
+ * 为什么不是默认的 60 秒：`createFeishuSource().start()` 自己会起一条每 60 秒 `tick()` 的
+ * 循环（`loops.ts:591-599`），而泵这一拍也调 `tick()`（见 `pollFeishu`）。两条路都按 60 秒
+ * 跑，等于每轮把同一段历史读两遍。把内部那条压到一天，`tick` 的节奏就只剩泵一处（与
+ * GitHub 的 `pollGithub` 同构），而 `start()` 时的那第一轮基线照旧会跑。
+ */
+const FEISHU_INTERNAL_BACKFILL_MS = 24 * 60 * 60 * 1000
 
 /** 会话目录的清扫间隔：启动时扫一次，之后每天一次。 */
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -137,6 +174,14 @@ export interface SuperagentConfig {
   githubAllowed: string[]
   /** 令牌所在的环境变量名。 */
   githubTokenEnv: string
+  /** 飞书来源开关；默认关。关着时一个 lark-cli 进程都不起。 */
+  feishuEnabled: boolean
+  /** lark-cli 的路径；空 = 走 PATH 上的 `lark-cli`。 */
+  feishuCli: string
+  /** 要收的群 `chat_id`（已按逗号拆开、去空、去重）；空 = 不收任何群。 */
+  feishuChats: string[]
+  /** 收不收私聊；默认关。 */
+  feishuDirect: boolean
   /** 判定用模型（`provider/model`）；空 = 不调模型。 */
   assessorModel: string
 }
@@ -169,6 +214,15 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
       textOf(raw[GITHUB_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
     )],
     githubTokenEnv: textOf(raw[GITHUB_TOKEN_ENV_KEY]) || DEFAULT_TOKEN_ENV,
+    // 开关只认布尔：设置面给的是 `true` / `false`，手改 JSON 写成 `"true"` 不算打开——
+    // 宁可让人再点一次，也不要把一个字符串悄悄当成「已启用」去起子进程。
+    feishuEnabled: raw[FEISHU_ENABLED_KEY] === true,
+    feishuCli: textOf(raw[FEISHU_CLI_KEY]),
+    // 群名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。空串 = 没有群。
+    feishuChats: [...new Set(
+      textOf(raw[FEISHU_CHATS_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
+    )],
+    feishuDirect: raw[FEISHU_DIRECT_KEY] === true,
     assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
   }
 }
@@ -189,7 +243,8 @@ export function assessorTargetOf(config: SuperagentConfig): { provider: string; 
 }
 
 /**
- * 建设置分区：三个字段 + `values()` 现读磁盘 + `save()` 真落盘。
+ * 建设置分区：执行器三字段 + GitHub 四字段 + 飞书四字段 + 判定模型，`values()` 现读磁盘、
+ * `save()` 真落盘。
  *
  * 单独导出而不是在 `apply` 里内联，是为了包级测试能直接验「保存 → 读回 → 重开还在」，
  * 不必为一个设置分区造一整套 cordis 上下文。`apply` 用的就是这一个函数，没有第二份。
@@ -264,6 +319,34 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           help: t('field.githubTokenEnv.help'),
         },
         {
+          type: 'switch',
+          key: FEISHU_ENABLED_KEY,
+          label: t('field.feishuEnabled.label'),
+          help: t('field.feishuEnabled.help'),
+        },
+        {
+          type: 'text',
+          key: FEISHU_CLI_KEY,
+          label: t('field.feishuCli.label'),
+          placeholder: 'lark-cli',
+          mono: true,
+          help: t('field.feishuCli.help'),
+        },
+        {
+          type: 'text',
+          key: FEISHU_CHATS_KEY,
+          label: t('field.feishuChats.label'),
+          placeholder: 'oc_xxx, oc_yyy',
+          mono: true,
+          help: t('field.feishuChats.help'),
+        },
+        {
+          type: 'switch',
+          key: FEISHU_DIRECT_KEY,
+          label: t('field.feishuDirect.label'),
+          help: t('field.feishuDirect.help'),
+        },
+        {
           type: 'text',
           key: ASSESSOR_MODEL_KEY,
           label: t('field.assessorModel.label'),
@@ -285,6 +368,11 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
         [GITHUB_ALLOWED_KEY]: config.githubAllowed.join(', '),
         [GITHUB_TOKEN_ENV_KEY]: config.githubTokenEnv,
+        [FEISHU_ENABLED_KEY]: config.feishuEnabled,
+        [FEISHU_CLI_KEY]: config.feishuCli,
+        // 与 githubAllowed 一样：磁盘上存一行逗号分隔的文本，设置面只认标量。
+        [FEISHU_CHATS_KEY]: config.feishuChats.join(', '),
+        [FEISHU_DIRECT_KEY]: config.feishuDirect,
         [ASSESSOR_MODEL_KEY]: config.assessorModel,
       }
     },
@@ -336,6 +424,27 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         }
         case GITHUB_TOKEN_ENV_KEY: {
           saveText(GITHUB_TOKEN_ENV_KEY, String(value).trim())
+          return
+        }
+        case FEISHU_ENABLED_KEY: {
+          // 关掉时写 `false` 而不是删键：删了会回到缺省（也是关），两种写法效果一样，
+          // 但留下 `false` 能让「用户主动关过」与「从来没配过」在磁盘上分得清。
+          writePluginConfig(CONFIG_KEY, { [FEISHU_ENABLED_KEY]: value === true })
+          return
+        }
+        case FEISHU_CLI_KEY: {
+          // 路径原样存；空串 = 删掉这个键（回到 PATH 上的 lark-cli）。
+          saveText(FEISHU_CLI_KEY, String(value).trim())
+          return
+        }
+        case FEISHU_CHATS_KEY: {
+          // 与 githubAllowed 同一种整理：去空白、去重，存成一行逗号分隔的文本。
+          const chats = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
+          saveText(FEISHU_CHATS_KEY, chats.join(', '))
+          return
+        }
+        case FEISHU_DIRECT_KEY: {
+          writePluginConfig(CONFIG_KEY, { [FEISHU_DIRECT_KEY]: value === true })
           return
         }
         case ASSESSOR_MODEL_KEY: {
@@ -417,6 +526,14 @@ export function apply(ctx: Context, passed?: unknown): void {
   let github: { source: ReturnType<typeof createGithubSource>; api: ReturnType<typeof createGithubApi>; lastAt: number; busy: boolean } | null = null
 
   /**
+   * 建好的飞书来源；`null` = 没开、没配群、CLI 找不到，或建失败。
+   *
+   * `busy` 与 GitHub 那格同一个意思：上一拍还没回来就不重复 tick。`lastAt` 记的是「上一次
+   * 交给来源的时刻」，不是「来源自己记的 lastPollAt」——两件事差着一次网络往返。
+   */
+  let feishu: { source: FeishuSource; lastAt: number; busy: boolean } | null = null
+
+  /**
    * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
    *
    * 三种没建起来的情况都只记一行日志、不抛：来源是可选件，缺了它插件其余部分照常工作。
@@ -467,6 +584,88 @@ export function apply(ctx: Context, passed?: unknown): void {
       .then(() => bindPulls())
       .then(() => { pollPullCi() })
       .finally(() => { if (github !== null) github.busy = false })
+  }
+
+  /**
+   * 建飞书来源：开关打开、群非空、CLI 能解析，三样都满足才起。
+   *
+   * 与 `startGithub` 的差别只有一处：机器人身份要问 CLI（`auth status` + `bot/v3/info`），
+   * 那是一次异步调用，所以收尾在 `void (async () => ...)()` 里，`ensure()` 不等它。三样
+   * 前置条件任何一样不满足都只记一行日志、不启动、不抛：来源是可选件，缺了它插件其余
+   * 部分照常工作（与 §5.4 同一条）。
+   *
+   * 默认关的意义就在这里：不配飞书时这里一次都不会走到 spawn，机器上不会多出任何
+   * lark-cli 子进程。
+   */
+  function startFeishu(target: SuperagentRuntime): void {
+    try {
+      const current = config()
+      if (!current.feishuEnabled) {
+        console.warn('[superagent] 飞书来源没启动：设置里没打开')
+        return
+      }
+      if (current.feishuChats.length === 0) {
+        console.warn('[superagent] 飞书来源没启动：没填群 chat_id')
+        return
+      }
+      const resolved = resolveFeishuCli(current.feishuCli)
+      if (!resolved.ok) {
+        console.warn(`[superagent] 飞书来源没启动：${resolved.reason}`)
+        return
+      }
+      // 库句柄在 `ensure()` 里刚拿到；这里再判一次是为了让类型收窄，不是真的有第二条路。
+      const db = store
+      if (db === null) return
+      void (async () => {
+        try {
+          const bot = await readFeishuBot(resolved.run)
+          // 等身份的这一两秒里插件可能已经被停用：运行期换了或没了就不要再起子进程，
+          // 否则停用之后仍挂着一条长连接收消息（设计文档 §1.1 禁止）。
+          if (runtime !== target) return
+          const source = createFeishuSource({
+            run: resolved.run,
+            consume: resolved.consume,
+            bot,
+            engine: target.sourceBridge(),
+            store: db,
+            config: {
+              chats: current.feishuChats.map((chatId) => ({ chatId })),
+              directMessages: current.feishuDirect,
+            },
+            now: () => new Date().toISOString(),
+            log: (line) => { console.warn(line) },
+            // 适配器内部那条循环压到一天，`tick` 的节奏只留泵一处；理由见常量注释。
+            backfillEveryMs: FEISHU_INTERNAL_BACKFILL_MS,
+          })
+          source.start()
+          feishu = { source, lastAt: Date.now(), busy: false }
+          console.warn(
+            `[superagent] 飞书来源已启动：${String(current.feishuChats.length)} 个群，`
+              + `每 ${String(FEISHU_POLL_INTERVAL_MS / 1000)} 秒补收一轮`,
+          )
+        } catch (error) {
+          console.warn(`[superagent] 飞书来源没启动：${errorText(error)}`)
+        }
+      })()
+    } catch (error) {
+      // 读设置本身失败（plugins.json 被手改坏）也只记一行：`ensure()` 不该因为一个可选来源
+      // 走进「编排库没打开」那条分支，把已经建好的运行期关掉。
+      console.warn(`[superagent] 飞书来源没启动：${errorText(error)}`)
+    }
+  }
+
+  /** 泵的一拍里顺手补收一轮飞书：到点、且上一拍没在飞才发（与 `pollGithub` 同构）。 */
+  function pollFeishu(): void {
+    if (feishu === null || feishu.busy) return
+    const now = Date.now()
+    if (now - feishu.lastAt < FEISHU_POLL_INTERVAL_MS) return
+    feishu.lastAt = now
+    feishu.busy = true
+    void feishu.source.tick()
+      // `tick()` 自己已经把每个群的失败收进 `status().lastError`（`loops.ts:421-447`），
+      // 这里再兜一层：来源整体抛了也只记日志，不打断泵的下一拍。
+      .catch((error: unknown) => { console.warn(`[superagent] 飞书补收失败：${errorText(error)}`) })
+      .finally(() => { if (feishu !== null) feishu.busy = false })
   }
 
   /** 一张开着 PR 的判据只用得到这三样（`agentPull` / `ticketBranch` 的入参）。 */
@@ -613,6 +812,7 @@ export function apply(ctx: Context, passed?: unknown): void {
       }
       // 来源最后建：它要拿运行期已经装好的引擎，且失败不该影响「插件已经能用」。
       startGithub(opened)
+      startFeishu(opened)
       return runtime
     } catch (error) {
       const reason = errorText(error)
@@ -650,7 +850,12 @@ export function apply(ctx: Context, passed?: unknown): void {
       store: () => store,
       running: () => runtime?.runningStats() ?? { total: 0, orphaned: 0 },
     }))
-    ctx.effect(() => offHealth, 'superagent: health.register')
+    ctx.effect(() => offHealth, 'superagent: health.register (orchestrator)')
+    // 飞书那一项单独登记：两项各自有开关与生命周期，合成一条会让一项失败拖掉另一项的读数。
+    const offFeishuHealth = health.register(createFeishuHealth({
+      status: () => feishu?.source.status() ?? null,
+    }))
+    ctx.effect(() => offFeishuHealth, 'superagent: health.register (feishu)')
   }
 
   ctx.effect(() => {
@@ -661,11 +866,21 @@ export function apply(ctx: Context, passed?: unknown): void {
       if (runtime === null) return
       try {
         service.tick()
-        // GitHub 轮询挂在泵上（不自带定时器）：时间到了、上一拍也没在飞才发。
-        pollGithub()
       } catch (error) {
         // 单拍失败只记日志，不中断下一拍（§5.4「泵任务抛错：记日志，不中断下一轮」）。
         console.warn(`[superagent] 泵失败：${errorText(error)}`)
+      }
+      // 两个来源各自 try/catch：飞书读失败不该把 GitHub 那一拍一起吃掉，反之亦然。
+      try {
+        // GitHub 轮询挂在泵上（不自带定时器）：时间到了、上一拍也没在飞才发。
+        pollGithub()
+      } catch (error) {
+        console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`)
+      }
+      try {
+        pollFeishu()
+      } catch (error) {
+        console.warn(`[superagent] 飞书轮询失败：${errorText(error)}`)
       }
     }, PUMP_INTERVAL_MS)
     // 每天清一次会话目录。启动那次已经在 `ensure` 里跑过；这里只接「长期开着」的那一段。
@@ -681,6 +896,11 @@ export function apply(ctx: Context, passed?: unknown): void {
       clearInterval(timer)
       clearInterval(sweeper)
       offCommands()
+      // 飞书先停：`stop()` 关长连接、关 stdin 并杀子进程。漏了这一步就是「停用插件后还挂着
+      // 进程收消息」，设计文档 §1.1 明确禁止。顺序放在运行期与库之前：循环还在跑时库必须
+      // 还在，否则它最后一次回写游标会打在已关闭的连接上。
+      feishu?.source.stop()
+      feishu = null
       // 来源先丢：它持有 HTTP 客户端与运行期的桥，留着只会在停用后继续发请求。
       github = null
       // 先关运行期（它只释放自己的队列），再关库（库归本文件所有）。

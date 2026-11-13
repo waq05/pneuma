@@ -1,11 +1,11 @@
 /**
- * superagent 的体检项：编排库能不能写、单实例锁被没被别的进程占、几张工单还挂在 `running`。
+ * superagent 的两项体检：编排库（可写 / 锁 / running 工单）与飞书来源（连上 / 最近一条错误）。
  *
  * 为什么单独一个文件：`/doctor` 的登记表是 `ctx.health`（doctor 插件提供，见
  * `src/packages/doctor/index.ts:144`），登记进去的每一项只做「读一次、给一句结论」。
  * 把这段探测混进 `index.ts` 的装配里，会让那个文件从「接线」变成「也懂库和锁」。
  *
- * 三条判据各自对应一类真会出的事：
+ * 编排库那项的三条判据各自对应一类真会出的事：
  *   - **不可写**：盘满、文件只读、被别的进程用独占方式打开——这时派工全部会失败，
  *     而面板上只会看到「派工失败」，看不到根因；
  *   - **锁被占**：另一个 Pneuma 正握着编排库（设计文档 §5.4）。本进程这次能打开库
@@ -13,8 +13,11 @@
  *   - **卡在 running**：分配说在跑、进程里却没有 worker。正常路径上 `recover()` 会
  *     给它起一份新分配接着干；还留在 running 的，说明恢复没跑到（或恢复之后又丢了 worker）。
  *
+ * 飞书那项只读来源自己的 `status()`。没启动时**报 skip 而不是 ok**：「默认关」与「开了
+ * 但一条消息也收不到」在面板上必须能分辨，两者都报 ok 等于把后者藏起来。
+ *
  * 探测本身只读：写探测是一次 `BEGIN IMMEDIATE` 后立刻提交的空事务，锁探测是拿一次
- * 再立刻放掉——不写任何业务数据，也不留锁。
+ * 再立刻放掉——不写任何业务数据，也不留锁。飞书那项连库都不碰。
  *
  * @module dsc/packages/superagent/health
  */
@@ -28,6 +31,17 @@ export interface SuperagentHealthProbe {
   store(): DscStore | null
   /** 未结束、最新分配还在 running 的工单：总数，以及其中进程里没有 worker 的。 */
   running(): { total: number; orphaned: number }
+}
+
+/** 飞书来源的体检只读来源自己的三样；`null` = 来源没启动。 */
+export interface SuperagentFeishuProbe {
+  /**
+   * 已启动来源的 `status()`（`adapters/feishu/loops.ts:191`）。
+   *
+   * 没启动（默认关、没配群、CLI 找不到，或启动失败）时给 `null`：这一项据此报 skip，
+   * 而不是把「没这回事」说成「正常」。
+   */
+  status(): { connected: boolean; lastPollAt: string | null; lastError: string | null } | null
 }
 
 /** 把未知异常压成一行可读文本。 */
@@ -149,6 +163,54 @@ export function createSuperagentHealth(probe: SuperagentHealthProbe): HealthChec
         }
       }
       return { ...base, status: 'ok', summary: '正常（库可写、锁空着、没有卡住的工单）' }
+    },
+  }
+}
+
+/**
+ * 建飞书来源的体检项。
+ *
+ * 判据只有两条，都是来源自己记的：`connected` 与 `lastError`。不在这里重新探一次 CLI 或
+ * 长连接：那会把「来源此刻是什么状态」变成第二次测量，doctor 与面板可能给出两个答案。
+ *
+ * @param probe - 装配处给的 `status()` 读数
+ * @returns 可以直接 `ctx.health.register(...)` 的一项
+ */
+export function createFeishuHealth(probe: SuperagentFeishuProbe): HealthCheck {
+  return {
+    // 与编排库那项同域不同项：`--json` 按 id 出键，两项都登记时不会撞。
+    id: 'superagent/feishu',
+    title: 'Super Agent 飞书来源',
+    // 紧跟在编排库（100）后面：同一插件的两项排在一起。
+    order: 101,
+    run(): HealthResult {
+      const status = probe.status()
+      if (status === null) {
+        return {
+          status: 'skip',
+          summary: '飞书来源未启动（没配群或没装 CLI）',
+          detail: '设置里打开「飞书来源」并填上群 chat_id，且 lark-cli 能解析（PATH 上或在设置里给路径）时才启动；默认关。',
+        }
+      }
+      const detail = [status.lastPollAt === null ? '补收：还没跑过一轮' : `补收：上一轮在 ${status.lastPollAt}`]
+      if (status.lastError !== null) {
+        detail.push(`最近一条错误：${status.lastError}`)
+        return {
+          status: 'warn',
+          summary: status.connected ? '飞书长连接连着，但最近一轮读取失败' : '飞书长连接没连上',
+          detail: detail.join('\n'),
+          fix: '看 detail 里那条错误：限流与断网会自己退避重试；持续不好时检查网络，并跑一次 lark-cli auth status',
+        }
+      }
+      if (!status.connected) {
+        return {
+          status: 'warn',
+          summary: '飞书来源在补收，但长连接没连上',
+          detail: detail.join('\n'),
+          fix: '常见原因是机器人没被加进群，或 CLI 没登录；跑一次 lark-cli auth status 看机器人身份是否 ready',
+        }
+      }
+      return { status: 'ok', summary: '飞书来源正常（长连接已连上）', detail: detail.join('\n') }
     },
   }
 }
