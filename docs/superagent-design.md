@@ -696,17 +696,19 @@ export interface SuperagentSurface {
 
 | 项 | 上游 | 本设计 | 原因 |
 | --- | --- | --- | --- |
-| 编排器 | 模型会话 | P0 代码调度器 | P0 全是明确请求，不需要判断 |
+| 编排器 | 模型会话 | 代码调度器 + **候选收件箱**（推断候选等人点头，`confirmInferred`） | P0 全是明确请求，不需要判断；P2 的推断候选不交给常驻会话，交给人 |
 | 执行器 | DSH Session | MiniAgent + Session | DSC 没有 DSH Session |
+| 执行器的后台任务 | `ctx.jobs` / `ctx.subagents` 服务，回合结束后 `untilQuiet` 等静默 | `ctx.jobs` 服务（`tools-default` 提供）+ 执行器自己等 | DSC 有作业表，只是原先没开口；子智能体走 `subagent` 包 |
 | 权限 | `danger-full-access` | `workspace-write` | DSC 沙箱现成 |
 | 锁 | `proper-lockfile` | `tryOsLock` | 少一个原生依赖 |
-| 库版本载体 | `kv['store.schema']` = 11 | `PRAGMA user_version` = 1 | 库坏时也要读得出可信版本 |
-| 表结构 | 9 张 | 9 张原样 + `event` / `assignment` / `meta` | 时间线、分配、运行期元数据要有落点 |
+| 库版本载体 | `kv['store.schema']` = 11 | `PRAGMA user_version` = 3 | 库坏时也要读得出可信版本 |
+| 表结构 | 9 张 | 9 张原样 + `event` / `assignment` / `meta` / `candidate` | 时间线、分配、运行期元数据、候选收件箱要有落点 |
 | 面板 | 自带 HTTP API | 快照面 + 白名单方法 | DSC 无插件路由入口 |
-| 副作用队列 | 持久化 `effect` 表，6 种 kind（`assessment` / `launch` / `delivery` / `relay` / `notice` / `reply`） | 建表但**一次不读写**：端口直调 + 执行器内存队列 + 2 秒泵 | 少一层调度器；代价是崩溃时内存队列里那批活会丢，见 [补齐清单](superagent/backlog.md) |
+| 副作用队列 | 持久化 `effect` 表，6 种 kind（`assessment` / `launch` / `delivery` / `relay` / `notice` / `reply`） | `effect` 表 + `launch` / `delivery` 两种 kind（G2） | 少一层调度器；`assessment` / `relay` / `notice` / `reply` 仍走直调 |
 | 数据清理 | 无（自认无限增长） | P1 加保留策略 | 不能重复这个坑 |
-| 超时语义 | 工单报 `waiting`，等人回话再续 | 报 `failed`，`/sa retry` 继续 | P0 没有回复通道，`waiting` 没有出口（§9.4） |
+| 超时语义 | 工单报 `waiting`，等人回话再续 | 报 `waiting`（后台作业跑过 30 分钟上限时），其余报 `failed` | G3 补齐后 `waiting` 有了第一个真实来源；「等人回话再续」仍靠 `/sa retry` |
 | 崩溃恢复 | 执行器保住会话，隔断后重连 | 起新分配 + 恢复提示词 | DSC 的 worker 是进程内 MiniAgent，宿主一死会话就没了（§9.3） |
+| 子智能体 | worker preset 里配 `tool-subagent`，孙代理继承 worker 的工具与权限 | worker 白名单加 `subagent`；队友工牌来自角色文件，不继承父会话 | DSC 的队友按角色文件冻结工牌，这是有意的设计差异 |
 
 ### 11.4 关于 QQ / 微信
 
@@ -1125,11 +1127,40 @@ node scripts/check-core.mjs        # 123/123 通过
 pnpm run build                    # exit 0，79 个功能包
 pnpm run build:ui                 # exit 0，22 份界面产物
 pnpm run check:plugin             # exit 0
-node scripts/package-tests.mjs    # exit 0，91 包 / 110 用例 / 677 断言 / 0 失败
+node scripts/package-tests.mjs    # exit 0，91 包 / 121 用例 / 691 断言 / 0 失败
 node scripts/ui-switch-check.mjs  # exit 0，34 PASS / 0 FAIL
 node scripts/plugin-standard-check.mjs  # exit 0，91 包 0 问题
 node scripts/plugin-inventory-check.mjs # exit 0，78 插件 / 26 分区 / 22 界面单元
 ```
+
+### 第 11 步：G1 / G3 / G6 移植（已完成）
+
+补齐清单里原先标「不做」的三项。调查后发现 G3 与 G6 **不是「内核不给」，是「内核有、没开这个口」**：
+DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
+
+**共同地基**：worker 会话是执行器自己 `Session.create` 造的，不进 `ctx.agent` 的常驻名册，
+于是 `sessionById(workerId)` 查不到它——`subagent` 认父会话、作业通知认归属都靠这一查。
+`AgentService` 加 `attach` / `detach`（只登记 `Session`，不登记 `MiniAgent`），执行器建会话后登记、关会话时摘掉。
+
+| 项 | 实际做法 |
+| --- | --- |
+| G3 作业表开口 | `tools-default` 把 `JobTable` 包成 `ctx.jobs` 服务（`createJobsService`：`list` / `running` / `wait` / `kill`），形状照上游 `executor/background.ts:10-15` |
+| G3 worker 工具 | `WORKER_TOOL_NAMES` 加 `job_output` / `job_list` / `job_kill` |
+| G3 等静默 | `turn/end` 到达时查 `jobs.running(workerSessionId)`，有作业就不报交付；`settleBackground` 每 500ms 查一次，静默后唤醒 worker 去读输出，30 分钟到点杀掉并报 `waiting` |
+| G3 停工单 | `terminate` 里 `killBackgroundJobs`，杀掉它还在跑的作业 |
+| G6 工具面 | `WORKER_TOOL_NAMES` 加 `subagent` |
+| G6 归属 | `subagent` 工具查不到父会话时**抛错**，不再回落 `ctx.session.current()`——回落会把队友派到用户正看着的会话名下 |
+| G6 收队友 | `TeamService.stopBySession(sessionId)`，`terminate` 时调（对齐上游 `stopSubagents`） |
+| G1 候选收件箱 | schema v3 加 `candidate` 表；`ModelAssessor` 加 `holdCandidate` 出口，`confirmInferred` 打开时 `auto` 模式的推断候选挂起；`SuperagentSurface` 加 `candidates` 格；概览页加「待确认」块；宿主加 `superagentAcceptCandidate` / `superagentIgnoreCandidate` |
+
+**G1 只做了一半**：没造常驻主会话（上游靠主会话的模型替人点头，DSC 换成人点按钮）。
+`assessmentOutcome` 在 `mode !== 'auto'` 时把推断强度的 accept 降成 `ignore`（`core/policy.ts` 的
+`observed` 分支），所以候选收件箱只在「自动接单」模式下有内容；默认设置是 `observe`。
+
+**没做的一层**：队友工具与 worker 白名单取交集。DSC 的队友工牌来自角色文件（有意设计），
+不继承父会话；要改得动共用包的工具挑选逻辑，影响所有会话。
+
+验收：`package-tests` 91 包 / 121 用例 / 691 断言 / 0 失败；`superagent-e2e-test.mjs` 24/24。
 
 ---
 

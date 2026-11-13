@@ -28,11 +28,11 @@
 | 项 | 内容 |
 | --- | --- |
 | 上游怎么做 | 常驻主会话当编排器，`MasterAssessor` 把候选卡片投给它，它调工具判定（`app/assessment.ts:104`）；`prompts/orchestrator.md` 定义它的角色 |
-| 当前怎么样 | 没有主会话。P0 用同步规则（`adapters/assessor.ts`），P2 用一次性问答（`adapters/assessor-model.ts`） |
-| 补的话动哪 | 需要一个新的「常驻会话」概念，DSC 目前没有；或把卡片做成界面上的「待确认」条目，人点一下调 `superagentPublish` |
-| 验收 | 一条 `inferred` 强度的候选，能在界面上看到卡片、点确认后建成工单 |
-| 状态 | **不做（架构不兼容）**，理由见下 |
-| 值得补吗 | **不建议**。上游的主会话是「常驻编排会话」，DSC 没有这个概念；做等价物只有两条路，都错位：<br>① 借用用户会话——每来一条候选就往用户正在聊的会话里插一张卡片，还要注册 `orchestrator_eval*` 三个全局工具，所有会话都能看到；<br>② 新建隐藏会话——要一个常驻模型会话加工具可见性隔离，等于新造一套架构，不是移植。<br>当前「同步规则 + 可选一次性问答」已经覆盖了 P0 的明确请求与 P2 的推断判定；缺的只是「人在卡片上点确认」这一步，那一步可以等界面有「待确认」列表时用 `superagentPublish` 补，不必先造主会话。 |
+| 当前怎么样 | 没有常驻主会话，但**有了候选收件箱**：`confirmInferred` 打开时，判定器把 `auto` 模式下的推断候选挂起，落进 `candidate` 表，界面上「待确认」一块列出来，人点「接单」才建工单 |
+| 补的话动哪 | 已补：`adapters/store.ts` 的 `candidate` 表（schema v3）、`adapters/assessor-model.ts` 的 `holdCandidate`、`runtime.ts` 的 `acceptCandidate` / `ignoreCandidate`、`surface.ts` 的 `candidates` 格、`ui-superagent/ui/overview.tsx` 的 `CandidatesBlock`、宿主两个方法 `superagentAcceptCandidate` / `superagentIgnoreCandidate` |
+| 验收 | 一条 `inferred` 强度的候选，在概览页「待确认」里看得到；点「接单」建成工单并开跑，点「忽略」它消失 |
+| 状态 | **已补（做候选收件箱，不造常驻主会话）**：`093e1569` |
+| 值得补吗 | 值得。**没做的那一半**是常驻主会话本身：上游靠主会话的模型替人点头，DSC 换成人在界面上点头——比上游更保守，但少了「主会话能自己读上下文、多轮追问」那一层。<br>为什么不造主会话：DSC 没有这个概念，两条替代路线都错位——① 借用户会话会每来一条候选就往用户聊天里插卡片，且 `orchestrator_eval*` 三个工具全局可见；② 新建隐藏会话要工具可见性隔离，`tools.project` 只能做减法，做不了「只给某类会话加工具」，等于新造一套架构。<br>**只在 `auto` 模式下有内容**：`assessmentOutcome` 在 `mode !== 'auto'` 时把推断强度的 accept 降成 `ignore`（`core/policy.ts` 的 `observed` 分支），那种候选连收件箱都进不去。默认设置是 `observe`，所以要用这个功能得先把接单模式调成「自动接单」。 |
 
 ### G2 持久化 effect 队列
 
@@ -51,11 +51,11 @@
 | 项 | 内容 |
 | --- | --- |
 | 上游怎么做 | worker 回合结束后，后台任务最多再跑 30 分钟（`BACKGROUND_LIMIT_MS`），跑完再报 `waiting`；关闭时等 10 秒（`SHUTDOWN_STOP_MS`） |
-| 当前怎么样 | 没有。`turn/end` 一到就记 `ready`，worker 结束 |
+| 当前怎么样 | 已补。worker 工具目录里有 `job_output` / `job_list` / `job_kill`；`turn/end` 到达时先查 `ctx.jobs.running(workerSessionId)`，有作业就不报交付，等作业静默（最长 30 分钟） |
 | 缺的后果 | 长任务（跑一整轮测试、装依赖）不能跨回合续跑；要么一轮跑完，要么超时被取消 |
-| 补的话动哪 | `adapters/executor.ts` 的 `launch()`：接 `MiniAgent` 的后台任务事件；`stop()` 加等待窗口 |
-| 验收 | 一张单在 worker 回合结束后仍有子进程在跑，且工单阶段显示「空闲」而不是「已完成」 |
-| 状态 | **不做（依赖内核）**：DSC 的 `MiniAgent` 没有暴露后台任务事件，接不了；等内核先支持 |
+| 补的话动哪 | 已补：`tools-default` 把作业表开成 `ctx.jobs` 服务（`createJobsService`）；执行器 `awaitBackground` / `settleBackground` / `killBackgroundJobs`；`WORKER_TOOL_NAMES` 加三件作业工具 |
+| 验收 | 一张单在 worker 回合结束后仍有子进程在跑，工单不报「已完成」；作业结束后 worker 被唤醒去读输出；30 分钟到点杀掉并报 `waiting` |
+| 状态 | **已补**：`44e98761`（作业表服务）+ `833c7fe5`（worker 三件工具）+ `bf33da1b`（等静默与停工单杀作业） |
 
 ### G4 执行器的 prepare 命令（工作区准备）
 
@@ -86,11 +86,12 @@
 | 项 | 内容 |
 | --- | --- |
 | 上游怎么做 | worker 可以起子智能体并行干活，`stopSubagents` 统一收 |
-| 当前怎么样 | 没有。worker 只有自己的工具 |
+| 当前怎么样 | 已补。worker 工具目录里有 `subagent`；父会话按调用方的 `sessionId` 查内核会话表（worker 会话由执行器 `attach` 登记）；停工单时 `TeamService.stopBySession` 收掉它派出去的队友 |
 | 缺的后果 | 大任务不能拆并行；只能串行做 |
-| 补的话动哪 | 依赖 DSC 内核是否提供子智能体能力（`src/packages/subagent` 的宿主服务）；本包只能接 |
-| 验收 | 一张单里 worker 起两个子任务并行跑，报告里能看到两个的结果 |
-| 状态 | **不做（依赖内核）**：等内核的子智能体接口稳定再接 |
+| 补的话动哪 | 已补：`AgentService.attach/detach`（让内核认识 worker 会话）、`WORKER_TOOL_NAMES` 加 `subagent`、`subagent` 工具查不到父会话时抛错不回落、`TeamService.stopBySession` |
+| 验收 | 一张单里 worker 起两个子任务并行跑，报告里能看到两个的结果；停工单后两个队友都消失 |
+| 状态 | **已补**：`dd969c67`（会话登记地基）+ `8a0d08ff`（白名单、归属、收队友） |
+| 没做的一层 | 队友工具与 worker 白名单取交集。DSC 的队友工牌来自角色文件（有意设计），不继承父会话；要改得动共用包的工具挑选逻辑，影响所有会话。 |
 
 ### G7 报告语义补齐（`blocked` / `waiting` / `progress` / `dropped`）
 

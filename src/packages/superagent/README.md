@@ -43,13 +43,18 @@ Super Agent 的**宿主半**。界面半是 `@pneuma/ui-superagent`，两半各�
 
 ## Known Limitations
 
-- **worker 报告只有 `ready` / `failed` 两种**：core 定义了 6 种状态，执行器只会产出这两种
-  （[`adapters/executor.ts:33-35`](adapters/executor.ts#L33-L35)）。worker 在正文里提的问题不会被识别成
-  `blocked` / `waiting`，它落在摘要里，工单按 `ready` 收尾；要等人回话只能靠超时转 `failed` 再重试。
+- **worker 报告的状态靠工具说出来**：`superagent_report` 能报 `progress` / `ready` / `blocked` / `failed` /
+  `dropped`，`waiting` 由执行器在「后台作业跑过 30 分钟上限」时自己产生
+  （[`adapters/executor.ts`](adapters/executor.ts) 的 `settleBackground`）。worker 在正文里随手提的问题
+  仍然不会被识别成 `blocked`——它得显式调那个工具。
 - **无人值守权限是三档简化版**：worker 钉 `workspace-write`，`deny` 档拒「放宽沙箱 / 越界」，`ask` 档改钉
   `auto-edit`。受保护文件（`AGENTS.md` 这类）与强制问人的安全钩子仍可能在无人值守时弹卡。
-- **没有后台任务与子智能体**：worker 是进程内 `MiniAgent`，一轮跑完就结束；宿主一死会话就没了，靠
-  「起新分配 + 恢复提示词」接续（[`runtime.ts:486`](runtime.ts#L486)）。
+- **后台作业与子智能体都要宿主那一侧在场**：`ctx.jobs` 由 `tools-default` 提供、`ctx.team` 由 `subagent`
+  提供，任一插件停用时对应能力降级（作业读不到、队友派不出），派工照常。队友的工牌来自角色文件，
+  不继承 worker 的工具白名单——与上游「孙代理继承 worker 工具」是有意的差异。
+- **推断候选要先等人点头才有出口**：`confirmInferred` 打开、且接单模式是「自动接单」时，推断候选才进
+  候选收件箱。默认设置是 `observe`，那时 `assessmentOutcome` 直接把推断 accept 降成 `ignore`
+  （`core/policy.ts` 的 `observed` 分支），候选连收件箱都进不去。
 - **飞书不能自动发现新群 / 私聊**，也没有秒级延迟：轮询只能补收设置里点名的群，收发都走 `lark-cli` 子进程。
 - **GitHub / 飞书没有真账号验收过**：代码侧就位，离线用例跑通，`@` 一次真的产出 PR 这条只能人来验。
 
