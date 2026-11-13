@@ -35,17 +35,20 @@ export function jsToTsFallback(): Plugin {
       if (!importer) return null
 
       // 说明符可能带查询串（`./y.js?raw`）：查磁盘时要去掉，否则 existsSync 永远为假。
-      const specifier = source.replace(/\?.*$/, '')
-      if (!specifier.endsWith('.js') && !specifier.endsWith('.mjs')) return null
+      // 但回退命中后要把查询串接回去——`?raw` 的语义是「取文件原文」，
+      // 丢掉它不报错，只是悄悄变成「取模块导出」，调用方拿到的类型和值全变了样。
+      const [cleaned, ...queryParts] = source.split('?')
+      const query = queryParts.length === 0 ? '' : `?${queryParts.join('?')}`
+      if (!cleaned.endsWith('.js') && !cleaned.endsWith('.mjs')) return null
       // Windows 绝对路径是 `D:\...` 或 `D:/...`，不是以 `/` 开头，所以用 isAbsolute 判。
-      if (!specifier.startsWith('.') && !isAbsolute(specifier)) return null
+      if (!cleaned.startsWith('.') && !isAbsolute(cleaned)) return null
 
-      const target = resolvePath(dirname(importer), specifier)
+      const target = resolvePath(dirname(importer), cleaned)
       if (existsSync(target)) return null
 
       const base = target.replace(/\.m?js$/, '')
       for (const extension of FALLBACK_EXTENSIONS) {
-        if (existsSync(base + extension)) return base + extension
+        if (existsSync(base + extension)) return base + extension + query
       }
       return null
     },
