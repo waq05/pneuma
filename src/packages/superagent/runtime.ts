@@ -15,9 +15,10 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
-  type OutboundMessage, type SourceScope, type Ticket, type TicketStage } from './core/index.js'
-import { policyVersion, settingsPolicy, type Settings } from './core/policy.js'
-import { ManualAssessor } from './adapters/assessor.js'
+  type OutboundMessage, type SourceScope, type ThreadRef, type Ticket, type TicketStage, type Trigger } from './core/index.js'
+import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
+import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
+import type { AssessorComplete } from './adapters/assessor-model.js'
 import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
 import { manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
 import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
@@ -139,6 +140,31 @@ export interface RuntimeOptions {
   settings?: () => Settings
   /** 来源范围；不注入 = 只认手动来源（`adapters/manual.ts:77`）。 */
   scope?: SourceScope
+  /**
+   * 判定用的模型；不给或 `null` = 不调模型（`core/policy.ts:98` 的默认形态）。
+   *
+   * 给了它还得给 {@link RuntimeOptions.assessorComplete} 才会真的走模型版：模型名只是一份
+   * 配置，能不能发请求取决于宿主有没有把模型服务接进来。
+   */
+  assessorModel?: RoleModel | null
+  /** 一次问答；不给 = 就算配了模型也退回同步规则（见 `adapters/assessor-select.ts`）。 */
+  assessorComplete?: AssessorComplete
+}
+
+/**
+ * 来源适配器能用的三个动作。
+ *
+ * 故意只露这三个：`receive` 交一条 Trigger、`bindThread` 让工单关注一张 PR、`threadClosed`
+ * 报线程关闭。评估、派工、改设置都不在里面——来源是「把外面的事变成 Trigger」的角色，
+ * 看见得越多，越容易绕过准入闸自己建单。
+ *
+ * 类型在本文件定义而不是从某个来源适配器 import：这样一边加来源，运行期不用跟着改。
+ */
+export interface SourceBridge {
+  receive(trigger: Trigger): unknown
+  bindThread(ticketId: string, thread: ThreadRef, own: boolean): unknown
+  /** `outcome` 用来源自己的两个词（`merged` / `closed`），时刻由运行期补。 */
+  threadClosed(thread: ThreadRef, outcome?: 'merged' | 'closed'): unknown
 }
 
 /** 把未知异常压成一行可读文本，日志用。 */
@@ -172,7 +198,7 @@ export class SuperagentRuntime {
   /** 时钟；`publish` 造 Trigger 时要用，核心那边也拿同一个。 */
   private readonly clock: () => string
   private readonly repos: StoreRepositories
-  private readonly assessor: ManualAssessor
+  private readonly assessor: SuperagentAssessor
   private readonly engine: Engine
   /** 执行器：`stop` 真停 worker、`retry` 重新派工要用；默认是 {@link WorkerExecutor}。 */
   private readonly executor: Executor
@@ -205,13 +231,21 @@ export class SuperagentRuntime {
     // 复用 `DscStore` 的那条连接（`store.handle`）：再开一条会冒出第二个 WAL 写者，
     // 而且两条连接各自开的事务互不可见，`atomic` 的边界就不成立了。
     this.repos = new StoreRepositories(store.handle)
-    this.assessor = new ManualAssessor((error, evalId) => this.log(`[superagent] 判定 ${evalId} 失败：${describe(error)}`))
-    this.notify = new StoreNotifier(store, { now })
-    this.timeoutOf = options.timeoutSeconds ?? (() => 0)
-    this.outbox = new StoreOutbox(store)
+    // 策略与来源范围要先于判定器就位：判定器每次判定都现读设置（规则表改了立刻生效）。
     this.policyCache = null
     this.settingsOf = options.settings ?? (() => defaultSettings())
     this.scope = options.scope ?? manualScope
+    // 配了模型且宿主给了模型出口才用模型版；否则是 P0 那套同步规则（`assessor-select.ts`）。
+    this.assessor = selectAssessor({
+      model: options.assessorModel ?? null,
+      settings: this.settingsOf,
+      ...(options.assessorComplete === undefined ? {} : { complete: options.assessorComplete }),
+      onError: (error, evalId) => this.log(`[superagent] 判定 ${evalId} 失败：${describe(error)}`),
+      log: (line) => this.log(line),
+    })
+    this.notify = new StoreNotifier(store, { now })
+    this.timeoutOf = options.timeoutSeconds ?? (() => 0)
+    this.outbox = new StoreOutbox(store)
     // 执行器的入口：宿主上下文（模型 / 工具 / 守卫 / 沙箱 / 压缩）+ 设置。
     // 没给 `ctx` 时执行器停在「未接宿主」模式（`start` 只记一条缺项日志、工单留待派工）。
     // `engine` 用 getter 晚绑定：引擎的构造需要执行器，执行器的报告又要引擎。
@@ -261,6 +295,20 @@ export class SuperagentRuntime {
     const policy = settingsPolicy(settings, this.scope)
     this.policyCache = { stamp, policy }
     return policy
+  }
+
+  /**
+   * 给来源适配器用的三个动作。
+   *
+   * 每次返回新对象：来源只该拿到这三个函数。把运行期本身交出去，来源就能绕过准入闸自己
+   * `publish`，那套「谁的需求能被接单」的判定等于没有。
+   */
+  sourceBridge(): SourceBridge {
+    return {
+      receive: (trigger) => this.engine.receive(trigger),
+      bindThread: (ticketId, thread, own) => this.engine.bindThread(ticketId, thread, own),
+      threadClosed: (thread, outcome) => this.engine.threadClosed(thread, outcome ?? 'closed', this.clock()),
+    }
   }
 
   /**
