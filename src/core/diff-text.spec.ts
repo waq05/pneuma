@@ -13,7 +13,7 @@
  * @module dsc/core/diff-text.spec
  */
 import { expect, test } from 'vitest'
-import { DIFF_LINE_CHAR_LIMIT, diffLines, renderHunk, splitLines } from './diff-text.js'
+import { DIFF_LINE_CHAR_LIMIT, diffLines, renderDiff, renderHunk, splitLines } from './diff-text.js'
 
 /** 把结果铺成「头 + 前缀 + 正文」的字符串数组，一条断言就能看住行数与每行前缀。 */
 const rendered = (before: string, after: string, context: number): string[] =>
@@ -191,4 +191,14 @@ test('每个 hunk 的计数与它自己的行一致（多个 hunk 时不串号�
     expect(hunk.oldCount).toBe(hunk.lines.filter((line) => line.kind !== 'add').length)
     expect(hunk.newCount).toBe(hunk.lines.filter((line) => line.kind !== 'remove').length)
   }
+})
+
+test('renderDiff 把多段 hunk 用单个换行拼起来，末尾不多空行', () => {
+  // 落日志时整段拼一次：多一个尾部换行就是日志里每条 diff 后面空一行，少一个换行会把
+  // 第二段头粘到上一段最后一行正文后面，两边都会让粘贴出来的 diff 不能用。
+  const before = Array.from({ length: 9 }, (_, index) => `l${String(index)}`).join('\n')
+  const after = ['l0', 'X1', 'l2', 'l3', 'l4', 'l5', 'l6', 'X7', 'l8'].join('\n')
+  const text = renderDiff(diffLines(before, after, 1))
+  expect(text.split('\n').filter((line) => line.startsWith('@@ '))).toHaveLength(2)
+  expect(text.endsWith('\n')).toBe(false)
 })
