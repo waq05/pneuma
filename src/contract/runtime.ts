@@ -271,6 +271,31 @@ export interface SuperagentTicketView {
 }
 
 /**
+ * 一个来源的轮询状态（GitHub / 飞书各一条）。
+ *
+ * **为什么没有 `label`**：快照面属于宿主侧，宿主不夹带人类语言——同一份快照要同时喂给
+ * 中文与英文界面。名称由界面按 {@link SuperagentSourceView.id} 取词（`github` / `feishu`），
+ * 认不出的 id 原样显示；将来加来源不必改契约，也不必让宿主猜界面语言。留一个没人用的
+ * `label` 字段比没有更糟：两处文案一旦不一致，谁也不知道该信哪一份。
+ */
+export interface SuperagentSourceView {
+  /** 来源 id：`github` / `feishu`。界面按它取词与排序，宿主不认识任何显示名。 */
+  id: string
+  /** 设置里开着没有（关着的来源也列出来，界面画成「未启用」）。 */
+  enabled: boolean
+  /**
+   * 上次轮询的时刻（ISO 8601）；还一轮都没跑过就没有这一项。
+   *
+   * 注意：两个适配器都在**每轮开始时**记这一笔（`github/source.ts:495`、
+   * `feishu/loops.ts:502`），失败的那一轮也会更新它。所以它不是「上次成功」，界面文案
+   * 按「上次轮询」写；要真正的「上次成功」得改适配器，或在接线层另记一笔。
+   */
+  lastPollAt?: string
+  /** 上次失败的原文；成功之后清掉。 */
+  lastError?: string
+}
+
+/**
  * Super Agent 的快照面（§8.2）。
  *
  * 宿主插件 `@pneuma/superagent` 默认关着：关着时这一格整个缺席，界面按「未启动」画，
@@ -288,6 +313,15 @@ export interface SuperagentSurface {
   tickets: SuperagentTicketView[]
   /** 面板「最近动态」：工单结束那类通知，最旧在前（上限 20 条，由适配层截）。 */
   recent: { at: string; text: string }[]
+  /**
+   * 两个外部来源的轮询状态（GitHub / 飞书各一条，顺序固定）。
+   *
+   * **可选**：旧快照（或旧宿主）没有这一格，界面读到 `undefined` 时整块不画——
+   * 「没有这一格」与「有但为空」是两件事，不要拿空数组冒充。
+   * 关着的来源也列出来（`enabled: false`）：否则用户分不清「没配这个来源」与
+   * 「配了但令牌过期 / CLI 挂了」，而这两种情况要做的操作完全不同。
+   */
+  sources?: SuperagentSourceView[]
 }
 
 /** 发布一张工单的入参（`superagentPublish` 的唯一实参）。 */

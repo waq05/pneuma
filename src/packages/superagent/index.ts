@@ -36,7 +36,7 @@
  * @module pneuma/superagent
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsField, SettingsValue, SettingsValues, SuperagentSourceView } from '@pneuma/runtime/contract.js'
 import type { HealthService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
@@ -178,6 +178,55 @@ const t = hostT(import.meta.dirname)
 /** 把未知异常压成一行，日志里用。 */
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 来源自己的轮询读数（GitHub 与飞书的 `status()` 同形；这里只取本视图用到的两项）。
+ *
+ * 两个适配器的 `status()` 还带别的字段（飞书的 `connected`），但界面这一格只回答
+ * 「上次成功是什么时候、错在哪」；多给的字段没有出口，索性写窄，接线的形状对不上时
+ * `tsc` 会当场报错。
+ */
+export interface SuperagentSourceStatus {
+  lastPollAt: string | null
+  lastError: string | null
+}
+
+/**
+ * 一条来源的投影。
+ *
+ * `status` 为 `null` 表示来源没起来（没配、缺令牌、CLI 找不到，或建失败）——这时只给
+ * `id` 与 `enabled`，`lastPollAt` / `lastError` 一律不出现。适配器用 `null` 表示「还没有
+ * 过成功的一拍 / 还没有过错误」，契约用「没有这一项」表达，所以这里做一次转换：
+ * 直接把 `null` 透传给界面，界面就得再判一次 `null`，两种空值会各写一份。
+ */
+function sourceViewOf(id: string, enabled: boolean, status: SuperagentSourceStatus | null): SuperagentSourceView {
+  return {
+    id,
+    enabled,
+    ...(status?.lastPollAt == null ? {} : { lastPollAt: status.lastPollAt }),
+    ...(status?.lastError == null ? {} : { lastError: status.lastError }),
+  }
+}
+
+/**
+ * 拼出来源清单：GitHub 在前、飞书在后，顺序固定（界面按这个顺序画，不自己排）。
+ *
+ * 为什么单独导出：`apply` 的闭包里 `github` / `feishu` 是真来源（要令牌、要 CLI），
+ * 包级测试造不出来；把「读到的状态 → 契约形状」拆成纯函数，三种情形（没起来 / 正常 /
+ * 有错误）就能直接断言，不必为了一个快照字段起一套 cordis 上下文。接线由 `apply` 里
+ * 那一行保证（只做 `{ ...surface, sources }` 的拼接）。
+ *
+ * @param input - 两个来源各自的「设置开关」与「已起来时的 status()」；没起来时 status 给 null
+ */
+export function buildSourceViews(input: {
+  github: { enabled: boolean; status: SuperagentSourceStatus | null }
+  feishu: { enabled: boolean; status: SuperagentSourceStatus | null }
+}): SuperagentSourceView[] {
+  return [
+    sourceViewOf('github', input.github.enabled, input.github.status),
+    sourceViewOf('feishu', input.feishu.enabled, input.feishu.status),
+  ]
 }
 
 /** 设置面读回来的值（都收好了类型与区间）。 */
@@ -623,6 +672,29 @@ export function apply(ctx: Context, passed?: unknown): void {
   let feishu: { source: FeishuSource; run: FeishuCli['run']; lastAt: number; busy: boolean } | null = null
 
   /**
+   * 两个来源给界面的状态（U5）：关着的也列出来，否则「没配」与「配了但坏了」分不开。
+   *
+   * 为什么每次现读 `github` / `feishu` 这两个 `let`，而不是启动时抓一份：来源在
+   * `ensure()` 建好运行期之后才起，停用插件时又会被置回 `null`；闭包里抓快照会永远停在
+   * 「未启用」。开关走参数传进来的当次设置——与 `withRepoGuide` 共用一次磁盘读，
+   * 不为一帧快照把 `plugins.json` 读两遍。
+   *
+   * 为什么 label 不从这里出：宿主不夹带人类语言，名称由界面按 `id` 取词（见契约
+   * `SuperagentSourceView` 的注释）。
+   *
+   * @param current - 这一帧快照用的设置（`apply` 的 `config()` 刚读出来的那份）
+   */
+  const sourceViews = (current: SuperagentConfig): SuperagentSourceView[] => {
+    return buildSourceViews({
+      // GitHub 的「开关」就是仓库填了没有：没填 = 这个来源根本没接。
+      github: { enabled: current.githubRepository !== '', status: github?.source.status() ?? null },
+      // 飞书的开关是显式的一格：开了但缺群 / 缺 CLI 时 enabled 仍为 true、状态为空，
+      // 界面据此画「从未成功」，比画成「未启用」更接近事实。
+      feishu: { enabled: current.feishuEnabled, status: feishu?.source.status() ?? null },
+    })
+  }
+
+  /**
    * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
    *
    * 三种没建起来的情况都只记一行日志、不抛：来源是可选件，缺了它插件其余部分照常工作。
@@ -944,7 +1016,15 @@ export function apply(ctx: Context, passed?: unknown): void {
   // 面登记包在 ctx.effect 里（见 `surface.ts`），停用插件即摘掉这一格。
   // 仓库路径在这里拼进快照面：`service.surface()` 是薄层、不读配置，而「路径没填」这条
   // 引导要现读设置（见 `surface.ts` 的 `withRepoGuide`）。
-  registerSurface(ctx, () => withRepoGuide(service.surface(), config().repoPath))
+  // 来源状态也在这一层拼：`sources` 要读两个来源的运行期句柄，那是本文件独占的闭包，
+  // 服务层（`service.ts`）不该认识它们。设置只读一次，两份投影共用同一帧的值。
+  registerSurface(ctx, () => {
+    const current = config()
+    return {
+      ...withRepoGuide(service.surface(), current.repoPath),
+      sources: sourceViews(current),
+    }
+  })
 
   // ── worker 的报告工具（backlog G7）────────────────────────────────────────────
   // worker 在后台跑，正文里提的问题没有人接：给它一个工具，把 blocked / progress / ready

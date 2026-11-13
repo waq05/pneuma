@@ -1,13 +1,14 @@
 /**
  * 第 7 步前半的包级测试：界面面（快照）与服务转发。
  *
- * 六条用例各钉一件「界面点了没反应」的事：
+ * 九条用例各钉一件「界面点了没反应」的事：
  *   1. 面形状齐：ready / counts / tickets / recent 四样都在；
  *   2. 工单增减时 counts 跟着变（发布 → running；停止 → done）；
  *   3. peekSession 真读得到刚写进去的 jsonl（只读重放，不改文件）；
  *   4. 停 / 重试 / 清理 / 发布四个动作转发到运行期的对应方法；
  *   5. 运行期没起来时 `ready:false` 且带 `problem`（界面据此说清卡在哪）；
- *   6. 一张工单多个执行会话（重试过）时条目 id 顺延，不会撞 key。
+ *   6. 一张工单多个执行会话（重试过）时条目 id 顺延，不会撞 key；
+ *   7-9. 来源清单（U5）在「没起来 / 正常 / 有错误」三种情形下的形状。
  *
  * 全程用 `tmpdir()` 下的临时 `DSC_HOME`，绝不碰用户真实的 `~/.dsc`。
  * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
@@ -25,6 +26,9 @@ const { openStore } = await import('../../../../lib/packages/superagent/adapters
 const { SuperagentRuntime } = await import('../../../../lib/packages/superagent/runtime.js')
 const { SuperagentService } = await import('../../../../lib/packages/superagent/service.js')
 const { sessionsDir } = await import('../../../../lib/packages/superagent/paths.js')
+// 来源清单的纯函数在入口文件里：`apply` 的闭包拿不到真来源（要令牌 / 要 CLI），
+// 「读到的状态 → 契约形状」这一段才是包级测试能验的部分（接线由 index.ts 那一行保证）。
+const { buildSourceViews } = await import('../../../../lib/packages/superagent/index.js')
 
 /** 固定时钟：断言不依赖「跑得快慢」。 */
 const AT = '2026-01-01T00:00:00.000Z'
@@ -130,6 +134,50 @@ test('面形状：ready / counts / tickets / recent 四样都在', async () => {
     // 三组计数之和必须等于工单总数：界面分组头不许「加起来对不上」。
     assert.equal(surface.counts.needsYou + surface.counts.running + surface.counts.done, surface.tickets.length)
   })
+})
+
+test('来源：两个来源都没起来时也列出来，enabled 照设置开关，不带状态字段', () => {
+  const sources = buildSourceViews({
+    github: { enabled: false, status: null },
+    feishu: { enabled: true, status: null },
+  })
+  // 顺序固定：界面按这个顺序画，不在前端自己排。
+  assert.deepEqual(sources.map((source) => source.id), ['github', 'feishu'])
+  // 关着的来源也要在清单里：否则用户分不清「没配这个来源」与「配了但坏了」。
+  assert.deepEqual(sources[0], { id: 'github', enabled: false })
+  // 开了但还没起来（缺令牌 / 缺 CLI / 缺群）同样是 enabled: true，状态为空。
+  assert.deepEqual(sources[1], { id: 'feishu', enabled: true })
+  for (const source of sources) {
+    assert.ok(!('lastPollAt' in source), '来源没起来（status 为 null）时不该有 lastPollAt')
+    assert.ok(!('lastError' in source), '没失败过就不该有 lastError')
+  }
+})
+
+test('来源：起来了且上一拍成功时带 lastPollAt，不带 lastError', () => {
+  const sources = buildSourceViews({
+    github: { enabled: true, status: { lastPollAt: AT, lastError: null } },
+    feishu: { enabled: true, status: { lastPollAt: AT, lastError: null } },
+  })
+  for (const source of sources) {
+    assert.equal(source.enabled, true)
+    assert.equal(source.lastPollAt, AT, '上次轮询时刻要原样带出来（界面据此算「几分钟前」）')
+    assert.ok(!('lastError' in source), '成功之后错误要清掉，不能留一个 null 或空串')
+  }
+})
+
+test('来源：有错误时原样带 lastError，已有的 lastPollAt 一并保留', () => {
+  const sources = buildSourceViews({
+    github: { enabled: true, status: { lastPollAt: AT, lastError: '401 Unauthorized: Bad credentials' } },
+    // 只有错误、没有轮询时刻：契约用「没有这一项」表达 null（界面画「从未成功 · 错误」）。
+    feishu: { enabled: true, status: { lastPollAt: null, lastError: 'lark-cli exited with code 1' } },
+  })
+  assert.deepEqual(sources[0], {
+    id: 'github',
+    enabled: true,
+    lastPollAt: AT,
+    lastError: '401 Unauthorized: Bad credentials',
+  })
+  assert.deepEqual(sources[1], { id: 'feishu', enabled: true, lastError: 'lark-cli exited with code 1' })
 })
 
 test('工单数变化时 counts 跟着变：发布算进行中，停止后算已完成', async () => {

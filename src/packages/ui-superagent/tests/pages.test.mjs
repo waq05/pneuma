@@ -54,6 +54,33 @@ test('取词：源码里每个字面量 t(...) 的键都在字典里，字典里
   passed += 1
 })
 
+test('来源：概览页底部读 surface.sources，名称按 id 取词，旧快照整块不画', () => {
+  const overview = read('../ui/overview.tsx')
+  // 数据从快照面读，不在前端再聚合一遍（与计数、最近动态同一条规矩）。
+  assert.match(overview, /const sources = surface\.sources/, '概览页没有从 surface.sources 读来源')
+  // 旧快照没有这一格：整块不画，不能拿空数组冒充「有但为空」。
+  assert.match(overview, /sources === undefined \? null : <SourcesBlock/, '旧快照缺少 sources 时仍然画了来源区块')
+  // 宿主只给稳定 id（契约里没有 label），显示名必须落在界面字典里。
+  for (const id of ['github', 'feishu']) {
+    assert.ok(overview.includes(`t('superagent.overview.sources.${id}')`), `来源名称没有按 id 取词：${id}`)
+  }
+  // 四种状态都要画得出来：未启用 / 从未成功 / 上次轮询 / 错误原文（红色）。
+  assert.ok(overview.includes('superagent.overview.sources.disabled'), '没有画「未启用」')
+  assert.ok(overview.includes('superagent.overview.sources.never'), '没有画「从未成功」')
+  assert.ok(overview.includes('superagent.overview.sources.lastPoll'), '没有画「上次轮询」')
+  assert.ok(overview.includes('source.lastError'), '错误原文没有画出来')
+  assert.ok(overview.includes('--dsc-red'), '错误原文没有用红色')
+
+  const state = read('../ui/state.ts')
+  // 视图层必须真把 sources 解析出来：`SuperagentView` 是逐字段挑着返回的，漏了这一步
+  // 概览页永远读到 undefined。
+  assert.match(state, /sources\?: readonly SuperagentSource\[\]/)
+  assert.match(state, /const sources = sourcesOf\(surface\['sources'\]\)/)
+  // 来源状态要进相等判断：工单一张没动时，错误变了页面也得重画。
+  assert.match(state, /sourcesFingerprint\(left\.sources\)/, '来源状态没进相等判断，错误变了页面不会重画')
+  passed += 1
+})
+
 test('装配：侧栏 order 2、整页 order 30，页条目在组件体里比对 shellPage', () => {
   const source = read('../ui/ui.tsx')
   assert.match(source, /register\('shell\.sidebar',\s*\{ id: 'superagent\.entry', order: 2 \}/)
