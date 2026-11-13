@@ -433,19 +433,30 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
    加这条不多花构建时间。
 4. 为 `src/core/` 纯函数模块补 spec：`clamp`、`records`、`strings`、`json-text`、`shell-quote`、`terminal-env`、`token-estimate`、`err-text`、`transcript-text`、`git-surface`、`todo-reminder`、`microcompact`、`compact-*`、`session-*`。
 
-### P1b 迁包级测试（119 条）
+### P1b 迁包级测试（119 条）——**已完成（2026-11-13）**
 
 `src/packages/<id>/tests/*.test.mjs` → `src/packages/<id>/tests/*.spec.ts`。
 
-| 批次 | 包 | 条数 |
-| --- | --- | --- |
-| A | 核心装配包（agent、session、session-core、tools、tools-default、commands、settings、prompt） | 约 20 |
-| B | 权限与沙箱（approval、approval-floor、permission-core、permission-presets、sandbox、guards） | 约 15 |
-| C | 工具类（read/write/edit/glob/grep 所在包、lsp、mcp、skills、memory） | 约 25 |
-| D | 界面侧包的宿主半（ui-* 的 index 部分） | 约 30 |
-| E | 其余 | 约 29 |
+实际执行的批次（与最初划分不同，按「文件实际归属的包」重切）：
 
-迁移规则（详见详细设计 §15.2）：
+| 批次 | 范围 | 文件 | 用例 |
+| --- | --- | --- | --- |
+| A | 核心装配：agent、session、session-core、tools、tools-default、commands、commands-core、settings、config-core、presets、mode、prompt、runtime、runtime-api | 14 | 72 |
+| B | 权限与沙箱：approval、approval-floor、permission-core、permission-presets、sandbox、guards、checkpoint、hooks、host-stdio | 12 | 106 |
+| C1 | 工具类：mcp、web-search、browser、cdp、computer-use、lsp、skills、memory、tool-search | 11 | 66 |
+| C2 | 功能包：ask、compact、doctor、goal、image-diet、log、microcompact、ops、plan、ptc、schedule、self-improve、spill、todo、transcript | 17 | 122 |
+| D1 | 界面侧前段：13 个 ui-* | 13 | 67 |
+| D2 | 界面侧后段：17 个包（含 desktop-dock、tui） | 19 | 97 |
+| E | superagent(19)、cli、dsh-compat、llm、remote、webserver、subagent、waiting、surfaces、plugin-manager | 29 | 228 |
+| F | git、dock-browser、session-search、session-title | 4 | 28 |
+
+合计 **119 个文件 → 119 个 spec**，用例 786（迁移前）→ 806（迁移后，净增 20，删 5 条写法断言、其余补强）。
+
+**拆除的旧脚手架**：`scripts/package-tests.mjs` 删除；`check:plugin` 摘掉那一步；
+`plugin-standard-check.mjs` 的判据从 `*.test.mjs` 改成 `*.spec.ts`；
+`verify.yml` 的 `plugin` job 删除（它的唯一理由是「这批测试要先 build 再单独跑」）。
+
+迁移规则（详见详细设计 §15.2 与 [testing-migration-playbook.md](testing-migration-playbook.md)）：
 
 - `import ... from '../../../../lib/packages/<id>/index.js'` → 改成相对源码路径 `../index.js`，靠解析插件落到 `.ts`。
 - 自造 `check()` + `node:assert` → `test()` + `expect`。
@@ -454,16 +465,29 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 
 ### P2 迁 integration（最大一块）
 
-46 条起内核的探针 → `*.int.spec.ts`。
+**实测家底（2026-11-13）**：`scripts/*-test.mjs` 里排除 `ui-*` 后是 **122 个内核探针、1.5 MB**。
+设计初稿写的「46 条起内核的探针」低估了：其中 46 条显式调 `createKernel`，但大量探针
+是间接起内核的（自己造假 SSE、自己装配插件），按主题分布：
 
-| 批次 | 内容 | 条数 |
+| 主题前缀 | 条数 | 主题前缀 | 条数 |
+| --- | --- | --- | --- |
+| session | 14 | context / plugin / llm / transcript | 各 5 |
+| tui | 8 | sandbox / injection / tool | 各 3 |
+| todo / subagent / compact / env / settings | 各 2 | 其余零散 | — |
+
+按主题分批，每批 6–10 条，用 P1a 的 harness 收敛（`tempHome` / `fakeLLM` / `bootKernel`）：
+
+| 批次 | 内容 | 约条数 |
 | --- | --- | --- |
-| A | 会话正确性（去重、重放、压缩、租约、权限） | 12 |
-| B | 工具与沙箱（bash、read/write/edit、沙箱令牌、审批流） | 14 |
-| C | 上下文与注入（todo 提醒、microcompact、环境快照） | 10 |
-| D | 其余 | 10 |
+| A | 会话正确性（重放、去重、压缩、租约） | 14 |
+| B | TUI 与转录（`tui-*`、`transcript-*`） | 13 |
+| C | 模型与上下文（`llm-*`、`context-*`、`injection-*`） | 15 |
+| D | 插件装配与热替换（`plugin-*`） | 8 |
+| E | 工具与沙箱、审批流 | 12 |
+| F | 其余零散 | 60 |
 
-每迁完一条，从 `scripts/` 删掉对应 `.mjs`，`check-core` 自动发现列表随之缩短。
+每迁完一条，从 `scripts/` 删掉对应 `.mjs`，`check-core` 的自动发现列表随之缩短。
+判据与 P1b 相同：**反向验证**（改坏源码必须变红）+ 用例数只增不减。
 
 ### P3 ui 层 + e2e + 覆盖率开关
 
