@@ -1180,9 +1180,10 @@ node scripts/plugin-inventory-check.mjs # exit 0，78 插件 / 26 分区 / 22 �
 3. **`manual` 通道只进最近动态**：那是 P0 的通知占位，没有可以回话的会话。来源没起来
    （飞书没配、GitHub 没令牌）是另一回事，按退避等，不会一上来就丢。
 
-**已知代价**：`drainOutbox` 一次取走最多 50 行，这一批在发完之前只活在内存里。进程崩在这
-一批中间，还没发的那几条就丢了——这是「取走即删」的代价，要根治得给 `outbox` 加一列状态，
-P2 不做。库里还没取出来的消息不受影响。
+**已知代价（已修，O4）**：`drainOutbox` 原来是「取出即删」，一次取走最多 50 行、发完之前只活在
+内存里，进程崩在这一批中间会丢未发的那几条。现在 `outbox` 有 `state` 列（`pending` / `sending`），
+取行改成 `claimOutbox` 认领、发成功才 `finishOutbox` 删行，开库时把残留的 `sending` 改回 `pending`
+（`adapters/store.ts` 的 `recoverSendingOutbox`）。重发是安全的：两个通道都按消息 id 做幂等。
 
 一处顺手补的：`decodeOutboxItem` 遇到坏行会抛（不是 JSON，或能解析但缺 `id` / `kind`），而
 `drainOutbox` 的「取出 + 删除」在同一个事务里——**一行坏数据会挡住所有回复**。发送泵读失败时

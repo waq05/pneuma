@@ -1,9 +1,9 @@
 /**
  * @pneuma/superagent 的发送泵测试：离线、不联网、不读用户真实的 `~/.dsc`。
  *
- * 十条用例，每条钉一件「不做就会静默出事」的判断：
+ * 十一条用例，每条钉一件「不做就会静默出事」的判断：
  *   1. 发出去：有发送方的消息被送出、行删掉、那句话进「最近动态」（时刻用入队时刻）；
- *   2. 发失败：行按原 id 写回队列，退避没到点时下一拍不再试；
+ *   2. 发失败：行按原 id 放回队列（状态回到 pending，不是重新插一行），退避没到点时下一拍不再试；
  *   3. 退避到点：再试一次，成功就删行；
  *   4. 永久发不出（`'gone'`）：删行、不重试，日志说清是永久失败；
  *   5. 来源没起来：按退避等，试满八次才丢弃（约 10 分钟），日志两次口径不同；
@@ -11,7 +11,12 @@
  *   7. 窗口容量：第 21 条挤掉最旧的；
  *   8. 别家写的行（读不出消息）：删掉，不抛、不进窗口；
  *   9. 坏行（不是 JSON、或能解析但缺 id/kind）：自救删掉，同批的好消息照发——一行坏数据不能挡住所有回复；
- *  10. 写回队列失败：那条消息只剩内存这一份，下一拍补写回去，不能静默丢。
+ *  10. 放回队列失败：那条消息在库里停在 sending，内存里留一份，下一拍补试，不能静默丢；
+ *  11. 发送途中：行是 `sending` 而不是被删——这就是「崩在中间不丢消息」的依据。
+ *
+ * 为什么第 11 条重要：v1 的做法是「取出即删」，进程崩在一批中间，还没发的那几条就没了；
+ * 现在认领只改状态，库里的行还在，重开库时 `store.ts` 的 `recoverSendingOutbox` 把它们
+ * 放回 `pending`。这条用例就是钉住「取出之后行还在」这个前提。
  *
  * 时钟由 `now` 注入，库在 `tmpdir()` 下的临时 `DSC_HOME` 里。
  * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
@@ -70,6 +75,9 @@ const seed = (store, item) => {
   store.enqueueOutbox({ id: item.id, kind: item.kind, payload: { message: item, at: item.at ?? STARTED } })
 }
 
+/** 库里某一行的队列状态（`pending` / `sending`）；行不在返回 undefined。 */
+const stateOf = (store, id) => store.handle.prepare('SELECT state FROM outbox WHERE id = ?').get(id)?.state
+
 /**
  * 装一个发送泵：时钟可由 `tick` 推进，窗口与日志都留在外面给断言看。
  *
@@ -118,14 +126,16 @@ test('1. 发出去：调用发送方、删行、那句话进最近动态', async
   })
 })
 
-test('2. 发失败：行按原 id 写回，退避没到点不再试', async () => {
+test('2. 发失败：行按原 id 放回，退避没到点不再试', async () => {
   await withStore(async (store) => {
     seed(store, message('m1'))
     const probe = makeDispatcher(store, {
       send: async () => { throw new Error('502 bad gateway') },
     })
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), ['m1'], '失败要写回队列，不能丢')
+    assert.deepEqual(probe.rows(), ['m1'], '失败要放回队列，不能丢')
+    assert.equal(stateOf(store, 'm1'), 'pending', '放回队列是状态改回 pending，不是重新插一行')
+    assert.equal(store.handle.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 1, '不能变成两行')
     assert.equal(probe.window.length, 1, '说了什么仍要记进最近动态')
     assert.match(probe.lines[0], /稍后重试：发送失败：502 bad gateway/u)
 
@@ -254,7 +264,7 @@ test('9. 坏行：自救删掉，同批的好消息照发', async () => {
   })
 })
 
-test('10. 写回队列失败：留在内存里，下一拍补写回去', async () => {
+test('10. 放回队列失败：行停在 sending，内存留一份，下一拍补试', async () => {
   await withStore(async (store) => {
     seed(store, message('m1'))
     let failing = true
@@ -264,18 +274,37 @@ test('10. 写回队列失败：留在内存里，下一拍补写回去', async (
         return 'sent'
       },
     })
-    // 让「写回队列」这一步失败：那一行已经被 drainOutbox 从库里取走删掉了，只剩内存这一份。
-    const original = store.enqueueOutbox.bind(store)
-    store.enqueueOutbox = () => { throw new Error('database is locked') }
+    // 让「放回队列」这一步失败：行会停在 sending（库里还在，但这一进程不会再认领它）。
+    const original = store.requeueOutbox.bind(store)
+    store.requeueOutbox = () => { throw new Error('database is locked') }
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), [], '这一拍确实没写回库里')
-    assert.ok(probe.lines.some((line) => line.includes('写回队列失败')), '失败要留痕迹')
+    assert.deepEqual(probe.rows(), ['m1'], '行没被删，只是状态改不回去')
+    assert.equal(stateOf(store, 'm1'), 'sending', '这一拍确实没放回队列')
+    assert.ok(probe.lines.some((line) => line.includes('放回队列失败')), '失败要留痕迹')
 
-    store.enqueueOutbox = original
+    store.requeueOutbox = original
     failing = false
     probe.tick(5000)
     await probe.dispatcher.flush()
     assert.equal(probe.sent.length, 2, '下一拍要重试那条消息')
     assert.deepEqual(probe.rows(), [], '发成功之后不该留行')
+  })
+})
+
+test('11. 发送途中行是 sending（不是取出即删），发完才删', async () => {
+  await withStore(async (store) => {
+    seed(store, message('m1'))
+    // 发送方在被调用的那一刻回头看库：这时行应该还在，状态是 sending。
+    let duringSend
+    const probe = makeDispatcher(store, {
+      send: async () => {
+        duringSend = { rows: probe.rows(), state: stateOf(store, 'm1') }
+        return 'sent'
+      },
+    })
+    await probe.dispatcher.flush()
+
+    assert.deepEqual(duringSend, { rows: ['m1'], state: 'sending' }, '发送途中行要在库里、状态是 sending')
+    assert.deepEqual(probe.rows(), [], '发成功之后才删行')
   })
 })

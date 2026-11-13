@@ -1,9 +1,10 @@
 /**
- * @pneuma/superagent 存储适配层的包级测试：钉 6 条不变量。
+ * @pneuma/superagent 存储适配层的包级测试：钉住九条不变量。
  *
- * 为什么是这 6 条：建库幂等、版本上限、版本下限迁移、单实例锁、事务回滚、表与索引齐全——
- * 这六样任一坏了，症状都不是「报个错」，而是「两个编排器同时写库」「旧代码把新库降级写坏」
- * 「迁移跑一半留下半张表」这类要人工修数据的事故，所以每条都得有断言。
+ * 为什么是这几条：建库幂等、版本上限、版本下限迁移、单实例锁、事务回滚、表与索引齐全、
+ * outbox 状态列与老库升级、认领 / 收尾 / 放回、崩溃后 sending 行自动回队列——任一条坏了，
+ * 症状都不是「报个错」，而是「两个编排器同时写库」「旧代码把新库降级写坏」「迁移跑一半留下
+ * 半张表」「崩一次就丢一批没发出去的消息」这类要人工修数据的事故，所以每条都得有断言。
  *
  * 全程用 `tmpdir()` 下的临时目录，且每个用例一个：绝不碰用户真实的 `~/.dsc`。
  * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
@@ -64,6 +65,20 @@ function ticketCount(dbPath) {
   return withDb(dbPath, (db) => db.prepare('SELECT COUNT(*) AS n FROM ticket').get().n)
 }
 
+/** outbox 的列，按名字索引；`dflt_value` 是 SQL 字面量原文（字符串默认值带引号）。 */
+function outboxColumns(dbPath) {
+  return withDb(dbPath, (db) =>
+    Object.fromEntries(db.prepare('PRAGMA table_info(outbox)').all().map((column) => [column.name, column])),
+  )
+}
+
+/** outbox 的行，按入队顺序；只取 id 与状态，断言时一眼能看清顺序与归属（转成普通对象，便于 deepEqual）。 */
+function outboxRows(dbPath) {
+  return withDb(dbPath, (db) =>
+    db.prepare('SELECT id, state FROM outbox ORDER BY rowid').all().map((row) => ({ id: row.id, state: row.state })),
+  )
+}
+
 /** 期望的表：原文 9 张 + 本适配层补的 3 张。名单写死，不跟着 DDL 自动变——否则改了 DDL 测试也跟着绿。 */
 const EXPECTED_TABLES = [
   'kv',
@@ -113,7 +128,7 @@ test('建库幂等：同一目录连开两次，表都在、无报错', () => {
   store.openStore(dbPath).close()
   assertTables(dbPath)
   assertIndexes(dbPath)
-  assert.equal(userVersion(dbPath), 1)
+  assert.equal(userVersion(dbPath), store.SCHEMA_VERSION)
   passed += 1
 })
 
@@ -135,7 +150,7 @@ test('版本过高：user_version=99 时拒绝打开（store_version_too_new）'
   passed += 1
 })
 
-test('版本过低：user_version=0 且表被删，重开后表回来、版本回到 1', () => {
+test('版本过低：user_version=0 且表被删，重开后表回来、版本回到当前版本', () => {
   const dbPath = join(tempRoot('migrate'), 'orchestrator.sqlite')
   store.openStore(dbPath).close()
 
@@ -149,7 +164,7 @@ test('版本过低：user_version=0 且表被删，重开后表回来、版本�
   store.openStore(dbPath).close()
   assertTables(dbPath)
   assertIndexes(dbPath)
-  assert.equal(userVersion(dbPath), 1)
+  assert.equal(userVersion(dbPath), store.SCHEMA_VERSION)
   passed += 1
 })
 
@@ -212,6 +227,96 @@ test('表与索引：逐个 sqlite_master 查', () => {
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get(name),
     )
     assert.ok(hit !== undefined, `sqlite_master 里没有索引 ${name}`)
+  }
+  // 新库走「建 v1 形状 → v2 迁移加列」这条路，列与默认值都得真的在。
+  const columns = outboxColumns(dbPath)
+  assert.ok('state' in columns, `outbox 缺 state 列；现有：${Object.keys(columns).join(', ')}`)
+  assert.equal(columns.state.dflt_value, "'pending'", 'state 默认值必须是 pending，老行升级后才直接可用')
+  assert.equal(columns.state.notnull, 1, 'state 是 NOT NULL')
+  passed += 1
+})
+
+test('老库升级：v1 结构 + 已有行 → 打开后补上 state 列、老行变 pending', () => {
+  const dbPath = join(tempRoot('upgrade'), 'orchestrator.sqlite')
+  // 手搓一个 v1 库：只有 outbox 的旧形状、版本号 1、里面已经有一行待发消息。
+  const raw = new DatabaseSync(dbPath)
+  raw.exec('CREATE TABLE outbox (id TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  raw.exec(`INSERT INTO outbox (id, value) VALUES ('old', '{"id":"old","kind":"reply"}')`)
+  raw.exec('PRAGMA user_version = 1')
+  raw.close()
+
+  const db = store.openStore(dbPath)
+  db.close()
+
+  assert.equal(userVersion(dbPath), store.SCHEMA_VERSION, '升级后版本号要跟上代码')
+  assert.ok('state' in outboxColumns(dbPath), '老库要补上 state 列')
+  const row = withDb(dbPath, (probe) => {
+    const got = probe.prepare('SELECT id, value, state FROM outbox').get()
+    return { id: got.id, value: got.value, state: got.state }
+  })
+  assert.deepEqual(row, { id: 'old', value: '{"id":"old","kind":"reply"}', state: 'pending' }, '老行补默认值，载荷不动')
+  passed += 1
+})
+
+test('claimOutbox：取走的行是 sending，不是被删', () => {
+  const dbPath = join(tempRoot('claim'), 'orchestrator.sqlite')
+  const db = store.openStore(dbPath)
+  try {
+    db.enqueueOutbox({ id: 'm1', kind: 'reply', payload: { text: '第一句' } })
+    db.enqueueOutbox({ id: 'm2', kind: 'reply', payload: { text: '第二句' } })
+
+    const claimed = db.claimOutbox(1)
+    assert.deepEqual(claimed.map((item) => item.id), ['m1'], '按入队顺序取，且一次只取 limit 条')
+    assert.deepEqual(claimed[0].payload, { text: '第一句' }, '载荷原样交出来')
+    assert.deepEqual(
+      outboxRows(dbPath),
+      [{ id: 'm1', state: 'sending' }, { id: 'm2', state: 'pending' }],
+      '认领只改状态，不删行',
+    )
+
+    // 已经被认领的那一行不能再被取第二次，否则两个发送方会各发一遍。
+    assert.deepEqual(db.claimOutbox(50).map((item) => item.id), ['m2'])
+  } finally {
+    db.close()
+  }
+  passed += 1
+})
+
+test('finishOutbox 删行；requeueOutbox 放回 pending 且能被再次认领', () => {
+  const dbPath = join(tempRoot('finish-requeue'), 'orchestrator.sqlite')
+  const db = store.openStore(dbPath)
+  try {
+    db.enqueueOutbox({ id: 'm1', kind: 'reply', payload: { text: '发得出去' } })
+    assert.deepEqual(db.claimOutbox().map((item) => item.id), ['m1'])
+    db.finishOutbox('m1')
+    assert.deepEqual(outboxRows(dbPath), [], '收尾之后行要没了')
+
+    db.enqueueOutbox({ id: 'm2', kind: 'reply', payload: { text: '这拍发不出去' } })
+    assert.deepEqual(db.claimOutbox().map((item) => item.id), ['m2'])
+    db.requeueOutbox('m2')
+    assert.deepEqual(outboxRows(dbPath), [{ id: 'm2', state: 'pending' }], '放回队列只改状态、不重写载荷')
+    assert.deepEqual(db.claimOutbox().map((item) => item.id), ['m2'], '放回之后下一拍要能再次取到')
+  } finally {
+    db.close()
+  }
+  passed += 1
+})
+
+test('崩溃恢复：库里的 sending 行在重开 store 后变回 pending', () => {
+  const dbPath = join(tempRoot('crash-recovery'), 'orchestrator.sqlite')
+  // 模拟「认领之后、收尾之前」进程没了：行停在 sending，没人会再去发它。
+  const first = store.openStore(dbPath)
+  first.enqueueOutbox({ id: 'stuck', kind: 'reply', payload: { text: '崩在中间的那条' } })
+  assert.deepEqual(first.claimOutbox().map((item) => item.id), ['stuck'])
+  first.close()
+  assert.deepEqual(outboxRows(dbPath), [{ id: 'stuck', state: 'sending' }], '关库不会自动收尾，先确认行确实卡在 sending')
+
+  const second = store.openStore(dbPath)
+  try {
+    assert.deepEqual(outboxRows(dbPath), [{ id: 'stuck', state: 'pending' }], '重开库要把 sending 放回 pending')
+    assert.deepEqual(second.claimOutbox().map((item) => item.id), ['stuck'], '恢复之后要能被重新认领')
+  } finally {
+    second.close()
   }
   passed += 1
 })

@@ -23,18 +23,31 @@ import type { EffectRow } from './effects.js'
 import { orchestratorDbPath, orchestratorLockPath } from '../paths.js'
 
 /** 当前代码认识的 schema 版本。加表 / 改列时加一，并在 `MIGRATIONS` 里补一段。 */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /** 第一版的结构就写在 `SCHEMA_STATEMENTS` 里，不占迁移表；迁移表只放 v1 之后的增量。 */
 const BASE_VERSION = 1
 
 /**
- * 版本 → 语句数组的迁移表（P0 为空，框架先留出来）。
+ * 版本 → 语句数组的迁移表：v1 之后每加一版就在末尾追加一段（当前只有 v2）。
  *
  * 为什么是表不是 if 链：迁移必须按版本号严格递增执行，且将来要能一眼看出「v3 改了哪几句」。
  * if 链一长，谁都不敢删旧分支，最后没人知道某个版本到底跑过什么。
  */
-const MIGRATIONS: readonly { readonly version: number; readonly statements: readonly string[] }[] = []
+const MIGRATIONS: readonly { readonly version: number; readonly statements: readonly string[] }[] = [
+  /*
+   * v2：给 outbox 加状态列（pending / sending），让「取出即删」变成「先认领、再收尾」。
+   *
+   * **为什么建表语句里不同时加这一列**：`applySchema` 对空库也会跑迁移——空库从
+   * `BASE_VERSION` 起算，v2 这一段一定执行。建表时已经带上 state、这里再 ALTER 一次，
+   * SQLite 会抛 `duplicate column name: state`（已实测），整个库打不开。
+   * 所以列只由这条迁移加：新库「先建 v1 形状，再 ALTER」，老库「本来就是 v1 形状，ALTER」，
+   * 两条路径落到同一个结构，建表语句也不用改语义。
+   *
+   * `DEFAULT 'pending'` 让老库里已有的行升级后立刻能被发送泵认领，不需要额外的回填语句。
+   */
+  { version: 2, statements: ["ALTER TABLE outbox ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'"] },
+]
 
 /**
  * 建库语句。
@@ -50,6 +63,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   'CREATE TABLE IF NOT EXISTS thread (key TEXT PRIMARY KEY, value TEXT NOT NULL);',
   'CREATE TABLE IF NOT EXISTS ticket (id TEXT PRIMARY KEY, value TEXT NOT NULL);',
   'CREATE TABLE IF NOT EXISTS decision (id TEXT PRIMARY KEY, thread TEXT NOT NULL, value TEXT NOT NULL);',
+  // 这一句保持 v1 形状：v2 加的 `state` 列由 `MIGRATIONS` 那条 ALTER 加，
+  // 否则新库会「建表已带列、再 ALTER」撞 duplicate column（理由见 MIGRATIONS）。
   'CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, value TEXT NOT NULL);',
   `CREATE TABLE IF NOT EXISTS trigger_thread (
      thread TEXT NOT NULL, id TEXT NOT NULL, at TEXT NOT NULL, human INTEGER NOT NULL,
@@ -319,6 +334,23 @@ function closeQuietly(db: DatabaseSync): void {
 }
 
 /**
+ * 把上次崩在发送途中的行放回队列：`sending` → `pending`，返回改动行数。
+ *
+ * **为什么放在开库这一步**：一次打开库就意味着「上一段生命周期结束了」——单实例锁保证
+ * 同一时刻只有一个进程握着这个库，所以此刻还停在 `sending` 的行，一定是上一个进程认领之后
+ * 没来得及收尾的，没有别人还会去发它。放在 `openStore` 里，运行时、命令、体检、测试
+ * 四条入口自动都覆盖，不必让每个调用方记得调一次 `runtime.recover()`。
+ *
+ * **为什么重发是安全的**：两个通道都按消息 id 做幂等（飞书的 `--idempotency-key`、
+ * GitHub 评论里的 HTML 标记），最坏情况是对方收到两条相同的请求，而不是会话里多出一句话。
+ * 两害相权取其轻：宁可按幂等键重发一次，也不丢一条已经应答过用户的回复。
+ */
+function recoverSendingOutbox(db: DatabaseSync): number {
+  const result = db.prepare("UPDATE outbox SET state = 'pending' WHERE state = 'sending'").run()
+  return Number(result.changes ?? 0)
+}
+
+/**
  * 打开编排库：建目录、设 PRAGMA、建表、迁移。
  *
  * WAL 是这里唯一要解释的取舍：编排器是单写者，但界面、命令、体检会同时读。
@@ -332,6 +364,8 @@ export function openStore(path: string = orchestratorDbPath()): DscStore {
     db.exec('PRAGMA foreign_keys = ON')
     db.exec('PRAGMA busy_timeout = 5000')
     migrate(db, path)
+    // 上一进程崩在发送途中的行在打开时统一放回队列（理由见 recoverSendingOutbox）
+    recoverSendingOutbox(db)
   } catch (error) {
     closeQuietly(db)
     throw error
@@ -435,39 +469,62 @@ export class DscStore {
     })
   }
 
-  /** 入队一条出站消息，返回它的 id。 */
+  /** 入队一条出站消息，返回它的 id。新行一律 `pending`，等着发送泵来认领。 */
   enqueueOutbox(item: NewOutboxItem): string {
     if (item.kind === '') throw new StoreError('outbox_invalid', '出站消息的 kind 不能为空')
     const id = item.id ?? randomUUID()
     this.atomic(() => {
       this.db
-        .prepare('INSERT INTO outbox (id, value) VALUES (?, ?)')
+        .prepare("INSERT INTO outbox (id, value, state) VALUES (?, ?, 'pending')")
         .run(id, JSON.stringify({ id, kind: item.kind, payload: item.payload ?? null }))
     })
     return id
   }
 
   /**
-   * 取出并删除最多 `limit` 条出站消息，按入队顺序。
+   * 认领最多 `limit` 条待发消息：把它们从 `pending` 改成 `sending` 并返回，**行不删**。
    *
-   * 取出与删除必须同一个事务：先删后发，发失败的消息由发送方自己重新入队，
-   * 否则崩在中间会「消息已发、行还在」重复发，或「行已删、消息没发」丢消息。
+   * 为什么不再「取出即删」：v1 的 `drainOutbox` 一次取走最多 50 行，发完之前只活在内存里，
+   * 进程崩在这批中间，还没发的那几条就没了。改成先标记再发，崩了下次开库还能找回来
+   * （`recoverSendingOutbox` 把它们放回 `pending`）。
+   *
+   * 为什么认领与读取在同一个事务里：`UPDATE ... RETURNING` 一条语句完成「选中 + 改状态」，
+   * 中间没有第二个读者能插进来把同一行也认领走。`ORDER BY rowid` 保住入队顺序；
+   * RETURNING 本身不保证行序，所以把 rowid 一起带回来再排一次——顺序乱了不会丢消息，
+   * 但「先催 A 再催 B」的先后会乱。
    */
-  drainOutbox(limit = 50): OutboxItem[] {
+  claimOutbox(limit = 50): OutboxItem[] {
     if (!Number.isInteger(limit) || limit <= 0) {
-      throw new StoreError('outbox_invalid', `drainOutbox 的 limit 必须是正整数：${String(limit)}`)
+      throw new StoreError('outbox_invalid', `claimOutbox 的 limit 必须是正整数：${String(limit)}`)
     }
     return this.atomic(() => {
-      const rows = this.db.prepare('SELECT rowid AS row, value FROM outbox ORDER BY rowid LIMIT ?').all(limit)
+      const rows = this.db
+        .prepare(
+          `UPDATE outbox SET state = 'sending'
+           WHERE id IN (SELECT id FROM outbox WHERE state = 'pending' ORDER BY rowid LIMIT ?)
+           RETURNING rowid AS row, value`,
+        )
+        .all(limit)
       if (rows.length === 0) return []
-      const remove = this.db.prepare('DELETE FROM outbox WHERE rowid = ?')
-      const out: OutboxItem[] = []
-      for (const row of rows) {
-        remove.run(typeof row.row === 'number' ? row.row : Number(row.row))
-        out.push(decodeOutboxItem(row.value))
-      }
-      return out
+      return [...rows]
+        .sort((left, right) => Number(left.row) - Number(right.row))
+        .map((row) => decodeOutboxItem(row.value))
     })
+  }
+
+  /**
+   * 收尾：发完（含「永久发不出」、放弃投递）就删行。
+   *
+   * 只按 id 删：一行在库里的 id 就是它的幂等键，状态是 `sending` 还是被谁改回 `pending`
+   * 都不影响「这条消息已经有结论了」这个事实。
+   */
+  finishOutbox(id: string): void {
+    this.db.prepare('DELETE FROM outbox WHERE id = ?').run(id)
+  }
+
+  /** 这一拍没发出去（发送失败、来源没起来、退避未到点）：状态改回 `pending`，下一拍还能认领。 */
+  requeueOutbox(id: string): void {
+    this.db.prepare("UPDATE outbox SET state = 'pending' WHERE id = ?").run(id)
   }
 
   /**

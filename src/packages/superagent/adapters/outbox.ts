@@ -1,20 +1,20 @@
 /**
  * P0 的出站队列：落在存储层已有的 `outbox` 表上。
  *
- * 表结构原样是 `(id TEXT PRIMARY KEY, value TEXT NOT NULL)`（`adapters/store.ts` 的
- * `SCHEMA_STATEMENTS`）。`value` 里存 `{ id, kind, payload }`，所以这里**不改表**：
- * 状态写进 `payload.state`，`payload.message` 放原消息。这样第 6 步的发送泵
- * （`drainOutbox`）拿到的一行仍然自解释，P1 加字段也不用迁移。
+ * 表结构是 `(id TEXT PRIMARY KEY, value TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending')`。
+ * 列 `state` 是**队列状态**（v2 迁移加的）：`pending` 等发送、`sending` 已被发送泵认领；
+ * `value` 里 `payload.state` 是**回复状态**（pending / sent / dropped）。两者别混：
+ * 列回答「这一行还能不能被人认领」，payload 回答「这句话回没回出去」。
  *
  * 为什么 `status` / `withdraw` 要直接读同一个连接：`DscStore` 只给了
- * `enqueueOutbox` / `drainOutbox`（取走即删），没有「查一条」「删一条」的窄 API。
- * 要做到幂等（同 id 不重复入队）与撤回（只删未发的），就必须按 id 读一次、删一次。
- * 这里不新建连接（那会冒出第二个 WAL 写者），而是复用 `DscStore.handle`；
- * 写的仍然只是 `outbox` 一行，表结构一个字节没动。
+ * `enqueueOutbox` / `claimOutbox` / `finishOutbox` / `requeueOutbox` 这几个窄口，
+ * 没有「按 id 查一条」「删一条」。要做到幂等（同 id 不重复入队）与撤回（只删未发的），
+ * 就必须按 id 读一次、删一次。这里不新建连接（那会冒出第二个 WAL 写者），而是复用
+ * `DscStore.handle`；写的仍然只是 `outbox` 一行。
  *
- * `sent` / `dropped` 只在内存里记：`drainOutbox` 取走一行就删行，库里没有「已发」
- * 这个事实可查。真正发送的读者是 `dispatch.ts` 的发送泵，它也按「取走即删」办，所以
- * 「重启后忘了哪些已发」的后果只有一个：同一条消息可能再发一次——而两个通道都有幂等键
+ * `sent` / `dropped` 只在内存里记：发送泵收尾时会把行删掉，库里没有「已发」
+ * 这个事实可查。真正发送的读者是 `dispatch.ts` 的发送泵，所以「重启后忘了哪些已发」
+ * 的后果只有一个：同一条消息可能再发一次——而两个通道都有幂等键
  * （飞书的 `--idempotency-key`、GitHub 评论里的 HTML 标记），重发不会变成两条。
  *
  * @module dsc/packages/superagent/adapters/outbox
@@ -33,7 +33,7 @@ interface StoredState { state?: ReplyStatus }
  * 按 id 找一行出站消息，返回 `value` 解析后的对象；没有或坏行返回 `undefined`。
  *
  * 坏行不抛：这个类只负责队列，读不出状态就当「还没发」，让消息留在库里由发送方
- * 处理；`drainOutbox` 读它时会按 `outbox_corrupt` 报错，那里才是该吵的地方。
+ * 处理；`claimOutbox` 读它时会按 `outbox_corrupt` 报错，那里才是该吵的地方。
  */
 function decodeRow(db: DatabaseSync, id: string): StoredState | undefined {
   const row = db.prepare('SELECT value FROM outbox WHERE id = ?').get(id)
@@ -81,13 +81,15 @@ export class StoreOutbox implements Outbox {
     if (remembered === 'sent' || remembered === 'dropped') return remembered
     const row = decodeRow(this.db, id)
     if (row === undefined) {
-      // 行不在了，但内存记着它入过队：说明发送泵已经把它取走（`drainOutbox` 取走即删）。
+      // 行不在了，但内存记着它入过队：说明发送泵已经收尾删行（`finishOutbox`）。
       if (remembered === 'pending') {
         this.known.set(id, 'sent')
         return 'sent'
       }
       return undefined
     }
+    // 读的是 `payload.state`（回复状态），不是列 `state`（队列状态）：一行被发送泵认领、
+    // 还没收尾时，对回答方来说这句话仍然「没发出去」，重入队与撤回的判断保持 v1 口径。
     const state = row.state ?? 'pending'
     this.known.set(id, state)
     return state
