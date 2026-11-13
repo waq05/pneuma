@@ -26,7 +26,17 @@
     "types": ["node"]
   },
   "include": ["src"],
-  // 界面半（src/packages/<id>/ui/）是浏览器代码：这里没有 DOM 库、也不带 React 的类型依赖，
-  // 编进来会一路报错。它们由 ui-shell/tsconfig.json 单独检查（那边有 DOM 与 jsx 环境）。
-  "exclude": ["src/packages/*/ui/**"]
+  // 排除的两种东西后果完全不同，所以放在一处写清：
+  //
+  // 1. 界面半（src/packages/<id>/ui/）是浏览器代码：这里没有 DOM 库、也不带 React 的类型依赖，
+  //    编进来会一路报错。它们由 ui-shell/tsconfig.json 单独检查（那边有 DOM 与 jsx 环境）。
+  // 2. 三个测试后缀不排掉，`tsc` 会把它们编进 `lib/`。而 package.json 的 `files` 白名单里有
+  //    `lib`，于是每个 `pnpm build` 之后测试都跟着 npm 包装出去——既涨体积，又把内部断言
+  //    暴露给用户。测试文件的类型检查走 tsconfig.spec.json，不靠主构建。
+  "exclude": [
+    "src/packages/*/ui/**",
+    "src/**/*.spec.ts",
+    "src/**/*.int.spec.ts",
+    "src/**/*.e2e.ts"
+  ]
 }

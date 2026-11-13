@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-runtime-package.mjs && node scripts/build-packages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "build:ui": "pnpm -C ui-shell build",
     "check:ui": "node scripts/check-ui.mjs",
@@ -38,6 +39,11 @@
     "check:style": "node scripts/style-check.mjs",
     "check:plugin": "node scripts/plugin-model-check.mjs --strict && node scripts/plugin-standard-check.mjs && node scripts/package-tests.mjs && node scripts/plugin-inventory-check.mjs && node scripts/plugin-model-test.mjs && node scripts/plugin-list-test.mjs && node scripts/plugin-compose-check.mjs && node scripts/plugin-swap-e2e.mjs",
     "check:all": "pnpm run check:style && pnpm run check:plugin && pnpm run check:ui && pnpm run check:dsh && pnpm run check:core && pnpm run check:remote",
+    "test": "vitest run --project unit --project ui",
+    "test:unit": "vitest run --project unit",
+    "test:int": "vitest run --project integration",
+    "test:ui": "vitest run --project ui",
+    "test:snapshot": "vitest run --project snapshot",
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {

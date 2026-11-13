@@ -1,0 +1,24 @@
+{
+  // 测试代码单独一份编译配置。测试文件被主构建排除（见 tsconfig.json 的 exclude），
+  // 但类型错误不能等到 CI 跑测试时才暴露，所以给它们一条自己的 `tsc --noEmit`。
+  // 覆盖 include 而不是往根配置里加，是为了让主构建只编 src、只产出运行期代码。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // 根配置的 rootDir 是 `src`，而这里要检查 `tests/**`（在 src 之外）。不覆盖就报
+    // TS6059「File is not under rootDir」——这是 checked-in 的 tsconfig，不是靠 noEmit 能绕过的。
+    "rootDir": ".",
+    // 测试里显式 `import { test, expect } from 'vitest'`，不启用 globals，
+    // 所以不需要 vitest/globals 的类型，只要 node。
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.spec.ts",
+    "src/**/*.int.spec.ts",
+    "src/**/*.e2e.ts",
+    "src/packages/*/ui/**/*.spec.ts",
+    "src/packages/*/ui/**/*.spec.tsx",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules", "lib"]
+}
