@@ -20,7 +20,6 @@
 | B7 | P2-D / `settings-embed-slot` | ui-settings 与 tools-default 的 11 条源码文本（槽位接线、组件挂载） | 源码文本 | ui project（嵌槽渲染断言） |
 
 ## 二、转给 P7（收尾期决定）
-
 | # | 来源 | 原来钉什么 | 为什么迁不动 | 备注 |
 | --- | --- | --- | --- | --- |
 | B8 | P1a / `terminal-env` | 探测与缓存族 8 个导出（`detectShells`、`shellsCached`、`readShellChoice`、`resolveShellExecutable` 等） | 要么 spawn 子进程、要么读写模块级单例 | 已在 integration 层部分覆盖；剩余靠 `tempHome` + 注入 |
@@ -28,6 +27,9 @@
 | B10 | P2-B / `open-in` | 21 条源码文本：模型终端起进程目录、MCP `fallbackCwd`、审批 `baseCwd`、LSP `baseCwd`、壳的 `newSessionIn` 调用点 | 每条都要真起 shell / MCP / LSP 才观察得到 | 默认「留在 `check-core`」，除非 P7 判定值得另开行为电池 |
 | B11 | P2-E / `sandbox-parity` | 24 条源码文本：ASKABLE_RULES 内容、审批里沙箱 check 的先后、替换式骨架过滤器、持久 shell 的 presets | 需要真审批 + 真沙箱才观察得到 | 同上 |
 | B12 | P2-F / 待回收 | 见 P2-F 报告 | — | 本表在 P2 全部收尾时补齐 |
+| B13 | P2-I / `update-check` | 19 条桌面侧断言：主进程登记两个原生操作、上电排期、退出停定时器、下载地址只挑自己资产、装完启动安装程序 | 全在 `desktop/electron/main/`，进程内没有接缝，只能读源码文本。迁进 unit 时按「源码文本一律不搬」删了 | 要补得先有桌面主进程的测试通道（`desktop/` 目前只有 typecheck + shots）。P7 决定要不要做 |
+| B14 | P2-I / `skills-roots` | 界面：两类全局技能各有标签、三个作用域筛选项、按发现根分组、行内不再打来源徽章 | 要渲染技能页，not in-process | ui project（技能页渲染断言） |
+| B15 | P2-I / `readme` `release-notes` | README 的块形态/相对路径/锚点/数字口径；发版脚本的纯函数 | 被测对象是文档与 `scripts/*.mjs`，不是 `src/**` 产品代码 | 留 `scripts/`，P7 决定是否并进文档闸门（`check:style` 那类） |
 
 ## 三、永远留在 Node 侧（不是欠账，是设计）
 
