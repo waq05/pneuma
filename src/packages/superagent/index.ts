@@ -38,7 +38,7 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import { openStore, type DscStore } from './adapters/store.js'
 import { createGithubApi } from './adapters/github/api.js'
 import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
-import { pullOf } from './adapters/github/pull.js'
+import { pullOf, agentPull, ticketBranch } from './adapters/github/pull.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
@@ -463,8 +463,57 @@ export function apply(ctx: Context, passed?: unknown): void {
     void github.source.tick()
       .catch((error: unknown) => { console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`) })
       // 事件流看完再看 PR 的 CI：两件事的失败互不影响，所以各有各的 catch。
+      // 先认领 PR（智能体自己开的那张），再看已认领的 CI——顺序反了会白等一拍。
+      .then(() => bindPulls())
       .then(() => { pollPullCi() })
       .finally(() => { if (github !== null) github.busy = false })
+  }
+
+  /** 一张开着 PR 的判据只用得到这三样（`agentPull` / `ticketBranch` 的入参）。 */
+  interface OpenPull {
+    number: number
+    user: { login: string }
+    head?: { ref?: string; repo?: { full_name: string } | null } | null
+  }
+
+  /**
+   * 把「智能体自己开的 PR」绑到工单上。
+   *
+   * 为什么由接线层做而不是适配器自己绑：判断「这张 PR 属于哪张单」要工单清单与工单的
+   * `execution`，那是工单层的事实；放在适配器里，等于让适配层反向依赖工单层，工单规则也会
+   * 复制成两套（上游 `sources/github-pull.ts:35-50` 就是这么耦合的，移植时刻意没搬）。
+   *
+   * 两个条件缺一不可，都由适配器给：`agentPull`（登录名是机器人、head 仓库是本仓库——少了
+   * 后一半，别人在自己 fork 里开一张同名分支的 PR 就能冒充）与 `ticketBranch`（分支末段
+   * 等于工单短名）。已经关注过 PR 的单跳过：一张单只认一张 PR，重复绑只会多几条订阅。
+   */
+  async function bindPulls(): Promise<void> {
+    const current = github
+    const target = runtime
+    const account = githubAccount()
+    if (current === null || target === null || account === undefined) return
+    let pulls: OpenPull[]
+    try {
+      pulls = await current.api.slurp<OpenPull>('pulls?state=open&per_page=100')
+    } catch (error) {
+      console.warn(`[superagent] 读开着的 PR 失败：${errorText(error)}`)
+      return
+    }
+    if (pulls.length === 0) return
+    for (const ticket of target.openTickets()) {
+      if (pullOf(ticket) !== undefined) continue
+      const mine = pulls.find((pr) => agentPull(pr, account)
+        && typeof pr.head?.ref === 'string' && ticketBranch(ticket, pr.head.ref))
+      if (mine === undefined) continue
+      try {
+        // 线程 id 用 PR 号：适配器报 threadClosed 时也是这个（`adapters/github/pull.ts` 里
+        // `{ source: SOURCE, id: String(pr.number) }`），两边对不上就永远等不到关闭事件。
+        target.sourceBridge().bindThread(ticket.id, { source: 'github', id: String(mine.number) }, true)
+        console.warn(`[superagent] 工单 ${ticket.id} 认领了 PR #${String(mine.number)}`)
+      } catch (error) {
+        console.warn(`[superagent] 工单 ${ticket.id} 绑 PR #${String(mine.number)} 失败：${errorText(error)}`)
+      }
+    }
   }
 
   /**
