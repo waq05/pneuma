@@ -28,7 +28,7 @@ const { defaultSettings, normalizeGithubAccount, GITHUB_SOURCE, MANUAL_SOURCE, D
 const { superagentScope } = await import('../../../../lib/packages/superagent/adapters/scope.js')
 const { manualScope } = await import('../../../../lib/packages/superagent/adapters/manual.js')
 const { settingsPolicy } = await import('../../../../lib/packages/superagent/core/policy.js')
-const { readSuperagentConfig, createSettingsSection, assessorTargetOf } = await import('../../../../lib/packages/superagent/index.js')
+const { readSuperagentConfig, createSettingsSection, assessorTargetOf, workerTargetOf } = await import('../../../../lib/packages/superagent/index.js')
 
 after(() => { rmSync(home, { recursive: true, force: true }) })
 
@@ -167,4 +167,34 @@ test('判定模型：provider/model 拆得开，写不对就按「不调模型�
   assert.equal(of('no-slash'), null)
   assert.equal(of('/model-only'), null)
   assert.equal(of('provider/'), null)
+})
+
+// ── 6. worker 模型与禁令名单：与判定模型同一条拆分规则 ───────────────────────
+
+test('worker 模型：provider/model 拆得开，写不对就按「跟随选路」处理', () => {
+  const of = (text) => workerTargetOf({ ...readSuperagentConfig(), workerModel: text })
+  assert.deepEqual(of('openai/gpt-5'), { provider: 'openai', model: 'gpt-5' })
+  // 端点名里允许带斜杠，与判定模型同一条规则（同一个拆分函数）。
+  assert.deepEqual(of('acme/eu/claude'), { provider: 'acme/eu', model: 'claude' })
+  // 空 = 跟随宿主当前选路（执行器 `route()` 的缺省分支），不是错误。
+  assert.equal(of(''), null)
+  assert.equal(of('no-slash'), null)
+  assert.equal(of('provider/'), null)
+})
+
+test('worker 禁令名单：逗号分隔、去空白、去重；空 = 只有内置限制', () => {
+  const section = createSettingsSection()
+  section.save('workerBlockedCommands', ' npm publish , docker push ,, npm publish ')
+  assert.deepEqual(readSuperagentConfig().workerBlockedCommands, ['npm publish', 'docker push'], '去重与去空白')
+  section.save('workerBlockedCommands', '   ')
+  assert.deepEqual(readSuperagentConfig().workerBlockedCommands, [], '空 = 删键 = 没有额外禁令')
+})
+
+test('worker 模型设置面：存进去、读回来是同一个值', () => {
+  const section = createSettingsSection()
+  section.save('workerModel', 'acme/eu/claude')
+  assert.equal(readSuperagentConfig().workerModel, 'acme/eu/claude')
+  assert.deepEqual(workerTargetOf(readSuperagentConfig()), { provider: 'acme/eu', model: 'claude' })
+  section.save('workerModel', '')
+  assert.equal(readSuperagentConfig().workerModel, '')
 })

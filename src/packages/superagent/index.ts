@@ -136,6 +136,24 @@ const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
 /** 判定用的模型：写成 `provider/model`，空 = 不调模型（用同步规则）。 */
 const ASSESSOR_MODEL_KEY = 'assessorModel'
 
+/**
+ * worker 的模型：写成 `provider/model`，空 = 跟随宿主当前选路。
+ *
+ * 对应上游 `executor.model`（`core/policy.ts:92`，`app/sessions.ts:150` 按角色种入）。
+ * DSC 的等价位是执行器的 `WorkerModel`（`adapters/executor.ts:126`）：路由与种入逻辑
+ * 早已备好，缺的只是设置面这个字段。判定模型同款取舍：装配时读一次，改了要重开宿主。
+ */
+const WORKER_MODEL_KEY = 'workerModel'
+
+/**
+ * worker 额外禁用的命令名单（逗号分隔），写进系统提示词的「可用命令」一句。
+ *
+ * 对应上游 `executor.blockedCommands`（`core/policy.ts:96`）。**只做提示词层**：上游还有
+ * worker-bin shim 的强制层（按命令名直接失败，`app/settings.ts:187`），DSC 的 worker
+ * 命令面走宿主守卫与工具目录白名单，没有独立 PATH shim 机制，这条差异记在交接文档。
+ */
+const WORKER_BLOCKED_KEY = 'workerBlockedCommands'
+
 /** 泵的间隔：设计文档 §6.3 写的是 2 秒。 */
 const PUMP_INTERVAL_MS = 2000
 
@@ -270,6 +288,10 @@ export interface SuperagentConfig {
   feishuDirect: boolean
   /** 判定用模型（`provider/model`）；空 = 不调模型。 */
   assessorModel: string
+  /** worker 用模型（`provider/model`）；空 = 跟随宿主当前选路。 */
+  workerModel: string
+  /** worker 额外禁用的命令名单（已按逗号拆开、去空、去重）；空 = 只有内置限制。 */
+  workerBlockedCommands: string[]
   /**
    * 推断候选要不要先等人点头（backlog G1）；默认关。
    *
@@ -325,22 +347,36 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     )],
     feishuDirect: raw[FEISHU_DIRECT_KEY] === true,
     assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
+    workerModel: textOf(raw[WORKER_MODEL_KEY]),
+    // 名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。
+    workerBlockedCommands: [...new Set(
+      textOf(raw[WORKER_BLOCKED_KEY]).split(',').map((name) => name.trim()).filter((name) => name !== ''),
+    )],
   }
 }
 
 /**
- * 把 `provider/model` 拆成判定器要的形状；空或格式不对返回 `null`（= 不调模型）。
+ * 把 `provider/model` 拆成路由要的形状；空或格式不对返回 `null`。
  *
- * 只在这里拆一次：模型名是用户手填的，`null` 是「不调模型」的合法形态
- * （`core/policy.ts:98`），所以格式不对时按「不配」处理，而不是抛错让插件起不来。
+ * 模型名是用户手填的，`null` 是合法形态（判定器=不调模型，worker=跟随选路），
+ * 所以格式不对时按「不配」处理，而不是抛错让插件起不来。
  */
-export function assessorTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
-  const text = config.assessorModel.trim()
+function splitRoleModel(text: string): { provider: string; model: string } | null {
   const cut = text.lastIndexOf('/')
   if (cut <= 0 || cut === text.length - 1) return null
   const provider = text.slice(0, cut).trim()
   const model = text.slice(cut + 1).trim()
   return provider === '' || model === '' ? null : { provider, model }
+}
+
+/** 判定器的模型目标；`null` = 不调模型（用同步规则，`adapters/assessor-select.ts`）。 */
+export function assessorTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
+  return splitRoleModel(config.assessorModel.trim())
+}
+
+/** worker 的模型目标；`null` = 跟随宿主当前选路（`adapters/executor.ts` 的 `route()`）。 */
+export function workerTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
+  return splitRoleModel(config.workerModel.trim())
 }
 
 /**
@@ -477,6 +513,22 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           mono: true,
           help: t('field.assessorModel.help'),
         },
+        {
+          type: 'text',
+          key: WORKER_MODEL_KEY,
+          label: t('field.workerModel.label'),
+          placeholder: 'provider/model',
+          mono: true,
+          help: t('field.workerModel.help'),
+        },
+        {
+          type: 'text',
+          key: WORKER_BLOCKED_KEY,
+          label: t('field.workerBlockedCommands.label'),
+          placeholder: 'npm publish, docker push',
+          mono: true,
+          help: t('field.workerBlockedCommands.help'),
+        },
       ]
     },
     values(): SettingsValues {
@@ -501,6 +553,9 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [FEISHU_ALLOWED_KEY]: config.feishuAllowed.join(', '),
         [FEISHU_DIRECT_KEY]: config.feishuDirect,
         [ASSESSOR_MODEL_KEY]: config.assessorModel,
+        [WORKER_MODEL_KEY]: config.workerModel,
+        // 与 githubAllowed 一样：磁盘上存一行逗号分隔的文本，设置面只认标量。
+        [WORKER_BLOCKED_KEY]: config.workerBlockedCommands.join(', '),
       }
     },
     save(key: string, value: SettingsValue): string | void {
@@ -594,6 +649,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         }
         case ASSESSOR_MODEL_KEY: {
           saveText(ASSESSOR_MODEL_KEY, String(value).trim())
+          return
+        }
+        case WORKER_MODEL_KEY: {
+          saveText(WORKER_MODEL_KEY, String(value).trim())
+          return
+        }
+        case WORKER_BLOCKED_KEY: {
+          saveText(WORKER_BLOCKED_KEY, String(value).trim())
           return
         }
         default:
@@ -985,7 +1048,15 @@ export function apply(ctx: Context, passed?: unknown): void {
       const opened = new SuperagentRuntime(store, {
         log: (line) => { console.warn(line) },
         ctx,
-        worker: { repo: () => config().repoPath, maxWorkers: config().maxWorkers, prepare: () => config().prepareCommand, model: null },
+        // worker 的模型与禁令名单：装配时读一次（判定模型同款取舍，改了要重开宿主）。
+        // model 传 null = 执行器跟随当前选路（`adapters/executor.ts` 的 `route()`）。
+        worker: {
+          repo: () => config().repoPath,
+          maxWorkers: config().maxWorkers,
+          prepare: () => config().prepareCommand,
+          model: workerTargetOf(config()),
+          blockedCommands: config().workerBlockedCommands,
+        },
         timeoutSeconds: () => config().ticketTimeoutSeconds,
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
         settings: () => defaultSettings(githubAccount(), feishuAccount()),

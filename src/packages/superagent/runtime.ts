@@ -111,6 +111,13 @@ export interface WorkerRuntimeOptions {
   prepare?: () => string
   /** worker 的模型路由；缺省跟随当前选路。 */
   model?: WorkerModel | null
+  /**
+   * worker 额外禁用的命令名单；缺省没有额外禁令。
+   *
+   * 只进系统提示词的「可用命令」一句（`adapters/executor.ts` 的 `taskTextOf`），
+   * 不是强制拦截——上游的 worker-bin shim 强制层在 DSC 没有对应物。
+   */
+  blockedCommands?: readonly string[]
   /** 无人值守审批档，缺省 `deny`。 */
   unattended?: UnattendedMode
   /** 工作树起点 ref；缺省 HEAD。 */
@@ -430,6 +437,7 @@ export class SuperagentRuntime {
       maxWorkers: worker?.maxWorkers,
       prepare: worker?.prepare,
       model: worker?.model ?? null,
+      blockedCommands: worker?.blockedCommands,
       unattended: worker?.unattended,
       base: worker?.base,
       root: this.worktreeRoot,

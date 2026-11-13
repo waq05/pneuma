@@ -917,7 +917,7 @@ export class WorkerExecutor implements Executor {
    * worker 的模型路由。
    *
    * 设置里给了 provider/model 就用 `routeTo`（子智能体同款，`subagent/index.ts:732-738`）；
-   * 否则跟随 `route()`——P0 没有单独的 worker 模型设置项，跟随当前选路是唯一可用的答案。
+   * 否则跟随 `route()`——设置页 `workerModel` 留空时跟随当前选路。
    */
   route(): LlmRoute {
     if (this.host === null) throw new Error('执行器未接宿主，取不到模型路由')
