@@ -1,4 +1,6 @@
-# Super Agent：把一句话需求派给独占工作区的智能体（P0 骨架，还没有发布与工单）
+# Super Agent：把一句话需求派给独占工作区的智能体，结果回到工单里。
+# 默认关（`disabled: true`）：它会在仓库里开工作树、起 worker、读写编排库，属于「装上不等于
+# 要它干活」的那一类。去插件中心打开，或在设置 → Super Agent 里配好仓库路径再用。
 - insert:
     - id: superagent
       name: '@pneuma/superagent'
