@@ -830,8 +830,25 @@ export interface AgentService {
   hasAgent(sessionId: string): boolean
   /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */
   sessionFor(filePath: string): Session | undefined
-  /** 按会话 id 找常驻会话实例（后台 agent 的权限/提示词按它取自己的会话）。 */
+  /** 按会话 id 找会话实例（常驻的，或 {@link attach} 登记过的；后台 agent 的权限/提示词按它取自己的会话）。 */
   sessionById(sessionId: string): Session | undefined
+  /**
+   * 登记一条**不经常驻注册表**的会话，只让它按 id 查得到。
+   *
+   * 为什么要这个口：superagent 的 worker 会话是执行器自己 `Session.create` 造的
+   * （`packages/superagent/adapters/executor.ts`），不是本插件开的常驻 agent。
+   * 于是 `sessionById(workerId)` 查不到，而两条路都靠它认归属：
+   *   - `subagent` 工具按 `runCtx.sessionId` 找父会话，查不到就回落
+   *     `ctx.session.current()`——那会派到用户**正在看**的会话名下；
+   *   - 后台作业的完成通知按 `owner` 投递，而 owner 就是 worker 会话 id。
+   *
+   * 只登记会话、不登记 MiniAgent：`hasAgent` / `followup` 仍按常驻注册表算，
+   * 所以这个口不会让「不在册」的会话被误当成常驻 agent 去唤醒。
+   * 生命周期由调用方管：会话关掉时自己 {@link detach}。
+   */
+  attach(session: Session): void
+  /** 摘掉 {@link attach} 的登记；执行器关会话时调。没有登记就是空操作。 */
+  detach(sessionId: string): void
   /** 那个会话的常驻 agent 正在跑回合吗（切回运行中会话时转录层补「回合中」状态）。 */
   isRunning(filePath: string): boolean
   /**

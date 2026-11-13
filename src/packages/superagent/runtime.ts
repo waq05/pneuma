@@ -14,6 +14,7 @@
 import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { Session } from '@pneuma/runtime/core/session.js'
 import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
   type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage, type Trigger,
   type WorkerReport } from './core/index.js'
@@ -143,6 +144,16 @@ export interface RuntimeOptions {
    * 记下调用就够了，不必起真 worker。不给就用 {@link WorkerExecutor}。
    */
   executor?: Executor
+  /**
+   * 把 worker 会话登记进内核会话表（`ctx.agent.attach` / `detach`）。
+   *
+   * 为什么运行期要透传而不是执行器直接取 `ctx.agent`：执行器拿的是 `Context | null`
+   * （测试可以没有上下文），而 `attach` 只在装配处知道有没有 agent 服务。不接时
+   * 一切照旧，只是 `subagent` 认不出 worker 是父会话（见 `WorkerExecutorOptions`）。
+   */
+  attachSession?: (session: Session) => void
+  /** 摘掉 {@link attachSession} 的登记。 */
+  detachSession?: (sessionId: string) => void
   /**
    * 设置来源（getter，每取一次策略现读）。
    *
@@ -394,6 +405,8 @@ export class SuperagentRuntime {
       // 读到的就是引擎刚提交的那一版，不是 `start` 那一刻的快照。
       readTicket: (ticketId) => this.repos.tickets.get(ticketId),
       readTriggerText: (triggerId) => this.repos.triggers.get(triggerId)?.text,
+      ...(options.attachSession === undefined ? {} : { attachSession: options.attachSession }),
+      ...(options.detachSession === undefined ? {} : { detachSession: options.detachSession }),
     })
     this.engine = new Engine({
       repo: this.repos,

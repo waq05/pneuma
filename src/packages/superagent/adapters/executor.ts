@@ -168,6 +168,17 @@ export interface WorkerExecutorOptions {
   worktree?: WorktreeOps
   /** 建会话；测试可换成假的（缺省 `Session.create`）。 */
   createSession?: (cwd: string, file: string) => Session
+  /**
+   * 把 worker 会话登记进内核的会话表（`ctx.agent.attach`），关会话时摘掉。
+   *
+   * 为什么需要：worker 会话是执行器自己造的，不在常驻 agent 名册里，于是
+   * `ctx.agent.sessionById(workerId)` 查不到它——`subagent` 工具靠这一查认父会话，
+   * 查不到就回落「用户正在看的会话」，队友会派到别人名下。不给这两个口时执行器
+   * 照常跑，只是那两处认不出归属。
+   */
+  attachSession?: (session: Session) => void
+  /** 摘掉 {@link attachSession} 的登记；会话关闭时调。 */
+  detachSession?: (sessionId: string) => void
   /** 造 worker；测试换成假 agent（缺省 `new MiniAgent`）。 */
   createAgent?: (deps: AgentDeps, session: Session) => WorkerAgent
   /**
@@ -596,6 +607,9 @@ export class WorkerExecutor implements Executor {
   private readonly worktree: WorktreeOps
   private readonly createSession: (cwd: string, file: string) => Session
   private readonly createAgent: (deps: AgentDeps, session: Session) => WorkerAgent
+  /** 把 worker 会话登记进内核会话表；不接时 `subagent` 认不出父会话（见选项注释）。 */
+  private readonly attachSession: ((session: Session) => void) | undefined
+  private readonly detachSession: ((sessionId: string) => void) | undefined
   /** 正在干活的 worker（键 = 工单 id）。 */
   private readonly workers = new Map<string, Worker>()
   /**
@@ -649,6 +663,8 @@ export class WorkerExecutor implements Executor {
     this.worktree = options.worktree ?? { ensure: ensureWorktree }
     this.createSession = options.createSession ?? ((cwd, file) => Session.create(cwd, file))
     this.createAgent = options.createAgent ?? ((deps, session) => new MiniAgent(deps, session))
+    this.attachSession = options.attachSession
+    this.detachSession = options.detachSession
     this.retryDelayMs = options.retryDelayMs ?? TRANSIENT_BACKOFF_MS
     if (this.host === null) {
       this.log(
@@ -980,6 +996,9 @@ export class WorkerExecutor implements Executor {
         policy: this.unattended === 'ask' ? 'auto-edit' : 'full-access',
         reviewer: 'user',
       })
+      // 让内核的会话表认识它：`subagent` 认父会话、作业通知认归属都靠这一查
+      //（见 `attachSession` 的注释）。
+      this.attachSession?.(session)
       worker = {
         ticketId: ticket.id,
         assignmentId: assignment.id,
@@ -1013,6 +1032,7 @@ export class WorkerExecutor implements Executor {
       } else if (session !== null) {
         // 会话建了、worker 还没建：直接还租约。
         try {
+          this.detachSession?.(session.meta.id)
           session.close()
         } catch {
           // 关闭失败没有第二件可做的事：这条会话没有 worker 会再用它。
@@ -1302,6 +1322,12 @@ export class WorkerExecutor implements Executor {
     if (worker.closed) return
     worker.closed = true
     this.retiring.delete(worker)
+    // 先摘登记再关：摘晚了一步的话，`subagent` 会拿着一个已关的会话去找父会话。
+    try {
+      this.detachSession?.(worker.session.meta.id)
+    } catch (error) {
+      this.log(`[superagent] 工单 ${worker.ticketId} 的会话摘登记失败：${describe(error)}`)
+    }
     try {
       worker.session.close()
     } catch (error) {

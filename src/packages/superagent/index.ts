@@ -948,6 +948,13 @@ export function apply(ctx: Context, passed?: unknown): void {
       // 执行器从 `ctx` 取模型 / 工具 / 守卫；仓库路径、并发上限、超时都从设置现读——
       // 设置页改了，下一张工单 / 下一拍就用新值。
       const complete = oneShot()
+      // 内核会话表：worker 会话是执行器自己造的，不登记进去的话 `subagent` 认不出
+      // 谁是父会话（会回落成「用户正在看的会话」）。`agent` 不在 inject 里——它停用时
+      // 少的是「队友认归属」，派工照常。
+      const sessions = ctx.get('agent') as {
+        attach(session: import('@pneuma/runtime/core/session.js').Session): void
+        detach(sessionId: string): void
+      } | undefined
       const opened = new SuperagentRuntime(store, {
         log: (line) => { console.warn(line) },
         ctx,
@@ -964,6 +971,12 @@ export function apply(ctx: Context, passed?: unknown): void {
         // 判定器的线程上下文要读 GitHub（backlog S1）：来源同样是本函数返回后才起，
         // 所以给 getter；没配 GitHub 时它是 `null`，判定器就按没有上下文判。
         githubApi: () => github?.api ?? null,
+        ...(sessions === undefined
+          ? {}
+          : {
+              attachSession: (session) => { sessions.attach(session) },
+              detachSession: (sessionId) => { sessions.detach(sessionId) },
+            }),
       })
       runtime = opened
       warned = false
