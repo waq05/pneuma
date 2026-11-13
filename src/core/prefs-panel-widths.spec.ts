@@ -69,52 +69,93 @@ describe('① 没写过：出厂空表', () => {
 })
 
 describe('② 好值原样读回', () => {
-  test('五项好值一次读回', () => {
-    writeSettings({
-      ui: { panelWidths: { sidebar: 300, thread: 720, dock: 480, diff: 520, collapsed: true } },
-    })
-    const widths = panelWidths()
-    expect(widths.sidebar).toBe(300)
-    expect(widths.thread).toBe(720)
-    expect(widths.dock).toBe(480)
-    expect(widths.diff).toBe(520)
-    expect(widths.collapsed).toBe(true)
+  test('侧栏宽读回', () => {
+    writeSettings({ ui: { panelWidths: { sidebar: 300 } } })
+    expect(panelWidths().sidebar).toBe(300)
+  })
+
+  test('正文列宽读回', () => {
+    writeSettings({ ui: { panelWidths: { thread: 720 } } })
+    expect(panelWidths().thread).toBe(720)
+  })
+
+  test('右侧栏宽读回', () => {
+    writeSettings({ ui: { panelWidths: { dock: 480 } } })
+    expect(panelWidths().dock).toBe(480)
+  })
+
+  test('并排审查宽读回', () => {
+    writeSettings({ ui: { panelWidths: { diff: 520 } } })
+    expect(panelWidths().diff).toBe(520)
+  })
+
+  test('侧栏收起读回', () => {
+    writeSettings({ ui: { panelWidths: { collapsed: true } } })
+    expect(panelWidths().collapsed).toBe(true)
   })
 })
 
 describe('③ 小数四舍五入（拖拽算出来的是浮点）', () => {
-  test('300.6 → 301、419.4 → 419', () => {
-    writeSettings({ ui: { panelWidths: { sidebar: 300.6, dock: 419.4 } } })
-    const widths = panelWidths()
-    expect(widths.sidebar).toBe(301)
-    expect(widths.dock).toBe(419)
+  test('301 ← 300.6', () => {
+    writeSettings({ ui: { panelWidths: { sidebar: 300.6 } } })
+    expect(panelWidths().sidebar).toBe(301)
+  })
+
+  test('419 ← 419.4', () => {
+    writeSettings({ ui: { panelWidths: { dock: 419.4 } } })
+    expect(panelWidths().dock).toBe(419)
   })
 })
 
 describe('④ 脏值丢掉，不夹取（夹出来的宽度用户没选过）', () => {
-  test('字符串 / 负数 / 0 / 超上限 / 非布尔收起态全丢', () => {
+  test('字符串不当宽度', () => {
+    writeSettings({ ui: { panelWidths: { sidebar: '320' } } })
+    expect(panelWidths().sidebar).toBeUndefined()
+  })
+
+  test('负数丢掉', () => {
+    writeSettings({ ui: { panelWidths: { thread: -5 } } })
+    expect(panelWidths().thread).toBeUndefined()
+  })
+
+  test('0 丢掉', () => {
+    writeSettings({ ui: { panelWidths: { dock: 0 } } })
+    expect(panelWidths().dock).toBeUndefined()
+  })
+
+  test('超上限丢掉', () => {
+    writeSettings({ ui: { panelWidths: { diff: 99999 } } })
+    expect(panelWidths().diff).toBeUndefined()
+  })
+
+  test('非布尔的收起态丢掉', () => {
+    writeSettings({ ui: { panelWidths: { collapsed: 'yes' } } })
+    expect(panelWidths().collapsed).toBeUndefined()
+  })
+
+  test('整份脏值读成空对象', () => {
     writeSettings({
       ui: {
         panelWidths: { sidebar: '320', thread: -5, dock: 0, diff: 99999, collapsed: 'yes' },
       },
     })
-    const widths = panelWidths()
-    expect(widths.sidebar).toBeUndefined()
-    expect(widths.thread).toBeUndefined()
-    expect(widths.dock).toBeUndefined()
-    expect(widths.diff).toBeUndefined()
-    expect(widths.collapsed).toBeUndefined()
-    expect(JSON.stringify(widths)).toBe('{}')
+    expect(JSON.stringify(panelWidths())).toBe('{}')
   })
 })
 
 describe('⑤ 一项脏不影响别的项', () => {
-  test('好的留下来、坏的那项不在、collapsed=false 也认得出来', () => {
-    writeSettings({ ui: { panelWidths: { sidebar: 260, thread: 'x', collapsed: false } } })
-    const widths = panelWidths()
-    expect(widths.sidebar).toBe(260)
-    expect(widths.thread).toBeUndefined()
-    // false 是「显式打开」，不能和「缺键」混成一档。
-    expect(widths.collapsed).toBe(false)
+  test('好的留下来', () => {
+    writeSettings({ ui: { panelWidths: { sidebar: 260, thread: 'x' } } })
+    expect(panelWidths().sidebar).toBe(260)
+  })
+
+  test('坏的那项不在', () => {
+    writeSettings({ ui: { panelWidths: { sidebar: 260, thread: 'x' } } })
+    expect(panelWidths().thread).toBeUndefined()
+  })
+
+  test('collapsed=false 也认得出来（不是「缺键」）', () => {
+    writeSettings({ ui: { panelWidths: { collapsed: false } } })
+    expect(panelWidths().collapsed).toBe(false)
   })
 })

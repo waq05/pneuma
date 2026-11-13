@@ -33,69 +33,91 @@ import * as panels from './panels.js'
 /** 第 ⑦ 节收到的宿主落盘调用（整份几何）。 */
 const sent: panels.PanelGeometry[] = []
 
+/** 把模块状态摆回一个已知起点：空 localStorage、空调用记录、给定的宿主几何。 */
+function resetHost(geometry: panels.PanelGeometry): void {
+  localStorage.clear()
+  sent.length = 0
+  panels.setPanelGeometrySaver((next) => {
+    sent.push(next)
+  })
+  panels.primePanelGeometry(geometry)
+}
+
+afterAll(() => {
+  panels.setPanelGeometrySaver(null)
+})
+
 describe('⑦ 面板模块的真行为（真 localStorage + 假宿主）', () => {
-  beforeAll(() => {
-    localStorage.clear()
-    panels.setPanelGeometrySaver((geometry) => {
-      sent.push(geometry)
-    })
-    panels.primePanelGeometry({ sidebar: 300, dock: 480, collapsed: true })
-  })
-
-  afterAll(() => {
-    panels.setPanelGeometrySaver(null)
-  })
-
-  test('localStorage 空着时读宿主那份（侧栏宽 / 右侧栏宽 / 收起态）', () => {
+  test('localStorage 空着时读宿主那份（侧栏宽）', () => {
+    resetHost({ sidebar: 300 })
     expect(panels.readStoredPx(panels.PANEL_KEYS.sidebarWidth, 200, 420)).toBe(300)
+  })
+
+  test('localStorage 空着时读宿主那份（右侧栏宽）', () => {
+    resetHost({ dock: 480 })
     expect(panels.readStoredPx(panels.PANEL_KEYS.dockWidth, 300, 820)).toBe(480)
+  })
+
+  test('侧栏收起也读得回来', () => {
+    resetHost({ collapsed: true })
     expect(panels.readStoredFlag(panels.PANEL_KEYS.sidebarCollapsed)).toBe(true)
   })
 
   test('没存过的项仍是 null（用样式表默认）', () => {
+    resetHost({})
     expect(panels.readStoredPx(panels.PANEL_KEYS.threadWidth, 480, 3200)).toBeNull()
   })
 
-  test('拖完同时写 localStorage、并把整份几何发给宿主', () => {
+  test('拖完同时写 localStorage', () => {
+    resetHost({})
     panels.writeStoredPx(panels.PANEL_KEYS.sidebarWidth, 260)
     expect(localStorage.getItem(panels.PANEL_KEYS.sidebarWidth)).toBe('260')
-    // 整份而不是单个键：宿主补丁是整键替换，只发一项会把别的项抹成缺键。
+  })
+
+  test('拖完把整份几何发给宿主（宿主是整键替换语义）', () => {
+    resetHost({ dock: 480 })
+    panels.writeStoredPx(panels.PANEL_KEYS.sidebarWidth, 260)
     expect(sent).toHaveLength(1)
     expect(sent[0]?.sidebar).toBe(260)
     expect(sent[0]?.dock).toBe(480)
   })
 
-  test('同源内 localStorage 压过宿主那份，删掉后回落到宿主那份', () => {
+  test('同源内先读 localStorage（260）而不是宿主那份（300）', () => {
     // 两个值必须不同：以前写完之后 localStorage 与内存副本是同一个数，
     // 删掉任何一边这条断言都照样过，等于没测。
-    panels.primePanelGeometry({ sidebar: 300 })
+    resetHost({ sidebar: 300 })
     localStorage.setItem(panels.PANEL_KEYS.sidebarWidth, '260')
     expect(panels.readStoredPx(panels.PANEL_KEYS.sidebarWidth, 200, 420)).toBe(260)
+  })
+
+  test('localStorage 没有时读宿主那份（300）', () => {
+    resetHost({ sidebar: 300 })
     localStorage.removeItem(panels.PANEL_KEYS.sidebarWidth)
     expect(panels.readStoredPx(panels.PANEL_KEYS.sidebarWidth, 200, 420)).toBe(300)
   })
 
   test('收起态翻回来也记（false 不是「缺键」）', () => {
+    resetHost({})
     panels.writeStoredFlag(panels.PANEL_KEYS.sidebarCollapsed, false)
     expect(sent.at(-1)?.collapsed).toBe(false)
     expect(panels.readStoredFlag(panels.PANEL_KEYS.sidebarCollapsed)).toBe(false)
   })
 
   test('复位删键（回到默认宽），整份几何里也去掉这一项', () => {
+    resetHost({ thread: 720 })
     panels.writeStoredPx(panels.PANEL_KEYS.threadWidth, null)
     expect(localStorage.getItem(panels.PANEL_KEYS.threadWidth)).toBeNull()
     expect(sent.at(-1)?.thread).toBeUndefined()
   })
 
   test('localStorage 存坏了也回落到宿主那份', () => {
+    resetHost({ dock: 460 })
     localStorage.setItem(panels.PANEL_KEYS.dockWidth, 'wide')
-    panels.primePanelGeometry({ dock: 460 })
     expect(panels.readStoredPx(panels.PANEL_KEYS.dockWidth, 300, 820)).toBe(460)
-    localStorage.removeItem(panels.PANEL_KEYS.dockWidth)
   })
 
   test('宿主那份越界也不认（不能因为「宿主说的」就放行）', () => {
-    panels.primePanelGeometry({ sidebar: 9999 })
+    resetHost({ sidebar: 9999 })
     localStorage.removeItem(panels.PANEL_KEYS.sidebarWidth)
     expect(panels.readStoredPx(panels.PANEL_KEYS.sidebarWidth, 200, 420)).toBeNull()
   })
@@ -113,9 +135,15 @@ describe('⑧ 地址里带过来的那份额外保险（宿主冷启动慢时用
     boot = await import('./panels.js')
   })
 
-  test('侧栏宽 / 右侧栏宽 / 收起态取地址里那份', () => {
+  test('侧栏宽取地址里那份', () => {
     expect(boot.readStoredPx(boot.PANEL_KEYS.sidebarWidth, 200, 420)).toBe(340)
+  })
+
+  test('右侧栏宽取地址里那份', () => {
     expect(boot.readStoredPx(boot.PANEL_KEYS.dockWidth, 300, 820)).toBe(700)
+  })
+
+  test('collapsed:1 读成收起', () => {
     expect(boot.readStoredFlag(boot.PANEL_KEYS.sidebarCollapsed)).toBe(true)
   })
 
