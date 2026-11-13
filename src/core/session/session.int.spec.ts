@@ -188,9 +188,13 @@ describe('② Session.appendTool：已有结果的 callId 不再落库', () => {
     // 内存里挡住了、磁盘上照写，是最隐蔽的一半失败：本次会话看着正常，重开就复发。
     const { session, file } = openFixture('append-disk-dup.jsonl')
     session.appendTool('call_a', 'ask_user', '迟到的真实结果')
+    // 哨兵：紧接着追加一个必然落盘的新 callId，等它在盘上出现再读。
+    // 不能固定 sleep——`close()` 只 `end()` 写流，落盘在后面某个 tick；一旦去重被改坏，
+    // 重复记录会真的排一次写，慢机器上 50ms 内读不到就变成假绿，正好放过这条要抓的回归。
+    session.appendTool('call_probe', 'read', 'probe-sentinel')
     session.close()
-    // 这次没有新写入要等，给一拍让 close 的 end() 落地即可。
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    const disk = await readDiskOnceFlushed(file, 'probe-sentinel')
+    expect(disk).toContain('probe-sentinel')
     const records = toolRecords(file, 'call_a')
     expect(records).toHaveLength(2)
     expect(records.map((record) => record.text)).not.toContain('迟到的真实结果')
@@ -232,9 +236,12 @@ describe('③ sanitizeToolOrphans：请求侧去重与既有孤儿剔除', () =>
       const clean = sanitizeToolOrphans(request)
       const called = new Set<string>()
       for (const message of clean) for (const call of message.tool_calls ?? []) called.add(call.id)
-      expect(clean.filter((message) => message.role === 'tool').every((message) => called.has(message.tool_call_id!))).toBe(
-        true,
-      )
+      const tools = clean.filter((message) => message.role === 'tool')
+      // 先钉住条数再判配对：`[].every()` 恒为真，只写 every 的话，
+      // 「去重写成把所有 tool 都删掉」这种过头实现照样绿——而它正是本条要防的。
+      // 夹具里 call_a 两条去重后留 1 条，加 call_b、call_c，共 3 条。
+      expect(tools).toHaveLength(3)
+      expect(tools.every((message) => called.has(message.tool_call_id!))).toBe(true)
     } finally {
       session.close()
     }
