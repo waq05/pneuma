@@ -1,0 +1,45 @@
+{
+  "name": "@pneuma/ui-superagent",
+  "version": "0.9.1",
+  "description": "Super Agent 的界面：侧栏入口 + 工单面板",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./client": "./ui/ui.tsx",
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 369,
+    "resolution": "overridable",
+    "title": "Super Agent（界面）",
+    "description": "Super Agent 的界面：侧栏入口 + 工单面板",
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.9.1"
+    },
+    "toggleable": true
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}
