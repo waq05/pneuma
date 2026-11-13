@@ -13,6 +13,7 @@
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SettingsField } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { afterAll, expect, test } from 'vitest'
 
@@ -38,7 +39,7 @@ imageDietPlugin.apply({
     const off = execute()
     return typeof off === 'function' ? off : () => {}
   },
-} as never)
+} as never, {} as never)
 
 afterAll(() => {
   delete process.env.DSC_HOME
@@ -58,14 +59,15 @@ test('分区身份：id image-diet、标题走 t(\'section.title\')、order 38',
 
 test('四个控件：总开关 + 三个数字预算', () => {
   const fields = section.fields()
-  expect(fields.map((field) => field.key)).toEqual(['enabled', 'userImageBudget', 'toolImageBudget', 'keepRounds'])
+  const keyOf = (field: SettingsField): string | undefined => ('key' in field ? field.key : undefined)
+  expect(fields.map(keyOf)).toEqual(['enabled', 'userImageBudget', 'toolImageBudget', 'keepRounds'])
   expect(fields.map((field) => field.type)).toEqual(['switch', 'number', 'number', 'number'])
 })
 
 test('数字控件的上下界与 IMAGE_DIET_RANGES 一致', () => {
   const fields = section.fields()
-  for (const field of fields.slice(1)) {
-    if (field.key === undefined) continue
+  const numeric = fields.filter((field) => field.type === 'number')
+  for (const field of numeric) {
     const range = core.IMAGE_DIET_RANGES[field.key as keyof typeof core.IMAGE_DIET_RANGES]
     expect(field.min).toBe(range.min)
     expect(field.max).toBe(range.max)
