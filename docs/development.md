@@ -17,6 +17,7 @@
 | 测试设施的落地细节（vitest 配置、harness、迁移配方） | [testing-detailed-design.md](testing-detailed-design.md) · [testing-migration-playbook.md](testing-migration-playbook.md) |
 | **哪些决定和设计不一样、测试照出了哪些源码问题** | [testing-deviations.md](testing-deviations.md) · [testing-findings.md](testing-findings.md) |
 | **接手这套东西先看什么** | [testing-handoff.md](testing-handoff.md) |
+| **还差什么没补（欠账清单）** | [testing-backlog.md](testing-backlog.md) |
 
 ## 1. 一张图看懂运行时
 

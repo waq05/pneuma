@@ -24,7 +24,7 @@
 
 ```
 工作树：D:\dsc\.worktrees\testing   （主仓 D:\dsc，别在那里改）
-分支：  feat/testing-infra          基于 78f0912c，205 个提交
+分支：  feat/testing-infra          基于 78f0912c
 主入口：pnpm test / pnpm run test:int / pnpm run typecheck:spec / pnpm run check:style
 ```
 
@@ -33,7 +33,7 @@
 | 命令 | 结果 |
 | --- | --- |
 | `pnpm test`（unit + ui + tui） | **186 文件 / 2018 条 / exit 0** |
-| `pnpm run test:int` | 79 文件 / 1193 条，**4 文件红**——3 个是并行负载超时（单独跑 31 条全绿，见 K4），1 个是已删的在途文件 |
+| `pnpm run test:int` | 78 文件 / 约 1190 条，**3 文件红**——全是并行负载超时（那 3 个单独跑 31 条全绿，见 K4）。这不是断言问题，但交接时它是红的 |
 | `pnpm run typecheck:spec` | exit 0 |
 | `pnpm run check:style` | exit 0 |
 | `node scripts/check-core.mjs --list` | **20 条**探针（旧体系，见 §4） |
