@@ -1,7 +1,7 @@
 /**
  * @pneuma/superagent 第 5 步的包级测试：执行器（工作树 + 会话 + worker + 并发）。
  *
- * 十四条用例，每条只钉一件会「悄悄坏掉」的事：
+ * 十七条用例，每条只钉一件会「悄悄坏掉」的事：
  *   1. `start` 真建了工作树、真按显式路径建了会话，并把工单文本投给 worker；
  *   2. 并发上限生效：同时发 3 个，只起 2 个，第 3 个排队，有人让位才开工；
  *   3. `stop` 调的是「中断回合」而不是杀进程，且重复调不炸；
@@ -15,7 +15,10 @@
  *  11. 准备命令在工作树里跑，失败判 failed 且不建会话；
  *  12. 准备阶段收到停止，准备结束后不再派工；
  *  13. 缺宿主时只记日志不假装成功；
- *  14. `deliver` 只入队，投递 handler 逐条重读工单、按顺序把输入交给 worker。
+ *  14. `deliver` 只入队，投递 handler 逐条重读工单、按顺序把输入交给 worker；
+ *  15. 报告工具报 `blocked`：回合正常结束时不会被改写回 `ready`，问题带在报告上；
+ *  16. 报告工具报 `progress`：只是中途进展，回合正常结束仍记 `ready`；
+ *  17. 按会话反查不到 worker 时返回 false，工具据此抛错。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -34,6 +37,7 @@ import { after, test } from 'node:test'
 
 const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
   await import('../../../../lib/packages/superagent/adapters/executor.js')
+const { createReportTool } = await import('../../../../lib/packages/superagent/tools.js')
 const { ensureWorktree } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
 const { Session } = await import('../../../../lib/core/session.js')
 
@@ -211,7 +215,7 @@ function makeTicket(seed, title) {
 
 /** 假宿主：模型不会被调用，工具只要名字对得上，守卫一律 defer。 */
 function fakeHost() {
-  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'web_search']
+  const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'superagent_report', 'web_search']
   const tools = names.map((name) => ({ name, description: name, inputSchema: {}, risk: 'read', run: async () => '' }))
   return {
     llm: {
@@ -665,5 +669,111 @@ test('两个全中文标题的工单得到两个不同的工作树', () => {
     assert.notEqual(a.branch, b.branch, '两个分支不能同名')
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+/**
+ * 报告工具的一次调用上下文。
+ *
+ * 用真 `Session` 的 `meta.id` 当 `sessionId`：生产里 `ToolContext.sessionId` 就是它
+ * （`session-core/loop.ts:711-713`），用别的值测不出「按会话反查 worker」这条链路。
+ */
+function reportContextOf(agent) {
+  return {
+    cwd: agent.session.meta.cwd,
+    sessionId: agent.session.meta.id,
+    sessionPath: agent.session.filePath,
+    signal: new AbortController().signal,
+  }
+}
+
+test('报告工具报 blocked：回合正常结束时不再改写回 ready，问题带在报告上', async () => {
+  const s = setup('report-blocked')
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c3d', '要人拍板')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    assert.ok(
+      s.executor.tools().some((entry) => entry.name === 'superagent_report'),
+      'worker 的工具目录里要有报告工具（七件套）',
+    )
+    const tool = createReportTool({ report: (sessionId, report) => s.executor.reportBySession(sessionId, report) })
+    const context = reportContextOf(agent)
+
+    agent.deps.emit({ type: 'turn/start' })
+    const result = await tool.run({ state: 'blocked', summary: '两个方案都行，要人挑一个', question: '用方案 A 还是 B？' }, context)
+    assert.match(result, /已报 blocked/, '工具要给模型一句可读的回执')
+
+    // 工具调用当场就写引擎：人不必等回合结束才知道 worker 卡住了。
+    assert.equal(s.events.reports.length, 1, '调用报告工具应立刻写一条报告')
+    assert.equal(s.events.reports[0].report.state, 'blocked')
+    assert.equal(s.events.reports[0].report.question, '用方案 A 还是 B？', 'question 要原样带进报告')
+
+    // 回合照常收尾：不能再补一条 ready。
+    agent.deps.emit({ type: 'message', text: '（正文里也提了一句，但它不算数）' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    const states = s.events.reports.map((item) => item.report.state)
+    assert.deepEqual(states, ['blocked'], `blocked 之后不该再出现 ready，实际：${states.join(' → ')}`)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('报告工具报 progress：只是中途进展，回合正常结束仍记 ready', async () => {
+  const s = setup('report-progress')
+  try {
+    const { ticket, assignment } = makeTicket('8b2c3d4e', '报个进度')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    const tool = createReportTool({ report: (sessionId, report) => s.executor.reportBySession(sessionId, report) })
+    const context = reportContextOf(agent)
+
+    agent.deps.emit({ type: 'turn/start' })
+    await tool.run({ state: 'progress', summary: '改到一半，测试还没跑' }, context)
+    assert.equal(s.events.reports.length, 1)
+    assert.equal(s.events.reports[0].report.state, 'progress')
+
+    // progress 不进终态：回合正常收尾时必须再报一次 ready，否则工单永远停在中途。
+    agent.deps.emit({ type: 'message', text: '改完了，测试通过' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    const states = s.events.reports.map((item) => item.report.state)
+    assert.deepEqual(states, ['progress', 'ready'], `progress 之后应补一条 ready，实际：${states.join(' → ')}`)
+    assert.equal(s.events.reports[1].report.summary, '改完了，测试通过', 'ready 的摘要取最后一段正文')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('按会话找不到 worker 时返回 false，报告工具据此抛错', async () => {
+  const s = setup('report-unknown')
+  try {
+    const { ticket, assignment } = makeTicket('9c3d4e5f', '不在 worker 会话里')
+    s.executor.start(ticket, assignment)
+    await tick()
+
+    // 有 worker 在跑，但这条会话 id 不是它的：执行器必须说「不是我的会话」。
+    assert.equal(
+      s.executor.reportBySession('not-a-worker-session', { state: 'progress', summary: 'x' }),
+      false,
+      '找不到会话应返回 false',
+    )
+
+    const tool = createReportTool({ report: (sessionId, report) => s.executor.reportBySession(sessionId, report) })
+    const outsider = {
+      cwd: s.root,
+      sessionId: 'not-a-worker-session',
+      sessionPath: join(s.root, 'nowhere.jsonl'),
+      signal: new AbortController().signal,
+    }
+    await assert.rejects(
+      () => tool.run({ state: 'blocked', summary: 'x', question: 'y' }, outsider),
+      /只在 Super Agent 的 worker 会话里可用/,
+      '工具要把 false 翻译成一句模型看得懂的话',
+    )
+    assert.equal(s.events.reports.length, 0, '找不到 worker 时一条报告都不该写')
+  } finally {
+    s.cleanup()
   }
 })

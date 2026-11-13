@@ -60,6 +60,7 @@ import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth } 
 import { SuperagentRuntime } from './runtime.js'
 import { SuperagentService } from './service.js'
 import { registerSurface, withRepoGuide } from './surface.js'
+import { createReportTool } from './tools.js'
 
 /** 行身份：与 `cordis.patch.yml` 的 `id`、产物目录名三处一致。 */
 export const name = 'superagent'
@@ -930,6 +931,25 @@ export function apply(ctx: Context, passed?: unknown): void {
   // 仓库路径在这里拼进快照面：`service.surface()` 是薄层、不读配置，而「路径没填」这条
   // 引导要现读设置（见 `surface.ts` 的 `withRepoGuide`）。
   registerSurface(ctx, () => withRepoGuide(service.surface(), config().repoPath))
+
+  // ── worker 的报告工具（backlog G7）────────────────────────────────────────────
+  // worker 在后台跑，正文里提的问题没有人接：给它一个工具，把 blocked / progress / ready
+  // 主动说给工单。工具自己不碰库，真正的状态变更由引擎做（`core/assignments.ts:99-134`），
+  // 所以这里只把「按会话反查 worker」这一手接到运行期上。
+  ctx.effect(
+    () => ctx.tools.register(createReportTool({
+      // 运行期还没建（没人用过这个插件）时返回 false，工具会报「只在这个 worker 会话里可用」。
+      report: (sessionId, report) => runtime?.reportBySession(sessionId, report) ?? false,
+    })),
+    'superagent: tools.register (superagent_report)',
+  )
+  // 主会话不该看见这个工具：worker 的目录由执行器自己按名字算（`adapters/executor.ts` 的
+  // `tools()` 走 `list()`，不过投影），所以这道投影只作用在用户会话上。不藏的话，
+  // 模型会在主会话里替某张工单「报进度」——那条会话连 worker 都不是，只会撞一句报错。
+  ctx.effect(
+    () => ctx.tools.project('superagent.worker-only', (tools) => tools.filter((tool) => tool.name !== 'superagent_report')),
+    'superagent: tools.project (worker-only)',
+  )
 
   // ── 体检项：登记进 doctor 的 health 表 ──────────────────────────────────────
   // doctor 的 pneuma.order 是 3450，早于本插件的 3800，所以 apply 时它已经 provide 了

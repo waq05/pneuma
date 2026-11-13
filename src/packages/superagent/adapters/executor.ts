@@ -48,9 +48,11 @@
  *   「沙箱判定越界」这两类——它们才是必须有人拍板的事。`ask` 档改钉 `auto-edit` 并把
  *   一切交回全局守卫链，让人在旁边时照常弹卡。残留风险：受保护文件（AGENTS.md 这类）
  *   与安全钩子强制问人的调用仍可能弹卡。
- * - **报告只有 ready / failed 两种**：`turn/end` 正常收尾记 `ready`（正文最后一段当摘要），
- *   收到 `error` 记 `failed`。worker 在正文里提的问题不会被单独识别成 `blocked`/`waiting`，
- *   它落在摘要里；工单会按 `ready` 收尾。要补这张语义表，需要解析模型输出，P0 不做。
+ * - **报告由 worker 主动说，执行器只补缺省**：worker 多了一个 `superagent_report` 工具
+ *   （`tools.ts`），能报 progress / ready / blocked / failed / dropped。工具调用时就写引擎
+ *   （blocked 不必等回合结束才让人看见）；回合正常收尾时，本回合报过终态就不再补 `ready`——
+ *   否则「在等人拍板」的工单会被一句 ready 收尾。`error` 仍然一律记 `failed`。
+ *   没报过终态的回合照旧按「completed → ready」判。
  * - **没有 `rewrite` / 上下文注入**：worker 的环境事实（仓库、目录、分支）直接写进系统提示，
  *   不走主会话的 env-facts 投影，因此也没有「上下文注入」卡。压缩照常接（`compact`）。
  * - **临时故障重试三次**：`error` 事件命中 {@link transient} 时不立刻判失败，退避
@@ -213,6 +215,15 @@ interface Worker {
   lastText: string
   /** 本轮收到的错误正文；`turn/end` 的 reason 是 `error` 时用它。 */
   lastError?: string
+  /**
+   * 本回合 worker 用 `superagent_report` 报过的终态。
+   *
+   * 有它，`turn/end(completed)` 就不能再按缺省的 `ready` 报——worker 已经说了
+   * 「我卡住了 / 我交付了」，执行器不该把前者改写成后者（backlog G7 要修的正是这个）。
+   * `progress` 不记进来：它是中途进展，不是这一回合的结论。
+   * 回合开始（`turn/start`）清掉，见 {@link WorkerExecutor.emitOf}。
+   */
+  reported?: WorkerReport
   /** 失败报告已发过：`error` 事件与随后的 `turn/end(error)` 只报一次。 */
   failedReported: boolean
   /**
@@ -227,8 +238,13 @@ interface Worker {
   retryPending: boolean
 }
 
-/** 六件套：worker 只拿这些工具（设计文档 §6.2 的表格）。 */
-const WORKER_TOOL_NAMES: readonly string[] = ['bash', 'read', 'write', 'edit', 'glob', 'grep']
+/**
+ * 七件套：worker 只拿这些工具（设计文档 §6.2 的表格 + G7 的报告工具）。
+ *
+ * 报告工具必须在这里出现，否则 worker 拿到了工具名却调不到：`tools()` 是 worker 的
+ * 全部目录，它按这张固定名单做减法，不看主会话的模式投影。
+ */
+const WORKER_TOOL_NAMES: readonly string[] = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'superagent_report']
 
 /** 并发上限的缺省值：设计文档写 2；设置项可覆盖。 */
 const DEFAULT_MAX_WORKERS = 2
@@ -411,8 +427,21 @@ export function buildWorkerPrompt(input: WorkerPromptInput): { text: string; sec
 2. 最后一段必须包含：改了哪些文件（一行一个，带 +/− 行数）、测试结果、没做的事。
 3. 不要开 PR，不要推远端。改完必须在本分支上提交一次：git add -A && git commit -m "一句话说清改了什么"。
    不提交等于什么都没交付——工单的产出就是这条分支上的提交，改动悬在工作区里，人一收拾就没了。
-4. 有需要人拍板的事，直接说清楚问题和你的建议，然后停下。
-</交付要求>`
+</交付要求>
+
+<报告状态>
+你有一个 superagent_report 工具，把状态说给工单，而不是只写在正文里：
+
+- 需要人拍板才能继续（缺信息、要选方案、要动工单范围外的东西）：调 superagent_report，
+  state 填 blocked，question 写清要人回答什么，然后停下等回复。只在正文里提问不算数——
+  那句话会被并进摘要，工单照样按「干完了」收尾。
+- 这一回合干完、可以交付：调 superagent_report，state 填 ready，summary 写清交付了什么。
+- 确定做不下去：state 填 failed，summary 说明卡在哪。
+- 中途有值得让人知道的进展（跑了很久、换了方案）：可以报一次 state=progress。
+  它不是必须的，别每轮都报，也别拿它代替 ready。
+
+只在真有必要时调；状态没变就别重复报。
+</报告状态>`
   return {
     text,
     // worker 的提示词不在内核的段注册表里（它是本包直接拼的），给「系统提示」卡一段合成的段：
@@ -594,6 +623,30 @@ export class WorkerExecutor implements Executor {
   }
 
   /**
+   * 按会话反查 worker 并记一条报告——`superagent_report` 工具的落点。
+   *
+   * 为什么按会话 id 而不是工单 id：工具只拿得到 `ToolContext`，模型根本不知道工单 id
+   * （那是执行器的内部账）。`ctx.sessionId` 的来源就是 `Session.meta.id`
+   * （`session-core/loop.ts:711-713`），两边对得上。
+   *
+   * 找到了就**立刻**写引擎，不等回合结束：`blocked` 要马上让工单停下来等人，
+   * `progress` 要马上更新摘要。`progress` 不记进 `worker.reported`——它是中途进展，
+   * 不是这一回合的结论，回合正常收尾仍该按 `ready` 报一次（见 {@link emitOf}）。
+   *
+   * @param sessionId - 发起调用的会话（`ToolContext.sessionId`）
+   * @param report - 状态、摘要与（仅 blocked 时的）问题
+   * @returns true = 这条会话确实属于一个在跑的 worker（找到即真；引擎写失败只记日志）
+   */
+  reportBySession(sessionId: string, report: WorkerReport): boolean {
+    for (const worker of this.workers.values()) {
+      if (worker.session.meta.id !== sessionId) continue
+      if (this.report(worker, report) && report.state !== 'progress') worker.reported = report
+      return true
+    }
+    return false
+  }
+
+  /**
    * 引擎要求派工：只往 `effect` 表写一行，真正的派工在队列的 handler 里（理由见文件头）。
    *
    * 同一个 (工单, 分配) 重复调用由表主键合并成一行（`ON CONFLICT(kind,key)`）：
@@ -694,7 +747,7 @@ export class WorkerExecutor implements Executor {
   }
 
   /**
-   * 模型面前的那份工具目录：只挑六件套（设计文档 §6.2 的表格）。
+   * 模型面前的那份工具目录：只挑七件套（设计文档 §6.2 的表格 + 报告工具）。
    *
    * 用 `list()` 而不是 `visible()`：worker 没有「当前查看的会话」，模式白名单那套投影
    * 按会话算，拿不到它的档位；这里按固定名单做减法，结果与用户当前模式无关。
@@ -907,7 +960,7 @@ export class WorkerExecutor implements Executor {
    * | --- | --- |
    * | `route` | 设置里的 provider/model，缺省跟随当前选路 |
    * | `systemPrompt` | {@link buildWorkerPrompt} 的三段模板，环境事实直接写进去 |
-   * | `tools` | 六件套（`tools()`） |
+   * | `tools` | 七件套（`tools()`） |
    * | `guards` | 全局链 + 无人值守入口（{@link WorkerExecutor.guardsFor}） |
    * | `stream` | `ctx.llm.stream` |
    * | `emit` | 回合事件 → 引擎报告（{@link WorkerExecutor.emitOf}） |
@@ -1029,6 +1082,8 @@ export class WorkerExecutor implements Executor {
     if (event.type === 'turn/start') {
       worker.lastText = ''
       delete worker.lastError
+      // 上一回合的终态不许漏到这一回合：新回合没再报，就按这一回合自己的收尾判。
+      delete worker.reported
       worker.failedReported = false
       return
     }
@@ -1059,6 +1114,12 @@ export class WorkerExecutor implements Executor {
       // （`executor/dsh.ts:606`：`this.transient.delete(idle.id)`），理由是一回合干净跑完
       // 就说明「上次那个故障过去了」，下一次该重新给三次机会。
       if (event.reason === 'completed') worker.transientTries = 0
+      // 本回合 worker 已经用 `superagent_report` 报过终态：那个状态就是结果，不能再按
+      // `completed` 补一条 `ready`——否则「等人拍板」的工单会被一句 ready 收尾，
+      // 正是 G7 要修的症状。也不重复写同一条：工具调用时已经写进引擎了，
+      // ready / dropped 已经结束工单，再写只会撞 `ticketEnded` 白记一行日志。
+      // error 不走这里：出错一律按 failed 报，见下面。
+      if (event.reason === 'completed' && worker.reported !== undefined) return
       const report = event.reason === 'error' && worker.failedReported
         ? null
         : turnEndReport(event.reason, worker.lastText, worker.lastError)
@@ -1066,17 +1127,19 @@ export class WorkerExecutor implements Executor {
     }
   }
 
-  /** 报告写回引擎；失败只记日志。 */
-  private report(worker: Pick<Worker, 'ticketId'>, report: WorkerReport): void {
+  /** 报告写回引擎；失败只记日志。返回值表示这次报告有没有真的写进去（工具据此决定记不记终态）。 */
+  private report(worker: Pick<Worker, 'ticketId'>, report: WorkerReport): boolean {
     const engine = this.engineOf?.()
     if (engine === undefined) {
       this.log(`[superagent] 工单 ${worker.ticketId} 的报告没有引擎可写：${report.state}`)
-      return
+      return false
     }
     try {
       engine.report(worker.ticketId, report)
+      return true
     } catch (error) {
       this.log(`[superagent] 工单 ${worker.ticketId} 的 ${report.state} 报告未记入：${describe(error)}`)
+      return false
     }
   }
 

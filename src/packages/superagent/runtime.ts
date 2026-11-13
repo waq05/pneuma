@@ -15,7 +15,8 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
-  type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage, type Trigger } from './core/index.js'
+  type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage, type Trigger,
+  type WorkerReport } from './core/index.js'
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
@@ -699,6 +700,24 @@ export class SuperagentRuntime {
       } catch (error) {
         this.log(`[superagent] 工单 ${ticket.id} 超时取消失败：${describe(error)}`)
       }
+    }
+  }
+
+  /**
+   * worker 报告入口：`superagent_report` 工具按会话找到正在跑的 worker，把报告交给引擎。
+   *
+   * 为什么放在运行期而不是让工具直接拿执行器：执行器由运行期私有持有（它要晚绑定引擎），
+   * 工具只拿得到 `sessionId`。这里转一手，执行器就仍然只有运行期认识。
+   * 注入的假执行器没有这个能力时返回 false，工具据此报「不在 worker 会话里」。
+   */
+  reportBySession(sessionId: string, report: WorkerReport): boolean {
+    const probe = this.executor as Partial<Pick<WorkerExecutor, 'reportBySession'>>
+    if (typeof probe.reportBySession !== 'function') return false
+    try {
+      return probe.reportBySession(sessionId, report)
+    } catch (error) {
+      this.log(`[superagent] 会话 ${sessionId} 的 ${report.state} 报告没写进去：${describe(error)}`)
+      return false
     }
   }
 
