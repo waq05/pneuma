@@ -327,8 +327,9 @@ export function createDependenciesHealth(probe: SuperagentDependenciesProbe): He
             fix.push('装 Git 并重开会话让 PATH 带上它；没 git 建不出工作树，派工必然失败')
           }
           if (lark.state === 'missing') {
-            // 说清「不装也能用」：飞书默认关，这句能省掉用户的误判。
-            fix.push('飞书来源才需要它：装上后重开会话，或在设置 → Super Agent 里填 lark-cli 的完整路径；不用飞书可以不管')
+            // 说清「不装也能用」：飞书默认关，这句能省掉用户的误判。装法写明出处：
+            // lark-cli 不随插件分发（2026-11-14 拍板），npm 包是官方仓库 @larksuite/cli。
+            fix.push('飞书来源才需要它（不随插件分发）：npm install -g @larksuite/cli 装好后重开会话，或在设置 → Super Agent 里填 lark-cli 的完整路径；不用飞书可以不管')
           }
           return {
             status: 'warn',

@@ -22,7 +22,7 @@
   "field.feishuEnabled.label": "飞书来源",
   "field.feishuEnabled.help": "打开后从飞书群和私聊收需求。默认关；关着时一个 lark-cli 子进程都不会起。改完要重开宿主才生效。",
   "field.feishuCli.label": "lark-cli 路径",
-  "field.feishuCli.help": "留空就用 PATH 上的 lark-cli；也可以填绝对路径，指定另一个版本。找不到 CLI 时来源不启动，只在日志里说一句。改完要重开宿主才生效。",
+  "field.feishuCli.help": "要自己装（不随插件分发）：npm install -g @larksuite/cli（官方仓库 github.com/larksuite/cli），装好先跑 lark-cli --version 验证。留空就用 PATH 上的 lark-cli；也可以填绝对路径，指定另一个版本。找不到 CLI 时来源不启动，只在日志里说一句。改完要重开宿主才生效。",
   "field.feishuChats.label": "要收的群",
   "field.feishuChats.help": "群的 chat_id（以 oc_ 开头），逗号分隔。留空就不收任何群，来源也不会启动。改完要重开宿主才生效。",
   "field.feishuAllowed.label": "允许派活的飞书用户",

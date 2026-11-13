@@ -22,7 +22,7 @@
   "field.feishuEnabled.label": "Feishu source",
   "field.feishuEnabled.help": "Collect requests from Feishu chats and direct messages. Off by default; while off, no lark-cli process starts. Restart the host after changing it.",
   "field.feishuCli.label": "lark-cli path",
-  "field.feishuCli.help": "Leave it empty to use lark-cli from PATH, or give an absolute path to pick a different build. When the CLI cannot be found the source does not start; the log says so once. Restart the host after changing it.",
+  "field.feishuCli.help": "Install it yourself (not bundled with the plugin): npm install -g @larksuite/cli (official repo github.com/larksuite/cli), then verify with lark-cli --version. Leave it empty to use lark-cli from PATH, or give an absolute path to pick a different build. When the CLI cannot be found the source does not start; the log says so once. Restart the host after changing it.",
   "field.feishuChats.label": "Chats to watch",
   "field.feishuChats.help": "Chat ids (starting with oc_), comma separated. Empty means no chats, and the source will not start. Restart the host after changing it.",
   "field.feishuAllowed.label": "Feishu users allowed to assign work",
