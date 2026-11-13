@@ -163,8 +163,8 @@ export interface RuntimeOptions {
 export interface SourceBridge {
   receive(trigger: Trigger): unknown
   bindThread(ticketId: string, thread: ThreadRef, own: boolean): unknown
-  /** `outcome` 用来源自己的两个词（`merged` / `closed`），时刻由运行期补。 */
-  threadClosed(thread: ThreadRef, outcome?: 'merged' | 'closed'): unknown
+  /** `outcome` 用来源自己的两个词（`merged` / `closed`），`at` 缺省由运行期补当前时刻。 */
+  threadClosed(thread: ThreadRef, outcome?: 'merged' | 'closed', at?: string): unknown
 }
 
 /** 把未知异常压成一行可读文本，日志用。 */
@@ -307,7 +307,7 @@ export class SuperagentRuntime {
     return {
       receive: (trigger) => this.engine.receive(trigger),
       bindThread: (ticketId, thread, own) => this.engine.bindThread(ticketId, thread, own),
-      threadClosed: (thread, outcome) => this.engine.threadClosed(thread, outcome ?? 'closed', this.clock()),
+      threadClosed: (thread, outcome, at) => this.engine.threadClosed(thread, outcome ?? 'closed', at ?? this.clock()),
     }
   }
 

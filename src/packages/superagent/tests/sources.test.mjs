@@ -89,14 +89,13 @@ test('组合范围：没接 GitHub 时，GitHub 的消息一律判「没连上�
   assert.deepEqual(scope.scope({ source: MANUAL_SOURCE, meta: {} }), { listened: true, observed: true })
 })
 
-test('组合范围：只认配好的那个仓库，仓库名大小写不敏感', () => {
+test('组合范围：配了 GitHub 就全收；没配就判「没连上」', () => {
   const scope = superagentScope(() => ({ repository: 'Owner/Repo' }))
-  assert.deepEqual(scope.scope({ source: GITHUB_SOURCE, meta: { repository: 'owner/repo' } }),
-    { listened: true, observed: true })
-  assert.deepEqual(scope.scope({ source: GITHUB_SOURCE, meta: { repository: 'someone/else' } }),
-    { listened: false, reason: 'source_not_connected' })
-  // 取不到 repository 时按「在范围内」处理：本适配器只轮询一个仓库，轮询结果本身就带仓库。
   assert.deepEqual(scope.scope({ source: GITHUB_SOURCE, meta: {} }), { listened: true, observed: true })
+  // 不按仓库名过滤是对的：meta 与上游逐字段一致，里面没有仓库这个键。仓库边界由轮询器
+  // （只轮询一个仓库）与 api.ts 的路径限制保证，不在这一层。
+  assert.deepEqual(scope.scope({ source: GITHUB_SOURCE, meta: { repository: 'someone/else' } }),
+    { listened: true, observed: true })
   // 别的手动来源判定不受影响。
   assert.deepEqual(scope.scope({ source: MANUAL_SOURCE, meta: {} }), manualScope.scope({ source: MANUAL_SOURCE, meta: {} }))
 })

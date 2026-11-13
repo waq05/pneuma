@@ -41,7 +41,7 @@ const {
 } = await import('../../../../lib/packages/superagent/adapters/github/trigger.js')
 const { pullChecks, readGithub } = await import('../../../../lib/packages/superagent/adapters/github/read.js')
 const { sendGithub } = await import('../../../../lib/packages/superagent/adapters/github/channel.js')
-const { createGithubSource } = await import('../../../../lib/packages/superagent/adapters/github/source.js')
+const { createGithubSource, githubEngine } = await import('../../../../lib/packages/superagent/adapters/github/source.js')
 const { cursorAt } = await import('../../../../lib/packages/superagent/adapters/github/poll.js')
 
 /** 固定时钟：断言不依赖「跑得多快」。 */
@@ -466,6 +466,20 @@ test('304 是静默返回：条件请求发出去了，但没有事件、状态�
     assert.equal(kv(store, GITHUB_KEYS.stream('issues')).etag, 'W/"keep"')
     assert.equal(source.status().lastError, null)
   })
+})
+
+test('githubEngine 把两参的关闭通知补成核心要的三参，并保留关闭时刻', () => {
+  const calls = []
+  const port = githubEngine({
+    receive: () => undefined,
+    bindThread: () => undefined,
+    threadClosed: (thread, outcome, at) => { calls.push([thread, outcome, at]) },
+  }, () => LATER)
+  const thread = { source: 'github', id: '7' }
+  port.threadClosed(thread, 'merged', '2026-09-09T00:00:00Z')
+  // 不知道确切时刻时补本模块的时钟，而不是把 undefined 递给核心。
+  port.threadClosed(thread, 'closed')
+  assert.deepEqual(calls, [[thread, 'merged', '2026-09-09T00:00:00Z'], [thread, 'closed', LATER]])
 })
 
 test('403 + locked 回 gone；403 不锁仍然可重试', async () => {
