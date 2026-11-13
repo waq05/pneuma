@@ -84,7 +84,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['src/**/*.spec.ts'],
+          include: ['src/**/*.spec.ts', 'tests/**/*.spec.ts'],
           // `*.int.spec.ts` 的结尾同样是 `.spec.ts`，不显式排掉会被 unit 连跑一遍：
           // 5 秒超时 + 线程池，起真内核的用例在那套设置下必红，而且红得莫名其妙。
           exclude: ['src/packages/*/ui/**', 'src/**/*.int.spec.ts', '**/node_modules/**'],
