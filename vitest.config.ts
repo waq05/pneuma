@@ -49,7 +49,19 @@ const uiAliases = Object.fromEntries(
 )
 
 export default defineConfig({
-  plugins: [tsconfigPaths({ projects: ['./tsconfig.json'] }), jsToTsFallback()],
+  plugins: [
+    /**
+     * 两份 tsconfig 都要交给它。
+     *
+     * `vite-tsconfig-paths` 按 `include`/`exclude` 过滤 **importer**：导入方不在配置覆盖范围内，
+     * 裸说明符就原样交给 Vite，于是 `tests/**` 里写 `import '@pneuma/todo'` 报
+     * `Cannot find package`——而同样的写在 `src/**` 下是对的。
+     * 根配置只 include `src`，`tsconfig.spec.json` 才 include `tests/**`，两份合起来才覆盖全部
+     * 导入方。（`@pneuma/runtime/*` 不受这条影响：它走下面的 alias，与 importer 无关。）
+     */
+    tsconfigPaths({ projects: ['./tsconfig.json', './tsconfig.spec.json'] }),
+    jsToTsFallback(),
+  ],
   resolve: {
     alias: {
       ...uiAliases,
@@ -73,7 +85,9 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.spec.ts'],
-          exclude: ['src/packages/*/ui/**', '**/node_modules/**'],
+          // `*.int.spec.ts` 的结尾同样是 `.spec.ts`，不显式排掉会被 unit 连跑一遍：
+          // 5 秒超时 + 线程池，起真内核的用例在那套设置下必红，而且红得莫名其妙。
+          exclude: ['src/packages/*/ui/**', 'src/**/*.int.spec.ts', '**/node_modules/**'],
           environment: 'node',
           testTimeout: 5_000,
           hookTimeout: 5_000,
