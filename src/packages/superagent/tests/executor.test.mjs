@@ -1,7 +1,7 @@
 /**
  * @pneuma/superagent 第 5 步的包级测试：执行器（工作树 + 会话 + worker + 并发）。
  *
- * 十三条用例，每条只钉一件会「悄悄坏掉」的事：
+ * 十四条用例，每条只钉一件会「悄悄坏掉」的事：
  *   1. `start` 真建了工作树、真按显式路径建了会话，并把工单文本投给 worker；
  *   2. 并发上限生效：同时发 3 个，只起 2 个，第 3 个排队，有人让位才开工；
  *   3. `stop` 调的是「中断回合」而不是杀进程，且重复调不炸；
@@ -14,7 +14,8 @@
  *  10. 准备命令：成功返回输出，非零退出抛错；
  *  11. 准备命令在工作树里跑，失败判 failed 且不建会话；
  *  12. 准备阶段收到停止，准备结束后不再派工；
- *  13. 缺宿主时只记日志不假装成功。
+ *  13. 缺宿主时只记日志不假装成功；
+ *  14. `deliver` 只入队，投递 handler 逐条重读工单、按顺序把输入交给 worker。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -45,8 +46,122 @@ after(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true })
 })
 
-/** 等一个事件循环：`start` 只入队，真正的派工在 microtask 里。 */
+/** 等一个事件循环：`start` 只写一行副作用，真正的派工在 effect 队列的 microtask 里。 */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/**
+ * 内存版 EffectQueue：同接口、不落库、入队后排一个 microtask 派工。
+ *
+ * 为什么不直接用真的 `EffectQueue` + 临时库：这 13 条用例测的是执行器的装配与并发，
+ * 不是队列本身（队列有 `effects.test.mjs` 专测）。内存版把「持久化」换成一行数组，
+ * 语义（同一 key 合并、`limit` 名额、`running.size` 扣减、drain 留行）保持同形，
+ * 现有用例的 `await tick()` 之后仍然派工。
+ */
+class MemoryEffects {
+  constructor() {
+    /** 等待执行的行；`value` 直接存对象（真队列存 JSON）。 */
+    this.rows = []
+    this.handlers = new Map()
+    this.tasks = new Set()
+    this.scheduled = false
+    this.started = false
+    this.stopped = false
+    this.seq = 0
+  }
+
+  /** 与真队列的 `ON CONFLICT(kind,key)` 同义：覆盖载荷、generation+1、失败计数清零。 */
+  enqueue(kind, key, payload) {
+    const row = this.rows.find((item) => item.kind === kind && item.key === key)
+    if (row !== undefined) {
+      row.value = payload
+      row.generation += 1
+      row.attempts = 0
+      row.due = Date.now()
+    } else {
+      this.rows.push({ kind, key, value: payload, seq: (this.seq += 1), generation: 0, attempts: 0, due: Date.now() })
+    }
+    this.kick()
+  }
+
+  handle(kind, run, options = {}) {
+    if (this.handlers.has(kind)) throw new Error(`${kind} 这个副作用已经有处理器了`)
+    const limit = options.limit ?? (() => 1)
+    const ordered = options.ordered ?? false
+    this.handlers.set(kind, { run, ordered, limit: ordered ? () => Math.min(1, limit()) : limit })
+    this.kick()
+  }
+
+  /** 这个 kind（或这一行）还有几行在等；用例用它替掉原来的 `queuedCount`。 */
+  count(kind) {
+    return this.rows.filter((row) => row.kind === kind).length
+  }
+
+  pending(kind, key) {
+    return this.rows.some((row) => row.kind === kind && (key === undefined || row.key === key))
+  }
+
+  cancel(kind, key) {
+    this.rows = this.rows.filter((row) => !(row.kind === kind && row.key === key))
+  }
+
+  start() {
+    this.started = true
+    this.kick()
+  }
+
+  kick() {
+    if (this.scheduled) return
+    this.scheduled = true
+    queueMicrotask(() => {
+      this.scheduled = false
+      this.dispatch()
+    })
+  }
+
+  dispatch() {
+    if (!this.started || this.stopped) return
+    for (const [kind, handler] of this.handlers) {
+      const running = new Set([...this.tasks].filter((task) => task.kind === kind).map((task) => task.key))
+      const rows = this.rows.filter((row) => row.kind === kind).sort((a, b) => a.seq - b.seq)
+      const ready = handler.ordered && running.size > 0
+        ? []
+        : rows.filter((row) => row.due <= Date.now() && !running.has(row.key))
+      let room = ready.length > 0 ? handler.limit() - running.size : 0
+      for (const row of ready) {
+        if (room-- <= 0) break
+        this.run(kind, handler, row)
+      }
+    }
+  }
+
+  run(kind, handler, row) {
+    const task = { kind, key: row.key, done: Promise.resolve() }
+    task.done = (async () => {
+      // 失败的行留在原地：用例里派工 handler 自己接住异常，不会走到这一支；
+      // 真队列的退避重试由 `effects.test.mjs` 覆盖。
+      await handler.run(row.value, row.key)
+      this.rows = this.rows.filter((item) => item !== row)
+    })().finally(() => {
+      this.tasks.delete(task)
+      this.kick()
+    })
+    this.tasks.add(task)
+  }
+
+  async idle(kind) {
+    for (;;) {
+      this.dispatch()
+      const running = [...this.tasks].filter((task) => kind === undefined || task.kind === kind).map((task) => task.done)
+      if (running.length === 0) return
+      await Promise.allSettled(running)
+    }
+  }
+
+  async drain() {
+    this.stopped = true
+    await Promise.allSettled([...this.tasks].map((task) => task.done))
+  }
+}
 
 /**
  * 等一个条件成立，最多等 `timeout` 毫秒。
@@ -125,18 +240,37 @@ function setup(label, options = {}) {
 
   const events = { ensured: [], started: [], reports: [], delivered: [], turnEnded: [], failed: [] }
   const agents = []
+  // 派工 / 投递的 handler 会重读工单（真执行器走 `readTicket`）：用例把 start 传进来的工单
+  // 记一份，读到的就是同一张——与真仓储在 `Tickets.create` 里刚存下的那一版等价。
+  // 投递用例还要靠它看「已投递」的进度：`inputsDelivered` 会就地删 `undelivered`，
+  // 与真引擎（`core/assignments.ts:48-58`）同一效果。
+  const tickets = new Map()
   const engine = {
-    assignmentStarted: (id, assignmentId) => { events.started.push({ ticketId: id, assignmentId }) },
+    assignmentStarted: (id, assignmentId) => {
+      events.started.push({ ticketId: id, assignmentId })
+      const ticket = tickets.get(id)
+      const assignment = ticket?.assignments.find((item) => item.id === assignmentId)
+      // 真引擎在这里把分配标成 running（`core/assignments.ts:38`）；投递 handler 只认 running。
+      if (assignment !== undefined) assignment.state = 'running'
+    },
     report: (id, report) => { events.reports.push({ ticketId: id, report }) },
     turnEnded: (id, assignmentId) => { events.turnEnded.push({ ticketId: id, assignmentId }) },
-    inputsDelivered: (id, assignmentId, ids) => { events.delivered.push({ ticketId: id, assignmentId, ids }) },
+    inputsDelivered: (id, assignmentId, ids) => {
+      events.delivered.push({ ticketId: id, assignmentId, ids })
+      const ticket = tickets.get(id)
+      if (ticket !== undefined) ticket.undelivered = ticket.undelivered.filter((inputId) => !ids.includes(inputId))
+    },
     deliveryFailed: (id, assignmentId, error) => { events.failed.push({ ticketId: id, assignmentId, error }) },
   }
+
+  const queue = new MemoryEffects()
 
   const executor = new WorkerExecutor(null, {
     host: fakeHost(),
     repo: join(root, 'repo'),
     maxWorkers: options.maxWorkers ?? 2,
+    effects: queue,
+    readTicket: (id) => tickets.get(id),
     worktree: {
       ensure(input) {
         events.ensured.push(input)
@@ -170,6 +304,13 @@ function setup(label, options = {}) {
     ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
     ...(options.prepare === undefined ? {} : { prepare: options.prepare }),
   })
+  // 记工单要在 start 之前：`start` 里只写入队，handler 读工单发生在其后的 microtask。
+  const start = executor.start.bind(executor)
+  executor.start = (ticket, assignment) => {
+    tickets.set(ticket.id, ticket)
+    start(ticket, assignment)
+  }
+  queue.start()
 
   const cleanup = () => {
     executor.dispose()
@@ -177,7 +318,7 @@ function setup(label, options = {}) {
     else process.env.DSC_HOME = previous
     rmSync(root, { recursive: true, force: true })
   }
-  return { root, executor, events, agents, cleanup }
+  return { root, executor, queue, events, agents, cleanup }
 }
 
 test('start 建工作树、创建会话文件，并把工单文本投给 worker', async () => {
@@ -205,11 +346,43 @@ test('start 建工作树、创建会话文件，并把工单文本投给 worker'
       `会话要落在 sessionsDir(ticket.id) 下，实际：${file}`,
     )
     assert.ok(file.endsWith('.jsonl'), `会话文件应是 jsonl，实际：${file}`)
-    assert.ok(existsSync(file), '会话文件应在 start 之后落盘（钉权限那条状态会写 meta 首行）')
+    // 会话日志走 `createWriteStream`（`core/session.ts:1356-1368`），建文件是异步的；
+    // 固定等一个 tick 偶尔会抢在 open 完成之前（机器忙时尤其明显）。条件式等它落盘，
+    // 断言的意思没变：start 之后会话文件必须出现。
+    assert.ok(await waitFor(() => existsSync(file)), '会话文件应在 start 之后落盘（钉权限那条状态会写 meta 首行）')
 
     assert.equal(agent.followups.length, 1, '工单文本应投递一次')
     assert.match(agent.followups[0], /改登录页文案/, '投递内容应带标题')
     assert.match(agent.followups[0], /把错误提示改成中文/, '投递内容应带正文')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('deliver 只入队：投递 handler 逐条重读工单，按顺序把输入交给 worker', async () => {
+  const s = setup('deliver')
+  try {
+    const { ticket, assignment } = makeTicket('0b1c2d3e', '边跑边收消息')
+    ticket.inputs.push({ id: 'in-1', kind: 'text', text: '补充一句', at: AT })
+    ticket.inputs.push({ id: 'in-2', kind: 'text', text: '再补充一句', at: AT })
+    ticket.undelivered.push('in-1', 'in-2')
+
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    assert.equal(agent.followups.length, 1, '先投一次工单文本')
+
+    // `deliver` 只写一行 delivery 副作用；真正的 followup 在队列下一拍。
+    s.executor.deliver(ticket, assignment)
+    assert.equal(s.queue.count('delivery'), 1, 'deliver 应只入队')
+    assert.equal(agent.followups.length, 1, '入队那一刻不该已经投出去')
+
+    await s.queue.idle('delivery')
+    assert.equal(agent.followups.length, 3, '两条未送达的输入应各投一条消息')
+    assert.match(agent.followups[1], /补充一句/)
+    assert.match(agent.followups[2], /再补充一句/)
+    assert.deepEqual(s.events.delivered.map((item) => item.ids), [['in-1'], ['in-2']], '逐条投递、按顺序记账')
+    assert.deepEqual(ticket.undelivered, [], '投完不应再留未送达的输入')
   } finally {
     s.cleanup()
   }
@@ -223,14 +396,14 @@ test('并发上限：同时发 3 个，只起 2 个，第 3 个排队', async ()
     await tick()
 
     assert.equal(s.executor.activeCount, 2, '并发上限 2：只能起两个')
-    assert.equal(s.executor.queuedCount, 1, '第三个应排队')
+    assert.equal(s.queue.count('launch'), 1, '第三个应留在队列里')
     assert.equal(s.agents.length, 2, '只应建两个 agent')
 
     // 让出一个名额：第三个应立刻补上。
     s.executor.stop(items[0].ticket, items[0].assignment, '腾位')
     await tick()
     assert.equal(s.executor.activeCount, 2, '让位后第三个应开工')
-    assert.equal(s.executor.queuedCount, 0)
+    assert.equal(s.queue.count('launch'), 0)
     assert.equal(s.agents.length, 3, '第三个 agent 应已建出来')
   } finally {
     s.cleanup()
@@ -450,12 +623,13 @@ test('准备阶段收到停止：准备结束后不再派工', async () => {
 
 test('没有宿主上下文时 start 只记缺项日志，不假装成功', () => {
   const lines = []
-  const executor = new WorkerExecutor(null, { log: (line) => lines.push(line) })
+  const queue = new MemoryEffects()
+  const executor = new WorkerExecutor(null, { log: (line) => lines.push(line), effects: queue })
   const { ticket, assignment } = makeTicket('deadbeef', '没有宿主')
   executor.start(ticket, assignment)
 
   assert.equal(executor.activeCount, 0, '缺宿主时不该起 worker')
-  assert.equal(executor.queuedCount, 0, '缺宿主时也不该排进队列假装会派出去')
+  assert.equal(queue.count('launch'), 0, '缺宿主时也不该入队假装会派出去')
   assert.equal(lines.length, 2, `应只有构造与 start 各一条日志，实际：${lines.join(' | ')}`)
   assert.match(lines[0], /执行器未接宿主（缺 cordis Context）/, '构造时就该说清楚缺什么')
   assert.match(lines[1], /停在待派工.*cordis Context.*没有启动 worker/, 'start 的日志要说清「缺什么、所以没起」')

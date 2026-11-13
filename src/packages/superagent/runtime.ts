@@ -20,6 +20,7 @@ import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
+import { EffectQueue } from './adapters/effects.js'
 import type { FeishuThreads } from './adapters/feishu/loops.js'
 import { POLL_HORIZON_MS } from './adapters/feishu/loops.js'
 import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
@@ -217,6 +218,13 @@ export class SuperagentRuntime {
   private readonly repos: StoreRepositories
   private readonly assessor: SuperagentAssessor
   private readonly engine: Engine
+  /**
+   * 持久化副作用队列：派工与输入投递都先落 `effect` 表，再由它的 handler 执行。
+   *
+   * 由运行期持有（不是执行器）：`pump` 每拍催它一次、`close` 要 drain 它，两者的生命周期
+   * 比执行器长；执行器只拿到同一个实例去登记 handler。
+   */
+  private readonly effects: EffectQueue
   /** 执行器：`stop` 真停 worker、`retry` 重新派工要用；默认是 {@link WorkerExecutor}。 */
   private readonly executor: Executor
   /** 结果通知：工单结束时入队一句话，并留一份内存里的最近动态。 */
@@ -280,6 +288,10 @@ export class SuperagentRuntime {
     const worker = options.worker
     this.repoOf = worker?.repo ?? (() => '')
     this.worktreeRoot = worker?.root?.trim() || undefined
+    // 队列先于执行器建：执行器的构造函数要往它上面登记 launch / delivery 两个 handler。
+    // 这里不给 health：doctor 是拉取式接口（`HealthCheck.run`），与队列期望的
+    // `claim(kind).set(entry)` 推拉方向相反；适配该在装配处做，而 `index.ts` 这一轮不在可改范围。
+    this.effects = new EffectQueue(store)
     this.executor = options.executor ?? new WorkerExecutor(options.ctx ?? null, {
       repo: this.repoOf,
       maxWorkers: worker?.maxWorkers,
@@ -290,6 +302,10 @@ export class SuperagentRuntime {
       root: this.worktreeRoot,
       log: (line) => { this.log(line) },
       engine: () => this.engine,
+      effects: this.effects,
+      // 派工 handler 要重读工单（文件头「重读，不用快照」）：仓储与运行期共用同一条连接，
+      // 读到的就是引擎刚提交的那一版，不是 `start` 那一刻的快照。
+      readTicket: (ticketId) => this.repos.tickets.get(ticketId),
       readTriggerText: (triggerId) => this.repos.triggers.get(triggerId)?.text,
     })
     this.engine = new Engine({
@@ -302,6 +318,8 @@ export class SuperagentRuntime {
       now,
       emit: (event) => { this.record(event) },
     })
+    // 装配完成后才允许派工：`start()` 之前的行只躺在库里（与上游 `runtime.ts:216` 同一位置）。
+    this.effects.start()
   }
 
   /**
@@ -488,6 +506,12 @@ export class SuperagentRuntime {
    * 幂等：`pending` 第二次调用时执行器队列里已有同一对（工单 + 分配），`start` 直接返回；
    * 接续过的单第二次进来时最新分配已是新那份 `pending`，走上面那一条。可以安全地重复调用。
    *
+   * **没派出去的行不需要在这里补**：`start` 现在只往 `effect` 表写一行，进程崩在
+   * 「行已写、还没派工」时那一行还在表里；本次启动的 `effects.start()` 之后，第一拍
+   * `dispatch`（`pump`）就会把它取出来。这一条覆盖「正常退出」与「崩溃」两种结局。
+   * 表里的旧行会不会乱派工，由 `launchQueued` 开头的重读把住：工单已结束、分配已换、
+   * 分配不再 `pending` 的行会被直接丢弃（见 `adapters/executor.ts` 文件头）。
+   *
    * @returns 本次接续的与重新入队的工单 id
    */
   recover(): RecoveryReport {
@@ -602,10 +626,11 @@ export class SuperagentRuntime {
 
   /**
    * 2 秒泵的一拍：先按超时收掉跑太久的工单，再把到期的 Eval 处理掉、判定排队中的候选，
-   * 最后把出站消息发出去。
+   * 然后催一次副作用队列（派工 / 投递），最后把出站消息发出去。
    *
-   * 前三件是 P0 的驱动；第四件是 P1 的发送泵（{@link flushOutbox}），它同时负责把「说了什么」
-   * 记进面板的「最近动态」。
+   * 队列那一拍不能省：退避重试的行（due 往后推过）没有别的东西会再唤醒它——`kick()` 只在
+   * 入队 / 有任务结束时排 microtask，而失败收尾时 due 还没到；每拍现扫一次，到点的行就会被
+   * 取走。上游等价物是 `passes.pumpOnce()` 里的 `effects.kick()`（`app/passes.ts:64`）。
    *
    * 发送不 `await`：一次网络往返可能几秒，等它会把整拍拖住（超时判定、Eval 都会跟着晚）。
    * 发送泵自己有一道 `busy` 闸（`dispatch.ts`），所以提前放出去不会把同一行发两遍。
@@ -617,6 +642,8 @@ export class SuperagentRuntime {
     this.expireOverdue()
     this.engine.evaluateDue()
     this.assessor.drain(this.engine)
+    // 派工 / 投递的 handler 在这里起跑；它们自己会报告、自己会在失败时退避。
+    this.effects.dispatch()
     void this.flushOutbox()
   }
 
@@ -784,12 +811,19 @@ export class SuperagentRuntime {
   /**
    * 释放运行期。
    *
+   * 先 drain 副作用队列：不再起新的派工 / 投递，等正在跑的那几个收尾；**没跑完的行留在
+   * `effect` 表里**，下一次启动的第一拍会被 `dispatch` 取到——这正是「崩溃不丢活」的同一条
+   * 恢复路径（见 {@link recover} 的注释）。`drain` 是异步的，而 `close()` 是同步契约：
+   * 这里只发出去不等它。等它会让宿主卸载卡在一个可能跑十分钟的准备命令上；而队列的行本来
+   * 就是为「没等到」准备的。
+   *
    * **不关 store**：库是调用方（`index.ts`）打开的，生命周期归它；这里关掉会让
    * 调用方手里的句柄变成悬空的。重复调用是空操作。
    */
   close(): void {
     if (this.closed) return
     this.closed = true
+    void this.effects.drain()
     this.assessor.clear()
   }
 

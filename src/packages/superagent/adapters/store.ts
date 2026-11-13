@@ -19,6 +19,7 @@ import { chmodSync, closeSync, mkdirSync, openSync, unlinkSync, writeSync } from
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { tryOsLock } from '@pneuma/runtime/core/os-lock.js'
+import type { EffectRow } from './effects.js'
 import { orchestratorDbPath, orchestratorLockPath } from '../paths.js'
 
 /** 当前代码认识的 schema 版本。加表 / 改列时加一，并在 `MIGRATIONS` 里补一段。 */
@@ -467,6 +468,77 @@ export class DscStore {
       }
       return out
     })
+  }
+
+  /**
+   * `effect` 表的五个窄方法：前四条（入队、两种取行、收尾、重试）的语句来自上游
+   * `app/effects.ts`，只做了换行排版；`countEffects` 是本插件为健康上报补的一条 COUNT
+   * （上游 `report` 那条查询还带 `attempts` / `since`，这里按窄口只需要计数）。
+   *
+   * 为什么不在这里判重、不在这里算退避：这些语义属于队列（`adapters/effects.ts`），存储层
+   * 只负责把那几句话落到 SQL 上。搬家会让「表里一行到底是什么状态」有两份解释。
+   */
+
+  /**
+   * 入队或合并一行副作用。
+   *
+   * `ON CONFLICT` 的那一段是整张表的关键：同一 (kind,key) 再说一遍时覆盖载荷、`generation`
+   * 加一（运行中的旧尝试据此放弃收尾）、清掉失败计数、due 拉回现在；`seq` 保持原值，
+   * 这件事在队列里的先后位置不因为重复入队而改变。
+   *
+   * **同步执行**：调用方可能在 Engine 的写事务里，异步落库会漏掉「已提交、没入队」这一半。
+   */
+  enqueueEffect(kind: string, key: string, value: string, seq: number, due: number, since: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO effect (kind, key, value, seq, due, since) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(kind, key) DO UPDATE
+         SET value = excluded.value, generation = generation + 1, attempts = 0, error = '', due = excluded.due`,
+      )
+      .run(kind, key, value, seq, due, since)
+  }
+
+  /** 非 ordered 的 kind：取到期的前 `limit` 行，按 seq。`16 + 在跑数` 那个上限由队列算好后传进来。 */
+  claimEffectRows(kind: string, now: number, limit: number): EffectRow[] {
+    return this.db
+      .prepare('SELECT key, value, seq, generation, attempts, due FROM effect WHERE kind = ? AND due <= ? ORDER BY seq LIMIT ?')
+      .all(kind, now, limit) as unknown as EffectRow[]
+  }
+
+  /**
+   * ordered 的 kind：只取队首一行，**不带 due 条件**。
+   *
+   * 队首没到期时后面的行也不许跑——顺序语义就靠这一条；队列拿到行之后自己再判 due。
+   */
+  claimOrderedEffectRow(kind: string): EffectRow | undefined {
+    return this.db
+      .prepare('SELECT key, value, seq, generation, attempts, due FROM effect WHERE kind = ? ORDER BY seq LIMIT 1')
+      .get(kind) as unknown as EffectRow | undefined
+  }
+
+  /** 成功收尾：删掉自己跑的那一行。四个条件缺一不可（行可能已被重新入队或被撤掉）。 */
+  finishEffect(kind: string, key: string, seq: number, generation: number): void {
+    this.db
+      .prepare('DELETE FROM effect WHERE kind = ? AND key = ? AND seq = ? AND generation = ?')
+      .run(kind, key, seq, generation)
+  }
+
+  /**
+   * 失败 / 推后：只改 attempts、error、due。
+   *
+   * attempts 由调用方算好再传（不是 SQL 里的 `attempts + 1`）：队列手里有这一行的 attempts，
+   * 传绝对值比让存储层再读一次更直白；四个匹配条件照样保证不会改到别人的行。
+   */
+  retryEffect(kind: string, key: string, seq: number, generation: number, attempts: number, error: string, due: number): void {
+    this.db
+      .prepare('UPDATE effect SET attempts = ?, error = ?, due = ? WHERE kind = ? AND key = ? AND seq = ? AND generation = ?')
+      .run(attempts, error, due, kind, key, seq, generation)
+  }
+
+  /** 某个 kind 还有几行在等；健康上报用（没接健康就不必调）。 */
+  countEffects(kind: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS waiting FROM effect WHERE kind = ?').get(kind)
+    return Number(row?.waiting ?? 0)
   }
 
   /** 关连接。重复调用是空操作，方便 finally 里写。 */

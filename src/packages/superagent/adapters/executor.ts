@@ -15,12 +15,28 @@
  * 4. `new MiniAgent(deps, session)`：`deps` 的六个必填项见 {@link WorkerExecutor.depsFor}；
  * 5. `followup(工单文本)` 开跑；回调 `assignmentStarted`。
  *
- * ## 为什么 `start` 只排队、不在这里动手
+ * ## 为什么 `start` 只写一行副作用，不在这里动手
  *
  * 端口契约写明「each method only queues work」（`core/ports.ts:55-69`）：`start` 是在
  * `Tickets.create` / `wake` 的写事务里被调的（`core/tickets.ts:54`）。在工作树里跑 git、
- * 读会话文件都是慢动作，放在事务里会把整库的写锁一起攥住。所以这里只入队，真正的派工
- * 在下一个 microtask 里做——那时事务已经提交。
+ * 读会话文件都是慢动作，放在事务里会把整库的写锁一起攥住。所以这里只往 `effect` 表写一行
+ * （与上游 `executor/dsh.ts:264-268` 同形），真正的派工由 `EffectQueue` 在事务提交后的
+ * microtask 里做。
+ *
+ * 为什么是表而不是内存数组：进程崩在「行已写、还没派工」那一刻，内存里的活就没了；表里的行
+ * 会在下一次启动的第一拍被 `dispatch` 取到（`runtime.recover()` 的注释写了这一点）。反向也
+ * 成立：入队与工单写在同一个事务里，事务回滚时行一起没，不会凭空派一张不存在的工单。
+ *
+ * ## 派工 handler 里的工单从哪来：**重读**，不用快照
+ *
+ * 上游 `launchQueued` 开头的三句（`executor/dsh.ts:270-273`）是重读工单、取最新分配、确认
+ * 它还 `pending`；这里照做。代价是多一个只读的 `readTicket` 构造选项（`runtime.ts` 传
+ * `repos.tickets.get`），换来的是崩溃恢复的正确性：**payload 里的工单快照会过期**。进程重启
+ * 后工单可能已经被停、被重试换了分配，快照看不出来；照快照派工会给一张已结束的工单起 worker，
+ * 还会把 `recover()` 刚换上的新分配踩掉。重读之后这类行在 handler 开头就返回，随后被队列删掉
+ * ——正是上游的行为。`Executor` 端口一行没改：读工单不是端口要的责任，是执行器自己的构造选项。
+ * `readTicket` 缺省时 handler 直接抛错让队列退避并记日志：宁可反复报错，也不拿一个可能过期的
+ * 快照去派工。
  *
  * ## 简版说明（做不到的部分，宁可功能少也不假装）
  *
@@ -57,9 +73,11 @@ import type { PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { CompactService, LlmService, SandboxService, ToolService } from '@pneuma/runtime/services/types.js'
 import { MiniAgent, type AgentDeps } from '@pneuma/session-core/loop.js'
 import { writePermissions } from '@pneuma/permission-core/permission-scope.js'
-import type { Assignment, Executor, EngineForExecutor, Ticket, TicketInput, WorkerReport } from '../core/index.js'
+import { latestAssignment, runningAssignment, type Assignment, type Executor, type EngineForExecutor, type Ticket,
+  type TicketInput, type WorkerReport } from '../core/index.js'
 import { LIMITS } from '../core/limits.js'
 import { sessionsDir } from '../paths.js'
+import type { EffectPayloads, EffectQueuePort } from './effects.js'
 import { ensureWorktree, slugOf, type EnsureWorktreeInput, type WorktreeHandle } from './worktree.js'
 
 /** 日志出口；默认丢弃，`runtime.ts` 传宿主的日志函数。 */
@@ -126,6 +144,19 @@ export interface WorkerExecutorOptions {
   blockedCommands?: readonly string[]
   /** 引擎回调；构造时 `Engine` 还没建好，用 getter 晚绑定。 */
   engine?: () => EngineForExecutor
+  /**
+   * 持久化副作用队列（`adapters/effects.ts`）；不给 = 不派工（`start` 只记一条说明）。
+   *
+   * 为什么由构造参数传而不是执行器自己 new：队列要在运行期与 `pump`、`close` 共用一个实例
+   * （`runtime.ts` 的生活周期比执行器长），两处各 new 一个会各自扫表、各自派工。
+   */
+  effects?: EffectQueuePort
+  /**
+   * 按 id 重读工单；派工与投递的 handler 靠它确认「这行还该不该跑」。
+   *
+   * 只读，不参与写：不给时 handler 直接抛错（见文件头「派工 handler 里的工单从哪来」）。
+   */
+  readTicket?: (ticketId: string) => Ticket | undefined
   /** 日志出口。 */
   log?: ExecutorLog
   /** 按 trigger id 取原文（工单正文与后续消息都要它）；缺省给一句可读的占位。 */
@@ -161,12 +192,6 @@ export interface WorkerPromptInput {
   repo: string
   dir: string
   blockedCommands?: readonly string[]
-}
-
-/** 一次已入队、还没真正派出去的工单。 */
-interface QueuedLaunch {
-  ticket: Ticket
-  assignment: Assignment
 }
 
 /** 一个正在干活的 worker。 */
@@ -433,11 +458,11 @@ function hostFromContext(ctx: Context): { host: WorkerHost | null; missing: stri
 }
 
 /**
- * 一个工单执行器：工作树 + 会话 + MiniAgent + 并发队列。
+ * 一个工单执行器：工作树 + 会话 + MiniAgent + 持久化并发队列。
  *
- * 生命周期：`start` 入队 → microtask 派工 → 回合事件写报告 → `stop` 取消并让位。
- * 所有方法都可能在引擎的写事务里被调用，所以它们只做内存操作或排队；慢动作在
- * {@link WorkerExecutor.launch} 里，且已经在事务之外。
+ * 生命周期：`start` 写一行 `launch` 副作用 → 队列的 handler 派工 → 回合事件写报告 →
+ * `stop` 取消并让位。所有方法都可能在引擎的写事务里被调用，所以它们只做一次同步的入队；
+ * 慢动作在 {@link WorkerExecutor.launch} 里，且已经在事务之外。
  */
 export class WorkerExecutor implements Executor {
   private readonly host: WorkerHost | null
@@ -447,8 +472,12 @@ export class WorkerExecutor implements Executor {
   private readonly repoOf: () => string
   /** 工作区准备命令的 getter；空串 = 不跑。 */
   private readonly prepareOf: () => string
-  /** 正在准备中的派工数（建树 / 跑准备命令 / 建会话），它们也占并发名额。 */
-  private launching = 0
+  /** 持久化副作用队列；`start` / `deliver` 只往它里面写一行。 */
+  private readonly effects: EffectQueuePort | undefined
+  /** 按 id 重读工单（派工 / 投递的 handler 用）；见文件头的「重读，不用快照」。 */
+  private readonly readTicket: ((ticketId: string) => Ticket | undefined) | undefined
+  /** 「没接 effect 队列」只提醒一次：`start` 会被反复调，重复刷屏没有信息量。 */
+  private warnedNoEffects = false
   /**
    * 准备阶段就被停掉的分配 id。
    *
@@ -471,8 +500,6 @@ export class WorkerExecutor implements Executor {
   private readonly createAgent: (deps: AgentDeps, session: Session) => WorkerAgent
   /** 正在干活的 worker（键 = 工单 id）。 */
   private readonly workers = new Map<string, Worker>()
-  /** 等并发槽的工单，严格 FIFO。 */
-  private readonly queue: QueuedLaunch[] = []
   /**
    * 已请求停止、但回合还在收尾的 worker。
    *
@@ -481,8 +508,6 @@ export class WorkerExecutor implements Executor {
    * 下一个（见 `terminate` / `closeSession`）。
    */
   private readonly retiring = new Set<Worker>()
-  /** 已经排过一次 microtask；同一拍内多次 `start` 只派工一次。 */
-  private scheduled = false
   /** 「缺工具」只提醒一次：`tools()` 每轮请求都调，重复刷屏没有信息量。 */
   private missingToolsWarned = false
   private disposed = false
@@ -520,6 +545,8 @@ export class WorkerExecutor implements Executor {
     this.unattended = options.unattended ?? 'deny'
     this.blockedCommands = options.blockedCommands
     this.engineOf = options.engine
+    this.effects = options.effects
+    this.readTicket = options.readTicket
     this.readTriggerText = options.readTriggerText
     this.worktree = options.worktree ?? { ensure: ensureWorktree }
     this.createSession = options.createSession ?? ((cwd, file) => Session.create(cwd, file))
@@ -537,16 +564,23 @@ export class WorkerExecutor implements Executor {
       if (this.host.compact === undefined) degraded.push('compact（长会话不会自动压缩，爆窗会以 failed 收尾）')
       if (degraded.length > 0) this.log(`[superagent] 执行器可降级能力缺失：${degraded.join('；')}；worker 仍会启动`)
     }
+    // 两个 handler 在这里登记（与上游 `executor/dsh.ts:232-235` 同一位置）：
+    // 名额要读 `workers` / `retiring`，只有执行器自己算得出来；运行期只负责建队列与驱动它。
+    if (this.effects !== undefined) {
+      this.effects.handle('launch', payload => this.launchQueued(payload), {
+        limit: () => this.launchCapacity(),
+        // 上游 `executor/dsh.ts:233`：派工失败先 5 秒后重试，最长 5 分钟。
+        retry: [5000, 300_000],
+      })
+      // 投递失败已经落在工单的 `ticket.delivery` 上（`core/assignments.ts:72-77`），
+      // 不再让健康项跟着报 error（`quiet`），否则一次投递失败会在两处各报一遍。
+      this.effects.handle('delivery', payload => this.deliverQueued(payload.ticketId), { limit: () => 4, quiet: true })
+    }
   }
 
   /** 正在干活的 worker 数（并发上限的分子）；测试与诊断用。 */
   get activeCount(): number {
     return this.workers.size
-  }
-
-  /** 还在排队的工单数；测试与诊断用。 */
-  get queuedCount(): number {
-    return this.queue.length
   }
 
   /**
@@ -560,10 +594,11 @@ export class WorkerExecutor implements Executor {
   }
 
   /**
-   * 引擎要求派工：只入队，下一个 microtask 再动手（理由见文件头）。
+   * 引擎要求派工：只往 `effect` 表写一行，真正的派工在队列的 handler 里（理由见文件头）。
    *
-   * 同一个 (工单, 分配) 重复调用是空操作：`Tickets.addInput` 会在待派工阶段反复调
-   * `start`（`core/tickets.ts:244`），重复建树会白跑 git，还会把 worker 建两份。
+   * 同一个 (工单, 分配) 重复调用由表主键合并成一行（`ON CONFLICT(kind,key)`）：
+   * `Tickets.addInput` 在待派工阶段会反复调 `start`（`core/tickets.ts:244`），合并保住
+   * 「重复建树白跑 git、worker 建两份」这条老约束，同时把最新入队时刻（due）刷新回来。
    */
   start(ticket: Ticket, assignment: Assignment): void {
     if (this.disposed) return
@@ -573,43 +608,33 @@ export class WorkerExecutor implements Executor {
       )
       return
     }
+    if (this.effects === undefined) {
+      if (!this.warnedNoEffects) {
+        this.warnedNoEffects = true
+        this.log('[superagent] 执行器没有接 effect 队列：工单会停在待派工，不会启动 worker')
+      }
+      return
+    }
     const existing = this.workers.get(ticket.id)
     if (existing !== undefined) {
       if (existing.assignmentId === assignment.id) return
       // 同一张工单换了新分配（重试 / 恢复）：旧 worker 先让位，再排新的。
       this.terminate(existing, '新分配接管')
     }
-    if (this.queue.some(item => item.ticket.id === ticket.id && item.assignment.id === assignment.id)) return
-    this.queue.push({ ticket, assignment })
-    this.schedule()
+    this.effects.enqueue('launch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
   }
 
   /**
-   * 把未送达的 Input 递进 worker 的当前回合。
+   * 把未送达的 Input 递给 worker：只入队，投递动作在 `deliverQueued` 里逐条重读工单再做。
    *
-   * 文本按 `TicketInput` 的种类取；`trigger` 的原文只有仓储知道，由 `options.readTriggerText`
-   * 提供（`runtime.ts` 用同一个仓储读）；取不到时给一句「原文见工单」——宁可少，不编。
+   * 为什么不在事务里直接 `followup`：`deliver` 也是在 Engine 的写事务里被调的
+   * （`core/assignments.ts:41`），而 `followup` 会碰会话文件。入队之后，投递失败还能按
+   * `delivery` 的退避重试，而不是一次异常丢掉一条消息。
    */
-  deliver(ticket: Ticket, assignment: Assignment): void {
+  deliver(ticket: Ticket, _assignment: Assignment): void {
     if (this.disposed) return
-    const worker = this.workers.get(ticket.id)
-    if (worker === undefined || worker.assignmentId !== assignment.id || worker.stopping) return
-    const agent = worker.agent
-    if (agent === null) return
-    const ids = ticket.undelivered
-    if (ids.length === 0) return
-    const text = this.inputsText(ticket, ids)
-    try {
-      agent.followup(text)
-      this.engineOf?.()?.inputsDelivered(ticket.id, assignment.id, ids)
-    } catch (error) {
-      this.log(`[superagent] 工单 ${ticket.id} 的输入投递失败：${describe(error)}`)
-      try {
-        this.engineOf?.()?.deliveryFailed(ticket.id, assignment.id, describe(error).slice(0, 300))
-      } catch (inner) {
-        this.log(`[superagent] 投递失败也未能记进工单 ${ticket.id}：${describe(inner)}`)
-      }
-    }
+    if (this.effects === undefined) return
+    this.effects.enqueue('delivery', ticket.id, { ticketId: ticket.id })
   }
 
   /**
@@ -632,11 +657,15 @@ export class WorkerExecutor implements Executor {
     this.terminate(worker, reason)
   }
 
-  /** 退出插件时的收摊：取消所有 worker、关闭会话、清空队列。重复调用是空操作。 */
+  /**
+   * 退出插件时的收摊：取消所有 worker、关闭会话、停掉队列。重复调用是空操作。
+   *
+   * 不删 `effect` 表里的行：那些是「还没做、或没做完」的活，删了就丢；`drain` 只让队列不再
+   * 起新活、等正在跑的收尾，剩下的行留给下一次启动（`runtime.close()` 的注释同理）。
+   */
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.queue.length = 0
     // 准备阶段被停的记录一并清掉：插件都要卸了，没有「准备结束」这一刻了。
     this.cancelled.clear()
     // 退避中的重试全部作废：插件都要卸了，回调里那一句「继续」没有接收方。
@@ -646,6 +675,8 @@ export class WorkerExecutor implements Executor {
     // 收尾中的 worker 已经不在 `workers` 里（见 `terminate`），但会话还开着；
     // 插件都要卸了，不再等它的 `onIdle`。
     for (const worker of [...this.retiring]) this.closeSession(worker)
+    // 停新活：正在跑的 handler 会自己收尾（失败的那一行因 `stopped` 原样留在库里）。
+    void this.effects?.drain()
   }
 
   /**
@@ -691,29 +722,98 @@ export class WorkerExecutor implements Executor {
     return buildWorkerPrompt(input)
   }
 
-  /** 下一个 microtask 派工；同一拍内多次 `start` 只排一次。 */
-  private schedule(): void {
-    if (this.scheduled || this.disposed) return
-    this.scheduled = true
-    queueMicrotask(() => {
-      this.scheduled = false
-      this.pump()
-    })
+  /**
+   * 现在还能起几个 worker（`launch` 的 `limit`）。
+   *
+   * **不再减「正在准备的派工数」**：`EffectQueue.dispatch` 已经用「本 kind 正在跑的 handler 数」
+   * 扣过一次名额（`effects.ts` 里 `room = limit() - running.size`），执行器的 handler 就是那些
+   * 在跑的 handler；这里再减一遍会重复计数。具体后果：上限 2、A 正在准备（占 1 个）时 B 入队，
+   * 两处各减一次会把 B 卡到 A 派工完成之后——并发上限被压成串行。上游的
+   * `WorkerSlots.launches()`（`executor/dsh.ts:182-185`）同样只减正在跑的 worker，不减 launch
+   * 预约，正是这个原因。
+   *
+   * `retiring` 要算：收尾中的 worker 会话还开着，它是一个活着的 agent。
+   */
+  private launchCapacity(): number {
+    return Math.max(0, this.maxWorkers - (this.workers.size + this.retiring.size))
   }
 
-  /** 有空位就从队首派工；`launch` 自己接住所有异常，不会把队列卡死。 */
-  private pump(): void {
+  /**
+   * `launch` 的 effect handler：确认这一行还该跑，然后真正派工。
+   *
+   * 开头三句与上游 `executor/dsh.ts:270-273` 逐条对齐：
+   * 1. 重读工单——payload 里只有 id，没有会过期的快照（理由见文件头）；
+   * 2. 取最新分配，必须还是这行说的那一份（重试 / 恢复可能已经换了分配）；
+   * 3. 分配必须还是 `pending`（已经跑起来的、已经结束的都不该再派一次）。
+   * 三条任一不成立就返回，行随即被队列删掉——这就是「崩溃后表里的旧行不会乱派工」。
+   *
+   * @throws 没有 `readTicket` 时抛错：宁可让队列退避并报错，也不拿可能过期的快照派工
+   */
+  private async launchQueued({ ticketId, assignmentId }: EffectPayloads['launch']): Promise<void> {
     if (this.disposed) return
-    // 名额按「占着坑的」算：准备中的、干活的、收尾中的都算。准备命令最长跑十分钟，
-    // 只按 `workers.size` 算会让准备中的那几张一起挤进来，并发上限形同虚设。
-    while (this.workers.size + this.retiring.size + this.launching < this.maxWorkers && this.queue.length > 0) {
-      const item = this.queue.shift()
-      if (item === undefined) break
-      this.launching += 1
-      void this.launch(item).finally(() => {
-        this.launching -= 1
-        this.schedule()
-      })
+    if (this.readTicket === undefined) {
+      throw new Error('执行器没有工单读取口（readTicket），无法确认这次派工还该不该做')
+    }
+    const ticket = this.readTicket(ticketId)
+    const assignment = ticket === undefined ? undefined : latestAssignment(ticket)
+    if (
+      ticket === undefined ||
+      ticket.ended !== undefined ||
+      assignment?.id !== assignmentId ||
+      assignment.state !== 'pending'
+    ) {
+      return
+    }
+    // `launch` 自己接住所有异常并落成 failed 报告，不往外抛：派工失败重试没有意义
+    // （准备命令失败会把半成品当已准备好，与上游 `PrepareFailed` 同一取舍）。
+    await this.launch(ticket, assignment)
+  }
+
+  /**
+   * `delivery` 的 effect handler：逐条重读工单，把未送达的输入递给正在跑的 worker。
+   *
+   * 为什么逐条重读而不是一次把整批发出去（上游 `executor/dsh.ts:290-328` 同一结构）：
+   * 发一条就会调一次 `inputsDelivered` 改库；两条之间工单可能被停、分配可能被换。
+   * 一次读一份快照发整批，就会出现「前两条发出去了、后两条发给了一个已经结束的分配」。
+   *
+   * 失败照上游的顺序处理：先确认工单还由这份分配跑着，再记 `deliveryFailed`，然后把错误
+   * 抛给队列退避重试（`quiet`：失败信息已经在工单上了）。
+   */
+  private async deliverQueued(ticketId: string): Promise<void> {
+    if (this.disposed || this.readTicket === undefined) return
+    const engine = this.engineOf?.()
+    if (engine === undefined) {
+      this.log(`[superagent] 工单 ${ticketId} 的输入投递没有引擎可用：跳过这一行`)
+      return
+    }
+    for (;;) {
+      const ticket = this.readTicket(ticketId)
+      if (ticket === undefined || ticket.ended !== undefined) return
+      const assignment = runningAssignment(ticket)
+      const inputId = ticket.undelivered[0]
+      if (assignment === undefined || inputId === undefined) return
+      const worker = this.workers.get(ticketId)
+      // 没有 worker 就没有会话可投；这份行到此为止（下一次 `assignmentStarted` 会重新入队）。
+      if (worker === undefined || worker.assignmentId !== assignment.id || worker.stopping || worker.agent === null) return
+      const input = ticket.inputs.find(item => item.id === inputId)
+      // 库里记着这个 id、inputs 里却没有：再投也投不出内容，留着只会死循环。删行并记一句。
+      if (input === undefined) {
+        this.log(`[superagent] 工单 ${ticketId} 的输入 ${inputId} 在 inputs 里找不到，跳过`)
+        return
+      }
+      try {
+        worker.agent.followup(this.inputsText(ticket, [inputId]))
+        engine.inputsDelivered(ticketId, assignment.id, [inputId])
+      } catch (error) {
+        this.log(`[superagent] 工单 ${ticketId} 的输入投递失败：${describe(error)}`)
+        try {
+          engine.deliveryFailed(ticketId, assignment.id, describe(error).slice(0, 300))
+        } catch (inner) {
+          this.log(`[superagent] 投递失败也未能记进工单 ${ticketId}：${describe(inner)}`)
+        }
+        // 抛给 EffectQueue：它会按 delivery 的退避（默认 2s 起）再试，行不会丢。
+        throw error
+      }
     }
   }
 
@@ -721,10 +821,10 @@ export class WorkerExecutor implements Executor {
    * 真正派工：建工作树 → 建会话 → 钉权限 → 造 agent → 投工单文本 → 告诉引擎。
    *
    * 这里跑在事务之外（见文件头）。任何一步失败都落成一张 `failed` 报告，且把已经建出来的
-   * 会话关掉；错误不往外抛——`start` 的调用方在事务里，外抛会回滚工单本身。
+   * 会话关掉；错误不往外抛——外抛会让 `launch` 的 effect 行带着退避一直重试，而准备命令失败
+   * 重试只会把半成品当已准备好。
    */
-  private async launch(item: QueuedLaunch): Promise<void> {
-    const { ticket, assignment } = item
+  private async launch(ticket: Ticket, assignment: Assignment): Promise<void> {
     let session: Session | null = null
     let worker: Worker | null = null
     try {
@@ -1061,7 +1161,8 @@ export class WorkerExecutor implements Executor {
       // 回合还在收尾：会话先不关，让循环把收尾出账与 git 聚合写完（`stop` 的注释）。
       this.retiring.add(worker)
     }
-    this.schedule()
+    // 一个名额刚让出来：催一拍队列，等着的派工不必等下一次泵。
+    this.effects?.kick()
   }
 
   /** 关闭会话（幂等）；释放写租约，并让出一个并发名额。 */
@@ -1074,8 +1175,8 @@ export class WorkerExecutor implements Executor {
     } catch (error) {
       this.log(`[superagent] 工单 ${worker.ticketId} 的会话关闭失败：${describe(error)}`)
     }
-    // 收尾中的 worker 到这里才真正让位（见 `terminate` 与 `pump`）。
-    this.schedule()
+    // 收尾中的 worker 到这里才真正让位（见 `terminate` 与 `launchCapacity`）。
+    this.effects?.kick()
   }
 
   /** 工单正文：来自它的起始 Trigger；取不到就给一句可读的占位，不编内容。 */
