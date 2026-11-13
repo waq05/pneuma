@@ -23,7 +23,7 @@
  * @module dsc/tests/harness
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -803,11 +803,58 @@ function prepareIsolatedHome(home: string): void {
  * 最后给 80ms 让会话写流落盘。少了最后这一拍，紧跟其后的 `readSessionJsonl` 会随机
  * 读到缺少最后一条记录的日志——这是最容易被误判成「会话丢消息」的假失败。
  */
+/**
+ * `bootKernel` 之前必须先确认 `lib/` 不比 `src/` 旧。
+ *
+ * ## 为什么这条守卫是必须的
+ *
+ * 内核启动时会经 `core/plugin-loader.ts` 的 `APP_INSTALL_DIR` 去
+ * `<仓库根>/lib/node_modules/@pneuma/*` 装配插件，那些包是构建产物、由 Node 直接 import，
+ * **不走 Vite 的 `@pneuma/runtime → src` 别名**。于是 `bootKernel` 起的其实是「宿主来自
+ * src、插件来自 lib」的混合装配。
+ *
+ * 后果不是报错，是**绿着放过回归**：改了 `src/core/*.ts` 却没 `pnpm build`，
+ * 内核跑的仍是旧的 `lib/core/*.js`，integration 用例照样全绿。这种假绿比红危险得多，
+ * 只能在启动前判一次。
+ *
+ * 判据用文件时间而不是内容摘要：`tsc` 的增量构建会让 lib 的 mtime 晚于源文件，
+ * 反过来「源文件比 lib 新」就一定是没构建。代价是一次目录遍历（约 900 个 .ts）。
+ */
+function assertBuildIsFresh(): void {
+  const root = fileURLToPath(new URL('../', import.meta.url))
+  const marker = join(root, 'lib', 'core', 'session.js')
+  if (!existsSync(marker)) {
+    throw new Error('bootKernel：没有 lib/ 构建产物。先跑 `pnpm run build`（integration 层跑的是 lib 平面）')
+  }
+  const builtAt = statSync(marker).mtimeMs
+  let newest = { file: '', at: 0 }
+  for (const area of ['core', 'host', 'packages', 'services', 'contract']) {
+    const dir = join(root, 'src', area)
+    if (!existsSync(dir)) continue
+    for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
+      // 测试文件与类型声明不参与构建，别让它们把守卫唤醒。
+      if (entry.name.endsWith('.spec.ts') || entry.name.endsWith('.int.spec.ts') || entry.name.endsWith('.d.ts')) continue
+      const file = join(entry.parentPath, entry.name)
+      const at = statSync(file).mtimeMs
+      if (at > newest.at) newest = { file, at }
+    }
+  }
+  if (newest.at > builtAt) {
+    const rel = newest.file.slice(root.length).replace(/\\/g, '/')
+    throw new Error(
+      'bootKernel：lib/ 比源码旧，内核会跑旧的构建产物（假绿）。先跑 `pnpm run build`。\n' +
+        `  最新的源文件：${rel}\n` +
+        `  lib 构建时间：${new Date(builtAt).toISOString()}\n` +
+        `  源文件时间：  ${new Date(newest.at).toISOString()}`,
+    )
+  }
+}
+
 export async function bootKernel(options: BootKernelOptions): Promise<BootedKernel> {
   if (options === null || typeof options !== 'object') {
     throw new TypeError('bootKernel：options 必须是 { providerBaseUrl, config? }')
-  }
-  const baseUrl = options.providerBaseUrl
+  }  const baseUrl = options.providerBaseUrl
   if (typeof baseUrl !== 'string' || !/^https?:\/\//.test(baseUrl)) {
     throw new TypeError(`bootKernel：providerBaseUrl 必须是 http(s):// 地址（收到 ${JSON.stringify(baseUrl)}）`)
   }
@@ -819,6 +866,7 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
     // bin/dsc.js 与测试同仓；缺了说明工作树不对（比如只 checkout 了部分目录）。
     throw new Error(`bootKernel：找不到内核入口 ${CLI_ENTRY}，工作树不完整？`)
   }
+  assertBuildIsFresh()
   prepareIsolatedHome(home)
   const config = { ...defaultKernelConfig(baseUrl), ...(options.config ?? {}) } as unknown as DscCoreConfig
   // 动态 import：unit 层的用例只用 tempHome / fakeLLM 时，不该把整张内核插件图拖进来
