@@ -35,7 +35,7 @@
 | --- | --- | --- | --- | --- |
 | D14 | hash 不符时「抛错」（§6.3） | 409 响应 + `close()` 抛 `AggregateError`，两个出口都硬失败 | HTTP handler 里没地方把异常抛回 `await` 方；只在一个出口失败会让另一条路径静默绿 | 已定 |
 | D15 | `dispose()` 卸载（§6.4） | `dsc/exit` 事件 + `registry.delete` 逐插件卸载 | cordis 4.1 的根 `Context` **没有** `dispose()`——现有探针里的 `ctx.dispose?.()` 实际是空操作。实测只发 `dsc/exit` 不卸载，进程 5 秒仍不退出 | 已定 |
-| D16 | 未规定（§6.4） | `bootKernel` 默认关 memory 与 sandbox | memory 会在回合结束多发一次模型请求，吃掉假模型的下一轮剧本（`scripts/todo-reminder-test.mjs:32-37` 的先例）；sandbox 在 Windows 启动时 spawn PowerShell 体检，实测挂住 worker 不退出。需要沙箱的用例自己预置 `plugins.json` | 已定 |
+| D16 | 未规定（§6.4） | `bootKernel` 默认关 memory 与 sandbox | memory 会在回合结束多发一次模型请求，吃掉假模型的下一轮剧本（`scripts/todo-reminder-test.mjs:32-37` 的先例），这条仍然成立。**sandbox 那条已失效**：2026-11-14 复测，预置 `plugins.json` 打开沙箱后起内核 6.7 秒、`sandbox` 服务在位、进程正常退出，没有挂住 worker。当初「挂住」多半与机器状态或旧版本有关。默认仍关（省时间），但**需要沙箱的用例可以放心打开** | 已定（口径已订正） |
 | D17 | `RunCliResult` 只有 code/stdout/stderr（§6.6） | 加 `timedOut` | Windows 上被 kill 后是 `code=1, signal=null`，与正常退出 1 分不开 | 已定 |
 | D18 | golden 归一化（§6.7 只说要归一） | 临时目录整段路径（含随机后缀）→ `<TMP>`；HOME 只换前缀；unified diff 自实现、40 行截断 | 随机后缀不整段换掉，golden 每次都不同 | 已定 |
 | D19 | unit 层「禁止网络」（§7.1） | `fakeLLM` / `replayLLM` 的 unit 用例起 `127.0.0.1` 本地端点 | 假模型的协议（SSE 四段、标题请求判据）只能这么验；连的是 loopback，不出网。代价是 unit 层不再是「零网络」 | 待定（是否移到 integration 层） |
