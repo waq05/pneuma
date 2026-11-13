@@ -15,8 +15,8 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
-  type OutboundMessage, type Ticket, type TicketStage } from './core/index.js'
-import { settingsPolicy } from './core/policy.js'
+  type OutboundMessage, type SourceScope, type Ticket, type TicketStage } from './core/index.js'
+import { policyVersion, settingsPolicy, type Settings } from './core/policy.js'
 import { ManualAssessor } from './adapters/assessor.js'
 import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
 import { manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
@@ -129,6 +129,16 @@ export interface RuntimeOptions {
    * 记下调用就够了，不必起真 worker。不给就用 {@link WorkerExecutor}。
    */
   executor?: Executor
+  /**
+   * 设置来源（getter，每取一次策略现读）。
+   *
+   * 为什么要注入而不是在这里 `defaultSettings()`：准入名单是设置项（GitHub 那条尤其——
+   * 「谁 @ 一下能派活」），构造时算死就变成「改了设置必须重启宿主」，而且这种失败没有
+   * 任何提示，症状是「轮询在跑、就是没有工单」。不注入 = 只有手动来源的一份默认设置。
+   */
+  settings?: () => Settings
+  /** 来源范围；不注入 = 只认手动来源（`adapters/manual.ts:77`）。 */
+  scope?: SourceScope
 }
 
 /** 把未知异常压成一行可读文本，日志用。 */
@@ -173,7 +183,11 @@ export class SuperagentRuntime {
   /** 工作树根（设置里给过就用它），`clean` 要按它重算目录。 */
   private readonly worktreeRoot: string | undefined
   /** 设置与 Policy 在 P0 是只读的：进程内没有改设置的入口，缓一份就够。 */
-  private readonly policy: ReturnType<typeof settingsPolicy>
+  private readonly settingsOf: () => Settings
+  /** 来源范围：准入闸拿它判「这条消息这个来源收不收」（`core/policy.ts:186-187`）。 */
+  private readonly scope: SourceScope
+  /** 上一次算出来的策略，连同算它用的设置版本戳；版本没变就复用。 */
+  private policyCache: { stamp: string; policy: ReturnType<typeof settingsPolicy> } | null = null
   /** 单工单超时（秒）的 getter；每拍现读，设置页改完下一拍就按新上限判。 */
   private readonly timeoutOf: () => number
   /**
@@ -195,7 +209,9 @@ export class SuperagentRuntime {
     this.notify = new StoreNotifier(store, { now })
     this.timeoutOf = options.timeoutSeconds ?? (() => 0)
     this.outbox = new StoreOutbox(store)
-    this.policy = settingsPolicy(defaultSettings(), manualScope)
+    this.policyCache = null
+    this.settingsOf = options.settings ?? (() => defaultSettings())
+    this.scope = options.scope ?? manualScope
     // 执行器的入口：宿主上下文（模型 / 工具 / 守卫 / 沙箱 / 压缩）+ 设置。
     // 没给 `ctx` 时执行器停在「未接宿主」模式（`start` 只记一条缺项日志、工单留待派工）。
     // `engine` 用 getter 晚绑定：引擎的构造需要执行器，执行器的报告又要引擎。
@@ -215,14 +231,36 @@ export class SuperagentRuntime {
     })
     this.engine = new Engine({
       repo: this.repos,
-      policy: () => this.policy,
-      scope: manualScope,
+      policy: () => this.currentPolicy(),
+      scope: this.scope,
       assessor: this.assessor,
       executor: this.executor,
       outbox: this.outbox,
       now,
       emit: (event) => { this.record(event) },
     })
+  }
+
+  /**
+   * 当前策略。
+   *
+   * 为什么每次现读：准入名单、接单模式、暂停开关都是设置项，构造时算死等于「改了要重启」。
+   * 为什么不每次都重算：`settingsPolicy` 每次都会造一套闭包，而它每拍、每条 Trigger 都要被
+   * 问一次；用版本戳缓存，设置没动就复用同一份。
+   *
+   * 版本戳用核心的 `policyVersion`（规则 + 接单模式 + 来源名单，`core/policy.ts:128`），
+   * 另外补上 `paused` 与研判超时——这两样同样进 `Policy`，却不在那份版本里。
+   *
+   * **已知边界**：这里换了策略不会给在途工单补一条 `policyChanged`（核心的授权重算入口），
+   * 所以「把某人从名单里删掉」只影响之后进来的消息，不会让已开的那张单当场失效。
+   */
+  private currentPolicy(): ReturnType<typeof settingsPolicy> {
+    const settings = this.settingsOf()
+    const stamp = `${policyVersion(settings)}|${String(settings.paused)}|${String(settings.eval.timeoutSeconds)}`
+    if (this.policyCache !== null && this.policyCache.stamp === stamp) return this.policyCache.policy
+    const policy = settingsPolicy(settings, this.scope)
+    this.policyCache = { stamp, policy }
+    return policy
   }
 
   /**

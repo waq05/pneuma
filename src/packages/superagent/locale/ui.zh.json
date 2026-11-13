@@ -7,7 +7,16 @@
   "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
   "field.ticketTimeoutSeconds.label": "单工单超时（秒）",
   "field.ticketTimeoutSeconds.help": "工单从建单起超过这个秒数还没结束，就停掉 worker 并标为失败；0 表示不限。默认 1800（30 分钟）。",
+  "field.githubRepository.label": "GitHub 仓库",
+  "field.githubRepository.help": "写成 owner/name。填上之后，那个仓库里 @ 机器人一句就会变成一张工单；留空表示不接 GitHub。",
+  "field.githubLogin.label": "机器人的 GitHub 登录名",
+  "field.githubLogin.help": "用它跳过机器人自己发的评论。填错不会报错，只会把它自己的回复也当成新需求，反复派活。",
+  "field.githubAllowed.label": "允许派活的人",
+  "field.githubAllowed.help": "GitHub 登录名，逗号分隔。不在名单里的人 @ 机器人不会建单——这是授权边界，不是通知设置。",
+  "field.githubTokenEnv.label": "令牌所在的环境变量",
+  "field.githubTokenEnv.help": "默认读 GITHUB_TOKEN。令牌不落盘、不写进配置文件；想换一个令牌就改这个变量名或重启宿主。",
   "save.maxWorkersBad": "并发上限要填数字（1–16）",
   "save.timeoutBad": "超时秒数要填数字（0 表示不限）",
+  "save.githubRepositoryBad": "仓库要写成 owner/name 的样子",
   "save.unknownKey": "未知设置项「{key}」"
 }

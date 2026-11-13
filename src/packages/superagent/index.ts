@@ -36,6 +36,8 @@ import { clampInt } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { openStore, type DscStore } from './adapters/store.js'
+import { superagentScope } from './adapters/scope.js'
+import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
 import { createSuperagentHealth } from './health.js'
@@ -71,6 +73,15 @@ const REPO_PATH_KEY = 'repoPath'
 const MAX_WORKERS_KEY = 'maxWorkers'
 const TIMEOUT_KEY = 'ticketTimeoutSeconds'
 
+/** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
+const GITHUB_REPOSITORY_KEY = 'githubRepository'
+const GITHUB_LOGIN_KEY = 'githubLogin'
+const GITHUB_ALLOWED_KEY = 'githubAllowed'
+const GITHUB_TOKEN_ENV_KEY = 'githubTokenEnv'
+
+/** 令牌环境变量的缺省名。 */
+const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
+
 /** 泵的间隔：设计文档 §6.3 写的是 2 秒。 */
 const PUMP_INTERVAL_MS = 2000
 
@@ -94,7 +105,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** 设置面读回来的三个值（都收好了类型与区间）。 */
+/** 设置面读回来的值（都收好了类型与区间）。 */
 export interface SuperagentConfig {
   /** 执行器建工作树的仓库根；空 = 没配。 */
   repoPath: string
@@ -102,6 +113,19 @@ export interface SuperagentConfig {
   maxWorkers: number
   /** 单工单超时秒数；0 = 不限。 */
   ticketTimeoutSeconds: number
+  /** GitHub 仓库 `owner/name`；空 = 没接这个来源。 */
+  githubRepository: string
+  /** 机器人自己的 GitHub 登录名；用它跳过自己发的评论。 */
+  githubLogin: string
+  /** 允许派活的人（已按逗号拆开、去空、去重）。 */
+  githubAllowed: string[]
+  /** 令牌所在的环境变量名。 */
+  githubTokenEnv: string
+}
+
+/** 把一个配置值读成去空白的字符串；类型不对或没给都算空。 */
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 /**
@@ -119,6 +143,14 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     repoPath: typeof raw[REPO_PATH_KEY] === 'string' ? raw[REPO_PATH_KEY].trim() : '',
     maxWorkers: clampInt(raw[MAX_WORKERS_KEY], LIMITS.maxWorkers.min, LIMITS.maxWorkers.max, DEFAULTS.maxWorkers),
     ticketTimeoutSeconds: clampInt(raw[TIMEOUT_KEY], 0, TIMEOUT_MAX_SECONDS, DEFAULTS.ticketTimeoutSeconds),
+    githubRepository: textOf(raw[GITHUB_REPOSITORY_KEY]),
+    githubLogin: textOf(raw[GITHUB_LOGIN_KEY]),
+    // 名单用逗号分隔：设置面只有 text 字段（`contract/settings.ts` 没有多行/标签类控件）。
+    // 大小写不敏感的去重，免得 `Alice` 与 `alice` 生成两条没用的名单项。
+    githubAllowed: [...new Set(
+      textOf(raw[GITHUB_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
+    )],
+    githubTokenEnv: textOf(raw[GITHUB_TOKEN_ENV_KEY]) || DEFAULT_TOKEN_ENV,
   }
 }
 
@@ -165,6 +197,38 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           step: 60,
           help: t('field.ticketTimeoutSeconds.help'),
         },
+        {
+          type: 'text',
+          key: GITHUB_REPOSITORY_KEY,
+          label: t('field.githubRepository.label'),
+          placeholder: 'owner/name',
+          mono: true,
+          help: t('field.githubRepository.help'),
+        },
+        {
+          type: 'text',
+          key: GITHUB_LOGIN_KEY,
+          label: t('field.githubLogin.label'),
+          placeholder: 'your-bot-login',
+          mono: true,
+          help: t('field.githubLogin.help'),
+        },
+        {
+          type: 'text',
+          key: GITHUB_ALLOWED_KEY,
+          label: t('field.githubAllowed.label'),
+          placeholder: 'alice, bob',
+          mono: true,
+          help: t('field.githubAllowed.help'),
+        },
+        {
+          type: 'text',
+          key: GITHUB_TOKEN_ENV_KEY,
+          label: t('field.githubTokenEnv.label'),
+          placeholder: DEFAULT_TOKEN_ENV,
+          mono: true,
+          help: t('field.githubTokenEnv.help'),
+        },
       ]
     },
     values(): SettingsValues {
@@ -174,9 +238,18 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [REPO_PATH_KEY]: config.repoPath,
         [MAX_WORKERS_KEY]: config.maxWorkers,
         [TIMEOUT_KEY]: config.ticketTimeoutSeconds,
+        [GITHUB_REPOSITORY_KEY]: config.githubRepository,
+        [GITHUB_LOGIN_KEY]: config.githubLogin,
+        // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
+        [GITHUB_ALLOWED_KEY]: config.githubAllowed.join(', '),
+        [GITHUB_TOKEN_ENV_KEY]: config.githubTokenEnv,
       }
     },
     save(key: string, value: SettingsValue): string | void {
+      /** 文本类字段的统一写法：去空白，空串 = 删掉这个键。 */
+      const saveText = (field: string, text: string) => {
+        writePluginConfig(CONFIG_KEY, { [field]: text === '' ? null : text })
+      }
       switch (key) {
         case REPO_PATH_KEY: {
           const text = String(value).trim()
@@ -200,6 +273,28 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           })
           return
         }
+        case GITHUB_REPOSITORY_KEY: {
+          const text = String(value).trim()
+          // 只认 `owner/name`：写错了不会报错，只会静默地一条工单都不建（轮询打的是一个不存在的仓库）。
+          // 空串是「关掉这个来源」，不算写错。
+          if (text !== '' && !/^[\w.-]+\/[\w.-]+$/.test(text)) return t('save.githubRepositoryBad')
+          saveText(GITHUB_REPOSITORY_KEY, text)
+          return
+        }
+        case GITHUB_LOGIN_KEY: {
+          saveText(GITHUB_LOGIN_KEY, String(value).trim())
+          return
+        }
+        case GITHUB_ALLOWED_KEY: {
+          // 存成逗号分隔的一行；顺手去掉多余空白与重复项，免得名单里躺着两条一样的。
+          const names = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
+          saveText(GITHUB_ALLOWED_KEY, names.join(', '))
+          return
+        }
+        case GITHUB_TOKEN_ENV_KEY: {
+          saveText(GITHUB_TOKEN_ENV_KEY, String(value).trim())
+          return
+        }
         default:
           return t('save.unknownKey', { key })
       }
@@ -218,6 +313,21 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
 export function apply(ctx: Context, passed?: unknown): void {
   /** 现读设置：每次用值时都调它，保存完立刻生效。 */
   const config = (): SuperagentConfig => readSuperagentConfig(passed)
+
+  /**
+   * 配好的 GitHub 来源；没配全就是 `undefined`。
+   *
+   * 三个字段缺一不可（仓库、机器人登录名、至少一个允许的登录名）：半配状态下把来源登记进来，
+   * 只会得到「轮询在跑、一条单也不建」——那种失败没有任何提示，最难查。
+   */
+  const githubAccount = (): GithubAccount | undefined => {
+    const current = config()
+    return normalizeGithubAccount({
+      repository: current.githubRepository,
+      login: current.githubLogin,
+      allowed: current.githubAllowed,
+    })
+  }
 
   const offSection = ctx.settings.registerSection(createSettingsSection(passed))
   ctx.effect(() => offSection, 'superagent: settings.registerSection')
@@ -265,6 +375,9 @@ export function apply(ctx: Context, passed?: unknown): void {
         ctx,
         worker: { repo: () => config().repoPath, maxWorkers: config().maxWorkers, model: null },
         timeoutSeconds: () => config().ticketTimeoutSeconds,
+        // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
+        settings: () => defaultSettings(githubAccount()),
+        scope: superagentScope(githubAccount),
       })
       runtime = opened
       warned = false

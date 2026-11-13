@@ -7,7 +7,16 @@
   "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
   "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",
   "field.ticketTimeoutSeconds.help": "A ticket still unfinished this many seconds after it was created has its worker stopped and is marked failed; 0 means no limit. Default 1800 (30 minutes).",
+  "field.githubRepository.label": "GitHub repository",
+  "field.githubRepository.help": "Write it as owner/name. Once set, mentioning the bot in that repository turns into a ticket; leave it empty to keep GitHub disconnected.",
+  "field.githubLogin.label": "Bot's GitHub login",
+  "field.githubLogin.help": "Used to skip comments the bot wrote itself. Getting it wrong raises no error: the bot's own replies are read as new requests and dispatched again.",
+  "field.githubAllowed.label": "People allowed to dispatch",
+  "field.githubAllowed.help": "GitHub logins, comma separated. Mentions from anyone else create no ticket: this is the authorization boundary, not a notification preference.",
+  "field.githubTokenEnv.label": "Environment variable holding the token",
+  "field.githubTokenEnv.help": "Reads GITHUB_TOKEN by default. The token never lands on disk or in the config file; to switch tokens, change this variable or restart the host.",
   "save.maxWorkersBad": "The concurrency limit must be a number (1-16)",
   "save.timeoutBad": "The timeout must be a number of seconds (0 means no limit)",
+  "save.githubRepositoryBad": "The repository must look like owner/name",
   "save.unknownKey": "Unknown setting \"{key}\""
 }
