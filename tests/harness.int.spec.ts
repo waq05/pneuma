@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
-import { bootKernel, fakeLLM, readSessionJsonl, tempHome, type FakeLLM } from './harness.js'
+import { bootKernel, fakeLLM, readSessionJsonl, runCli, tempHome, type FakeLLM } from './harness.js'
 
 /** 临时 HOME 的还原栈；用例中途失败时由 afterEach 兜底，免得串味到本文件后面的用例。 */
 const restores: Array<() => void> = []
@@ -108,3 +108,32 @@ describe('bootKernel', () => {
   })
 })
 
+describe('runCli', () => {
+  test('--version 走真入口 bin/dsc.js：退出码 0、无信号、仓库里不留 .dsc', async () => {
+    const result = await runCli(['--version'])
+    expect(result.timedOut).toBe(false)
+    expect(result.signal).toBeNull()
+    expect(result.code).toBe(0)
+    expect(result.stdout).toMatch(/Pneuma numa \d+\.\d+\.\d+/)
+    expect(result.stderr).toBe('')
+    // 回归断言：真入口按 HOME（Windows 按 USERPROFILE）找 `~/.dsc`；spawn 时漏传这两个
+    // 环境变量、或 cwd 用了仓库根，它就会在仓库里造一个 `.dsc`。这个目录曾经在反向验证
+    // 里被造出来过——只靠 `.gitignore` 兜住，会让「测试往仓库里写」这件事长期看不见。
+    expect(existsSync(join(process.cwd(), '.dsc'))).toBe(false)
+  })
+
+  test('超时后 SIGKILL 并返回，不抛（红不红交给断言）', async () => {
+    // 10ms 一定早于 node 冷启动完成；这里验的是「超时路径有返回」而不是 CLI 多快。
+    const result = await runCli(['--version'], { timeoutMs: 10 })
+    expect(result.timedOut).toBe(true)
+    // Windows 上被 kill 的进程报 code=1/signal=null，与 CLI 自己退出 1 无法区分；
+    // 因此跨平台只断言「不是正常成功」，POSIX 上再钉 SIGKILL。
+    expect(result.signal === 'SIGKILL' || result.code !== 0).toBe(true)
+  })
+
+  test('参数或选项传错时同步抛可读的错，不静默起进程', () => {
+    expect(() => runCli('--version' as never)).toThrow(/字符串数组/)
+    expect(() => runCli(['--version'], { timeoutMs: 0 })).toThrow(/timeoutMs/)
+    expect(() => runCli(['--version'], { env: { X: 1 as never } })).toThrow(/环境变量/)
+  })
+})

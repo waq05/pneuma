@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { fakeLLM, readSessionJsonl, replayLLM, tempHome, type FakeLLM } from './harness.js'
+import { expectGolden, fakeLLM, readSessionJsonl, replayLLM, tempHome, type FakeLLM } from './harness.js'
 
 /** 清理栈：每条用例自己登记，红了也照样在 afterEach 里执行。 */
 const cleanups: Array<() => void> = []
@@ -365,3 +365,64 @@ describe('replayLLM', () => {
   })
 })
 
+describe('expectGolden', () => {
+  /** 每条用例一个唯一名字，跑完删掉，仓库里不留下测试产物。 */
+  function uniqueName(): string {
+    const name = `harness-selftest-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    cleanups.push(() => cleanGolden(name))
+    return name
+  }
+
+  test('更新模式把归一化后的文本写进 tests/snapshots/golden/<name>.txt', () => {
+    const name = uniqueName()
+    expectGolden('第一行\n第二行\n', name, { update: true })
+    expect(readFileSync(join(GOLDEN_DIR, `${name}.txt`), 'utf8')).toBe('第一行\n第二行\n')
+  })
+
+  test('UPDATE_GOLDEN=1 同样触发写盘', () => {
+    const name = uniqueName()
+    const before = process.env.UPDATE_GOLDEN
+    process.env.UPDATE_GOLDEN = '1'
+    try {
+      expectGolden('环境变量更新', name)
+    } finally {
+      if (before === undefined) delete process.env.UPDATE_GOLDEN
+      else process.env.UPDATE_GOLDEN = before
+    }
+    expect(readFileSync(join(GOLDEN_DIR, `${name}.txt`), 'utf8')).toBe('环境变量更新\n')
+  })
+
+  test('临时路径 / 时间戳 / PID 归一化后两次运行可比较', () => {
+    const name = uniqueName()
+    const first = `path=${join(tmpdir(), 'dsc-run-a')}\ntime=2026-11-13T10:20:30.123Z\npid: 1234\n`
+    const second = `path=${join(tmpdir(), 'dsc-run-b')}\ntime=2027-01-02T03:04:05Z\npid: 9876\n`
+    expectGolden(first, name, { update: true })
+    // 只差这三类易变值时不该红；否则 golden 用例每跑一次都要更新。
+    expect(() => expectGolden(second, name)).not.toThrow()
+  })
+
+  test('内容不同就红，且差异里同时能看到旧行与新行', () => {
+    const name = uniqueName()
+    expectGolden('旧内容', name, { update: true })
+    let message = ''
+    try {
+      expectGolden('新内容', name)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain('golden 不匹配')
+    expect(message).toContain('-旧内容')
+    expect(message).toContain('+新内容')
+  })
+
+  test('golden 不存在时提示用 UPDATE_GOLDEN=1 生成', () => {
+    const name = uniqueName()
+    expect(() => expectGolden('还没存过', name)).toThrow(/golden 不存在[\s\S]*UPDATE_GOLDEN=1/)
+  })
+
+  test('name 不能是绝对路径，也不能带 ".."：否则能写到仓库外', () => {
+    expect(() => expectGolden('x', '../escape')).toThrow(/不能包含|逃出/)
+    expect(() => expectGolden('x', 'C:\\Windows\\evil')).toThrow(/绝对路径|不能包含/)
+    expect(() => expectGolden('x', '')).toThrow(/非空字符串/)
+  })
+})

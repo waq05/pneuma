@@ -920,3 +920,338 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
   return { ctx, runTurn, dispose }
 }
 
+// ── 6.6 runCli ───────────────────────────────────────────────────────────────
+
+/** `runCli` 的可选项。 */
+export interface RunCliOptions {
+  /** 超时毫秒，默认 60_000；超时后 SIGKILL 并返回，不抛。 */
+  timeoutMs?: number
+  /** 写进 stdin 的内容；给了就写完即关。 */
+  input?: string
+  /** 追加/覆盖的环境变量。 */
+  env?: Record<string, string>
+  /** 子进程工作目录，默认本次调用新建的临时目录。 */
+  cwd?: string
+}
+
+/** `runCli` 的结果。 */
+export interface RunCliResult {
+  /** 退出码；被超时杀掉时可能是 null（POSIX）或 1（Windows）。 */
+  code: number | null
+  /** 结束信号；正常退出是 null。 */
+  signal: string | null
+  stdout: string
+  stderr: string
+  /**
+   * 是否由 `timeoutMs` 杀掉。
+   *
+   * 为什么加这个字段：Windows 上被 kill 的进程报 `code=1, signal=null`，与「CLI 自己
+   * 退出 1」无法区分；只看 spec 里那四个字段，超时用例在 Windows 上没法断言。
+   * 这是对 §6.6 返回形状的**加法**，不影响按位置读四个字段的调用方。
+   */
+  timedOut: boolean
+}
+
+/**
+ * 用真入口 `bin/dsc.js` 起一次 CLI。
+ *
+ * ## 为什么要临时 HOME + 删掉继承的 DSC_HOME
+ *
+ * 真入口会读写 `~/.dsc`：配置、会话、锁文件。测试若继承开发者的 `DSC_HOME`
+ * （有人为了多工作区并设过这个变量），隔离就整个失效，而且失效时不会报错——
+ * CLI 只是安静地把测试会话写进了真实目录。删掉再允许 `opts.env` 显式覆盖，是
+ * 「默认隔离、要越界必须明说」。
+ *
+ * ## 为什么超时不抛
+ *
+ * 超时是**被测行为**的一部分（CLI 卡死了吗），不是 harness 的故障。harness 抛错会让
+ * 调用方没法把「卡死」和「CLI 正常退出但退出码不对」分开断言。所以超时只杀进程、
+ * 把 `timedOut` 与已收到的输出交回去，红不红由调用方的断言决定。
+ */
+export function runCli(args: string[], opts: RunCliOptions = {}): Promise<RunCliResult> {
+  if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) {
+    throw new TypeError('runCli：args 必须是字符串数组')
+  }
+  if (opts === null || typeof opts !== 'object' || Array.isArray(opts)) {
+    throw new TypeError('runCli：opts 必须是对象')
+  }
+  const timeoutMs = opts.timeoutMs ?? 60_000
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError(`runCli：timeoutMs 必须是正数（收到 ${JSON.stringify(opts.timeoutMs)}）`)
+  }
+  if (opts.input !== undefined && typeof opts.input !== 'string') {
+    throw new TypeError('runCli：input 必须是字符串')
+  }
+  if (opts.env !== undefined) {
+    if (opts.env === null || typeof opts.env !== 'object' || Array.isArray(opts.env)) {
+      throw new TypeError('runCli：env 必须是 { 名字: 值 } 对象')
+    }
+    for (const [key, value] of Object.entries(opts.env)) {
+      if (typeof value !== 'string') throw new TypeError(`runCli：环境变量 ${key} 的值必须是字符串`)
+    }
+  }
+  if (!existsSync(CLI_ENTRY)) {
+    throw new Error(`runCli：找不到 CLI 入口 ${CLI_ENTRY}`)
+  }
+  const home = mkdtempSync(join(tmpdir(), 'dsc-cli-'))
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  // 继承来的 DSC_HOME 指到真实目录时，HOME 换了也没用（path-policy 优先读它）。
+  delete env.DSC_HOME
+  Object.assign(env, { HOME: home, USERPROFILE: home, NO_COLOR: '1', FORCE_COLOR: '0' }, opts.env ?? {})
+
+  const child = spawn(process.execPath, [CLI_ENTRY, ...args], {
+    cwd: opts.cwd ?? home,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+
+  return new Promise<RunCliResult>((resolveRun, rejectRun) => {
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let settled = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      // SIGKILL：CLI 可能装着信号处理器（Ctrl+C 收尾），SIGTERM 会被它接住继续跑。
+      child.kill('SIGKILL')
+    }, timeoutMs)
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.stdin.on('error', () => {
+      // 子进程提前退出时写 stdin 会 EPIPE；这不是被测行为，忽略即可。
+    })
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      rejectRun(new Error(`runCli：启动 ${process.execPath} 失败（${error.message}）`))
+    })
+    child.on('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveRun({ code, signal, stdout, stderr, timedOut })
+    })
+    child.stdin.end(opts.input ?? '')
+  })
+}
+
+// ── 6.7 expectGolden ─────────────────────────────────────────────────────────
+
+/** `expectGolden` 的可选项。 */
+export interface ExpectGoldenOptions {
+  /** 为 true 时写盘而不是比对；与 `UPDATE_GOLDEN=1` 等效。 */
+  update?: boolean
+}
+
+/** 路径占位替换时的「路径到此为止」字符：空白、引号与常见中英文标点。 */
+const GOLDEN_PATH_STOP = '\\s"\'`，。、；：（）,;:()\\[\\]{}<>'
+
+/** 把以临时目录开头的一整段路径换成 `<TMP>`（连同随机后缀，否则 golden 每跑一次都不一样）。 */
+function replaceTempSubtree(text: string, temp: string): string {
+  let out = text
+  // Windows 上同一路径可能以正斜杠形式出现；大小写也不保证一致（盘符/用户目录）。
+  for (const variant of new Set([temp, temp.replaceAll('\\', '/'), temp.replaceAll('/', '\\')])) {
+    out = out.replace(new RegExp(`${escapeRegExp(variant)}[^${GOLDEN_PATH_STOP}]*`, 'gi'), '<TMP>')
+  }
+  return out
+}
+
+/** 把一段文本里的绝对路径/时间/PID 换成占位符，让 golden 跨机器可比。 */
+function normalizeGolden(text: string): string {
+  // 先统一换行：Windows 检出的 LF/CRLF 差异不是被测内容，不该出现在 golden 差异里。
+  let out = text.replace(/\r\n/g, '\n')
+  // 临时目录整段替换：tempHome 与 runCli 的目录名带随机后缀，只换掉前缀的话，
+  // 每次运行剩下的 `-a1b2c3` 仍然不同，golden 会一直红——那等于逼着每条用例都去
+  // 更新 golden，最后没人再看 diff。
+  out = replaceTempSubtree(out, tmpdir())
+  // 主目录只换前缀：`<HOME>/.dsc/sessions/x.jsonl` 里后半段是稳定的、
+  // 有排查价值的信息（哪个会话文件），整段吃掉就看不见了。
+  const home = process.env.HOME ?? process.env.USERPROFILE
+  if (home !== undefined && home.trim() !== '') {
+    out = out.split(home).join('<HOME>')
+    out = out.split(home.replaceAll('\\', '/')).join('<HOME>')
+    out = out.split(home.replaceAll('/', '\\')).join('<HOME>')
+  }
+  // 时间戳分三层：带时区的 ISO 时间、纯日期、纯时间。顺序不能反——先换 ISO，
+  // 否则其中的日期与时间会被后两条规则拆成两个占位符，golden 反而更难读。
+  out = out.replace(/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/g, '<TIMESTAMP>')
+  out = out.replace(/\b\d{4}-\d{2}-\d{2}\b/g, '<DATE>')
+  out = out.replace(/\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b/g, '<TIME>')
+  out = out.replace(/\b(?:pid|PID|Pid)\s*[:=]?\s*\d+\b/g, '<PID>')
+  // 末尾换行不参与比对：编辑器保存时常补一个，差异里只有它等于噪声。
+  return out.replace(/\n+$/, '')
+}
+
+/** 一行 diff。 */
+interface DiffOp {
+  type: ' ' | '-' | '+'
+  text: string
+}
+
+/** 超长文本退化成「公共前后缀之外整段替换」，避免 LCS 的 O(n·m) 内存把测试拖死。 */
+function fallbackDiff(expected: readonly string[], actual: readonly string[]): DiffOp[] {
+  let start = 0
+  while (start < expected.length && start < actual.length && expected[start] === actual[start]) start += 1
+  let endExpected = expected.length - 1
+  let endActual = actual.length - 1
+  while (endExpected >= start && endActual >= start && expected[endExpected] === actual[endActual]) {
+    endExpected -= 1
+    endActual -= 1
+  }
+  const ops: DiffOp[] = []
+  for (let index = 0; index < start; index += 1) ops.push({ type: ' ', text: expected[index]! })
+  for (let index = start; index <= endExpected; index += 1) ops.push({ type: '-', text: expected[index]! })
+  for (let index = start; index <= endActual; index += 1) ops.push({ type: '+', text: actual[index]! })
+  for (let index = endExpected + 1; index < expected.length; index += 1) ops.push({ type: ' ', text: expected[index]! })
+  return ops
+}
+
+/** 逐行 LCS，给出保持顺序的最小编辑序列（长度上限内）。 */
+function diffOps(expected: readonly string[], actual: readonly string[]): DiffOp[] {
+  // 1000×1000 是 4MB 的表格；golden 是给人看的文本快照，超过这个规模说明选错了比对方式。
+  if (expected.length * actual.length > 1_000_000) return fallbackDiff(expected, actual)
+  const table: number[][] = Array.from({ length: expected.length + 1 }, () => new Array<number>(actual.length + 1).fill(0))
+  for (let i = expected.length - 1; i >= 0; i -= 1) {
+    for (let j = actual.length - 1; j >= 0; j -= 1) {
+      table[i]![j] =
+        expected[i] === actual[j] ? table[i + 1]![j + 1]! + 1 : Math.max(table[i + 1]![j]!, table[i]![j + 1]!)
+    }
+  }
+  const ops: DiffOp[] = []
+  let i = 0
+  let j = 0
+  while (i < expected.length && j < actual.length) {
+    if (expected[i] === actual[j]) {
+      ops.push({ type: ' ', text: expected[i]! })
+      i += 1
+      j += 1
+    } else if (table[i + 1]![j]! >= table[i]![j + 1]!) {
+      ops.push({ type: '-', text: expected[i]! })
+      i += 1
+    } else {
+      ops.push({ type: '+', text: actual[j]! })
+      j += 1
+    }
+  }
+  while (i < expected.length) {
+    ops.push({ type: '-', text: expected[i]! })
+    i += 1
+  }
+  while (j < actual.length) {
+    ops.push({ type: '+', text: actual[j]! })
+    j += 1
+  }
+  return ops
+}
+
+/** 把编辑序列渲染成带 hunk 头的 unified diff，最多 `maxLines` 行。 */
+function unifiedDiff(
+  expected: string,
+  actual: string,
+  expectedLabel: string,
+  actualLabel: string,
+  maxLines = 40,
+): string {
+  const ops = diffOps(expected.split('\n'), actual.split('\n'))
+  // 每个下标之前各有几行属于 expected / actual：hunk 头的行号从这里取。
+  const expectedBefore = [0]
+  const actualBefore = [0]
+  for (const op of ops) {
+    expectedBefore.push(expectedBefore[expectedBefore.length - 1]! + (op.type === '+' ? 0 : 1))
+    actualBefore.push(actualBefore[actualBefore.length - 1]! + (op.type === '-' ? 0 : 1))
+  }
+  const lines: string[] = [`--- ${expectedLabel}`, `+++ ${actualLabel}`]
+  let index = 0
+  while (index < ops.length) {
+    while (index < ops.length && ops[index]!.type === ' ') index += 1
+    if (index >= ops.length) break
+    const start = Math.max(0, index - 3)
+    let end = index
+    while (end < ops.length) {
+      if (ops[end]!.type !== ' ') {
+        end += 1
+        continue
+      }
+      // 两处改动之间隔了 6 行以上就断开成两个 hunk：中间那段上下文对读者没有价值。
+      let runEnd = end
+      while (runEnd < ops.length && ops[runEnd]!.type === ' ') runEnd += 1
+      if (runEnd - end > 6 && runEnd < ops.length) {
+        end += 3
+        break
+      }
+      end = runEnd
+    }
+    lines.push(`@@ -${expectedBefore[start]! + 1} +${actualBefore[start]! + 1} @@`)
+    for (let at = start; at < end; at += 1) lines.push(`${ops[at]!.type}${ops[at]!.text}`)
+    index = end
+  }
+  if (lines.length <= maxLines) return lines.join('\n')
+  return `${lines.slice(0, maxLines).join('\n')}\n…（差异共 ${lines.length} 行，已截断）`
+}
+
+/** golden 名字校验：拒绝绝对路径与 `..`，否则 `expectGolden('x', '../x')` 能写到仓库外。 */
+function goldenFileOf(name: string): { file: string; label: string } {
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw new TypeError('expectGolden：name 必须是非空字符串')
+  }
+  if (isAbsolute(name)) {
+    throw new Error(`expectGolden：name 不能是绝对路径（收到 ${JSON.stringify(name)}）`)
+  }
+  const normalized = name.replaceAll('\\', '/')
+  const segments = normalized.split('/')
+  if (segments.some((segment) => segment === '..' || segment === '')) {
+    throw new Error(`expectGolden：name 不能包含 ".." 或空路径段（收到 ${JSON.stringify(name)}）`)
+  }
+  const file = join(GOLDEN_DIR, normalized.endsWith('.txt') ? normalized : `${normalized}.txt`)
+  if (!isInside(file, GOLDEN_DIR)) {
+    throw new Error(`expectGolden：name 逃出了 golden 目录（收到 ${JSON.stringify(name)}）`)
+  }
+  return { file, label: relative(REPO_ROOT, file).replaceAll('\\', '/') }
+}
+
+/**
+ * golden 比对：把当前输出与 `tests/snapshots/golden/<name>.txt` 比。
+ *
+ * ## 为什么归一化只做这几件事
+ *
+ * golden 是「人眼要读的文本快照」（TUI 帧、CLI 输出），不是逐字节的序列化产物。
+ * 临时路径、时间戳、PID 每次运行都不同，不归一会让每条 golden 用例一跑就红；
+ * 但归一化过度（比如把所有数字都抹掉）会让 golden 失去发现真变化的能力。
+ * 所以只替换**确定性为「每次必然不同」**的三类东西，别的原样比。
+ *
+ * ## 更新模式
+ *
+ * `UPDATE_GOLDEN=1` 或 `opts.update` 时写盘并直接返回。写盘前同样归一化——
+ * 存进去的必须是归一化后的版本，否则下次比对永远对不上。
+ */
+export function expectGolden(actual: string, name: string, opts: ExpectGoldenOptions = {}): void {
+  if (typeof actual !== 'string') {
+    throw new TypeError('expectGolden：actual 必须是字符串')
+  }
+  const { file, label } = goldenFileOf(name)
+  const normalized = normalizeGolden(actual)
+  const update = opts.update === true || process.env.UPDATE_GOLDEN === '1'
+  if (update) {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${normalized}\n`, 'utf8')
+    return
+  }
+  if (!existsSync(file)) {
+    // 不存在时给出可执行的下一步，而不是一句「期望 undefined」。
+    throw new Error(`golden 不存在：${label}\n用 UPDATE_GOLDEN=1 重新生成（人工审一遍再提交）`)
+  }
+  const expected = normalizeGolden(readFileSync(file, 'utf8'))
+  if (normalized === expected) return
+  const diff = unifiedDiff(expected, normalized, label, '本次实际输出')
+  throw new Error(
+    `golden 不匹配：${label}\n` +
+      `  expected ${expected.split('\n').length} 行 / actual ${normalized.split('\n').length} 行\n` +
+      '  确认是有意改动后用 UPDATE_GOLDEN=1 重新生成，并人工审 diff。\n' +
+      diff,
+  )
+}
