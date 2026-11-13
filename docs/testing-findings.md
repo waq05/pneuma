@@ -39,6 +39,22 @@
 
 ## 二、行为与文档承诺不符（可能咬人）
 
+### F11 `web-search` 算出了带 key 的请求头，但从没传出去（功能实际不可用）
+
+- 文件：`src/packages/web-search/index.ts:222-231`
+- 现象：第 222 行算出 `const headers = … { authorization: 'Bearer ' + key } / { 'X-API-KEY': key }`，
+  第 230、231 行调 `search(provider, query, maxResults, signal)` 时**没有把它传进去**；
+  而 `search()` 内部的三家提供方一律 `postJson(url, {}, body, signal)`，请求头是空的
+- 判据：读 `search()` 签名（第 126 行）与三处 `postJson(..., {}, ...)`（第 137/156/166 行）；
+  `grep '\bkey\b'` 显示 `key` 只用于「有没有配」的判断与这段死掉的 headers
+- 影响：真 API 一律 401/403，联网搜索**一次都没成功过**。假 fetch 的测试也不会发现，
+  因为测试只断言 URL 与 body
+- 修法：`search()` 收一个 `headers` 参数，三处 `postJson` 把它带上；顺手给设置里的
+  「测试连接」那条（第 365 行）也传
+- 状态：C1 批迁移时发现，超出白名单没动。新测试**故意不断言 authorization 头**，
+  也不写成「预期没有这个头」——那会把缺陷固化成期望
+
+
 ### F7 `diff-text.ts` 的 hunk 头新侧起点错一，首行替换时给 0
 
 - 文件：`src/core/diff-text.ts:283`
@@ -90,7 +106,8 @@
 - 现状：测试按现状写（没把漏抹当期望），并在用例标题里写明「已知盲区」
 - 发现：同上（`src/core/redact.spec.ts`）
 
-> F10 是我认为唯一值得从「记录」升级成「尽快修」的一条：它不是显示问题，是把密钥发给第三方。
+> F10 与 F11 是我认为该从「记录」升级成「尽快修」的两条：F10 把密钥发给第三方，
+> F11 让联网搜索一次都没成功过。两条都不是显示问题。
 
 ### F5 `json-text.ts` 对 NaN / Infinity 返回字符串 `'null'`，不是 `null`
 
