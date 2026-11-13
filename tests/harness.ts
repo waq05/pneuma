@@ -719,6 +719,13 @@ export interface BootKernelOptions {
   providerBaseUrl: string
   /** 覆盖默认配置的顶层字段（providers 要整份给，不做深合并）。 */
   config?: Record<string, unknown>
+  /**
+   * 从一份已有会话接着起（对应 createKernel 的 esumeSessionPath）。
+   *
+   * 给「启动回填」这类用例用：不传就是新建会话，session.resumedStartup 永远是 false，
+   * 那条路径根本走不到。传了才验得到启动时读旧会话的行为。
+   */
+  resumeSessionPath?: string | null
 }
 
 /** 起好的真内核。 */
@@ -915,7 +922,7 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
   const kernelModule = (await import('@pneuma/runtime/host/kernel.js')) as {
     createKernel: (bootOptions: { config: DscCoreConfig; resumeSessionPath: string | null }) => Promise<unknown>
   }
-  const ctx = await kernelModule.createKernel({ config, resumeSessionPath: null })
+  const ctx = await kernelModule.createKernel({ config, resumeSessionPath: options.resumeSessionPath ?? null })
   const surface = ctx as unknown as KernelSurface
   const missing = [
     typeof surface.on === 'function' ? undefined : 'ctx.on',
