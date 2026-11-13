@@ -33,6 +33,12 @@
  *    改动记成「这一轮改了这些文件」，实时与重放对不上。
  * 6. **会起子进程或等落盘的用例不要用固定 `sleep`**，轮询到条件成立为止。固定等待在慢
  *    机器上必然出现假绿或假红。
+ * 7. **别读 `src` 侧的模块级缓存，读服务交出来的事实。** 混合平面下同一份缓存有两份实例
+ *    （src 一份、编进 lib 的一份）：`activeConfigFile()` 从 src 读会一直是陈旧值，
+ *    `allSpecs()` 在 src 那边看不到 lib 侧 `addExtraSpec` 加进去的条目。用
+ *    `ctx.settings.prefs()` / `ctx.commands.specs()` / `ctx.llm.provider` 这类。
+ * 8. **反向验证第一次绿不要当结论**。实测过同一命令第一跑 8 passed、立刻复跑 4 failed
+ *    （Vite 变换缓存）。复跑一次，或先清 `node_modules/.vite` 再判。
  *
  * @module dsc/tests/harness
  */
