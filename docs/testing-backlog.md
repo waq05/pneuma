@@ -32,6 +32,9 @@
 | B15 | P2-I / `readme` `release-notes` | README 的块形态/相对路径/锚点/数字口径；发版脚本的纯函数 | 被测对象是文档与 `scripts/*.mjs`，不是 `src/**` 产品代码 | 留 `scripts/`，P7 决定是否并进文档闸门（`check:style` 那类） |
 | B16 | P2-F / `permission-presets` | 6 条界面渲染断言：settings 与 ui-plugins 的 `derived` 出口、未识别值的兜底展示 | 要渲染设置页与插件页，集成层没有接缝 | ui project |
 | B17 | P2-F / `runtime-api` | 2 条代码形状断言：「纯函数零运行时依赖」「不在闭包里各写一份」 | 属实现写法，没有可观察行为；行为面已由真调 `runtime_api` 覆盖 | 不补（记录在案即可） |
+| B18 | P2-H / `boot-notices` | 「首次有『沙箱已就绪』提示、第二次抑制」 | 当时 harness 默认关沙箱，这趟根本不产生沙箱提示。**已复测：开沙箱能正常跑（6.7s，服务在位）**，所以这条可补 | 补进 `src/core/boot-notices.int.spec.ts`，预置 `plugins.json` 打开沙箱 |
+| B19 | P2-H / `empty-session` | 「选 read-only 后 `permissions.sandbox === 'read-only'`」 | 同上，沙箱停用时预设的沙箱半部落不了地 | 同上 |
+| B20 | P2-H / `compacting-status` | 壳按 `compactingSince` 画状态行（`ui.tsx` 源码正则） | 要渲组件 | ui project |
 
 ## 三、永远留在 Node 侧（不是欠账，是设计）
 
