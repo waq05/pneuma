@@ -591,6 +591,47 @@ try {
     String(action.value?.notice ?? '') === '配对码已生成（半小时内有效）',
     String(action.value?.notice),
   )
+  // 2026-11-12 报障：局域网开关关着时，二维码里编的是 `http://127.0.0.1:<端口>/`，
+  // 手机扫完只会报「网页暂时无法打开」，而弹窗写着「扫这个码即可连接」。
+  // 现在载荷必须把「手机通不通」如实带上，界面据此画码或画引导。
+  check(
+    '局域网关着时载荷如实报告 reach=local（不许再让手机去扫回环地址）',
+    pairData?.reach === 'local',
+    String(pairData?.reach),
+  )
+  // 「打开局域网访问并生成二维码」：把开关打开、等端口真在听，再给一张带局域网 IP 的码。
+  const lanAction = await hostInvoke(host, 'runSettingAction', ['remote', 'pair-code-lan'])
+  const lanData = lanAction.ok === true ? lanAction.value?.data : undefined
+  check(
+    '一键「打开局域网访问」之后出的是局域网地址，且标成 reach=lan',
+    lanAction.value?.ok === true &&
+      lanData?.reach === 'lan' &&
+      new RegExp(
+        `^http://(?!127\\.0\\.0\\.1)[0-9.]+:${String(remotePort)}/\\?code=${String(lanData?.code)}$`,
+      ).test(String(lanData?.url)),
+    JSON.stringify(lanData),
+  )
+  const lanValues = await hostInvoke(host, 'getSectionValues', ['remote'])
+  check(
+    '那一键真的把「局域网访问」写进了设置（不是只换了一张码）',
+    lanValues.ok === true && lanValues.value?.lan === true,
+    JSON.stringify(lanValues.value?.lan),
+  )
+  // 后面的断言按 `127.0.0.1` 的地址写（Webhook 的 url 那一处），把开关收回去再继续
+  await hostInvoke(host, 'setSettingValue', ['remote', 'lan', false])
+  await (async () => {
+    const deadline = Date.now() + 5_000
+    for (;;) {
+      try {
+        const probe = await httpCall('/')
+        if (probe.status === 200) return
+      } catch {
+        // 重启窗口里端口还没在听，接着等
+      }
+      if (Date.now() > deadline) throw new Error('等服务按 127.0.0.1 重新监听超时')
+      await sleep(50)
+    }
+  })()
   // 老路回归：动作返回 string 时照旧只给 notice，ok 分支不许凭空多出 data
   const revokeAllEarly = await hostInvoke(host, 'runSettingAction', ['remote', 'revoke-all'])
   check(
