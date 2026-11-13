@@ -73,13 +73,16 @@ function clockText(remainingMs: number): string {
 /**
  * 手机连接弹窗。
  *
- * @param props.data 宿主给的配对数据（码 / 可扫地址 / 过期时刻）
+ * @param props.data 宿主给的配对数据（码 / 可扫地址 / 过期时刻 / 手机可达性）
  * @param props.onRegenerate 再调一次同一个宿主动作，拿到新数据就原地替换
+ * @param props.onEnableLan 「手机连不上」那一键：让宿主打开局域网访问（必要时连同远程控制开关）
+ *   再加一张新码；老宿主没有这个动作时把原因写在弹窗里
  * @param props.onClose 关闭（X、Esc、点遮罩三条路都走它）
  */
 export function PairModal(props: {
   data: PairShareData
   onRegenerate(): Promise<PairRegenerateResult>
+  onEnableLan(): Promise<PairRegenerateResult>
   onClose(): void
 }): ReactNode {
   const [share, setShare] = useState<PairShareData>(props.data)
@@ -104,13 +107,22 @@ export function PairModal(props: {
 
   const remaining = Math.max(0, share.expiresAt - now)
   const expired = remaining <= 0
+  /**
+   * 手机能不能扫开：老宿主不给这个字段，按「能」处理（那时也确实没有「只听本机」这条
+   * 之外的可能）。`local` / `down` 两种状态下不画二维码——画一张手机必然打不开的图，
+   * 等于把「扫这个码即可连接」这句话再骗一遍（2026-11-12 报障）。
+   */
+  const reach = share.reach ?? 'lan'
+  const blocked = reach !== 'lan'
 
   // 画二维码。生成失败（地址长到库算不过来之类）只把这一格换成一句说明，
   // 配对码、地址、倒计时、重新生成照旧可用——弹窗不该因为一张图卡住。
+  // 手机上打不开的地址不画：那一格留给引导块。
   useEffect(() => {
     let alive = true
     setQr(null)
     setQrFailed(false)
+    if (blocked) return
     void QRCode.toDataURL(share.url, {
       width: QR_SIZE,
       margin: 1,
@@ -127,7 +139,7 @@ export function PairModal(props: {
     return () => {
       alive = false
     }
-  }, [share.url])
+  }, [share.url, blocked])
 
   // 焦点初落在弹窗内（落在卡本身而不是某颗按钮上，于是第一个 Tab 就去关闭钮），
   // 关掉时还给触发它的那颗按钮——与 platform/confirm 同一套。
@@ -184,12 +196,15 @@ export function PairModal(props: {
     )
   }
 
-  /** 重新生成：新数据原地替换，失败原因留在弹窗里（不关窗，用户还能再试一次）。 */
-  const regenerate = (): void => {
+  /**
+   * 「重新生成」与「打开局域网访问」共用这一条：成功就原地换数据，失败原因留在弹窗里
+   * （不关窗，用户还能再试一次）。
+   */
+  const run = (work: () => Promise<PairRegenerateResult>): void => {
     if (busy) return
     setBusy(true)
     setError('')
-    void props.onRegenerate().then((result) => {
+    void work().then((result) => {
       setBusy(false)
       if (result.ok === false) {
         setError(result.error)
@@ -198,6 +213,16 @@ export function PairModal(props: {
       setShare(result.data)
       setNow(Date.now())
     })
+  }
+
+  /** 重新生成：新数据原地替换，失败原因留在弹窗里（不关窗，用户还能再试一次）。 */
+  const regenerate = (): void => {
+    run(props.onRegenerate)
+  }
+
+  /** 手机连不上时那一键：宿主去打开局域网访问、等服务在听、再返回一张新码。 */
+  const enableLan = (): void => {
+    run(props.onEnableLan)
   }
 
   return createPortal(
@@ -236,12 +261,32 @@ export function PairModal(props: {
           </button>
         </div>
 
-        <div className={`pair-qr${expired ? ' expired' : ''}`}>
-          {qr !== null && <img className="pair-qr-img" src={qr} alt={t('settings.pair.qrAlt', { url: share.url })} />}
-          {qr === null && qrFailed === false && <div className="pair-qr-hold">{t('settings.pair.qrPending')}</div>}
-          {qrFailed && (
-            <div className="pair-qr-hold">{t('settings.pair.qrFailed')}</div>
+        <div className={`pair-qr${blocked ? ' pair-qr-blocked' : ''}${expired ? ' expired' : ''}`}>
+          {blocked ? (
+            <div className="pair-qr-guide">
+              <strong className="pair-qr-guide-title">
+                {reach === 'down' ? t('settings.pair.downTitle') : t('settings.pair.localTitle')}
+              </strong>
+              <span className="pair-qr-guide-body">
+                {reach === 'down' ? t('settings.pair.downBody') : t('settings.pair.localBody')}
+              </span>
+              <button type="button" className="btn-primary" disabled={busy} onClick={enableLan}>
+                {busy
+                  ? t('settings.pair.generating')
+                  : reach === 'down'
+                    ? t('settings.pair.openDown')
+                    : t('settings.pair.openLan')}
+              </button>
+              <span className="pair-qr-guide-risk">{t('settings.pair.openLanRisk')}</span>
+            </div>
+          ) : null}
+          {blocked === false && qr !== null && (
+            <img className="pair-qr-img" src={qr} alt={t('settings.pair.qrAlt', { url: share.url })} />
           )}
+          {blocked === false && qr === null && qrFailed === false && (
+            <div className="pair-qr-hold">{t('settings.pair.qrPending')}</div>
+          )}
+          {blocked === false && qrFailed && <div className="pair-qr-hold">{t('settings.pair.qrFailed')}</div>}
         </div>
 
         <div className={`pair-code-row${expired ? ' expired' : ''}`}>

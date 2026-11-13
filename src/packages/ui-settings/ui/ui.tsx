@@ -831,6 +831,7 @@ function GenericFields({
         <PairModal
           data={pair.data}
           onRegenerate={() => regeneratePair(pair.action)}
+          onEnableLan={() => regeneratePair('pair-code-lan')}
           onClose={() => {
             setPair(null)
           }}

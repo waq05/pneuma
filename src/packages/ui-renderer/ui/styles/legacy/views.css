@@ -12270,6 +12270,42 @@ body.resizing iframe {
   text-align: center;
 }
 
+/* 「手机连不上」的引导块（2026-11-12 报障：局域网开关关着，二维码里编的是 127.0.0.1，
+ * 手机扫完只会报「网页暂时无法打开」）。这一格不再画那张必然打不开的码，改成
+ * 「说清为什么 + 一颗一键开通的按钮 + 风险一句话」。 */
+.pair-qr-guide {
+  align-items: center;
+  display: grid;
+  gap: var(--dsc-sp-3);
+  justify-items: center;
+  max-width: 22rem;
+  padding: var(--dsc-sp-2) 0;
+  text-align: center;
+}
+
+.pair-qr-guide-title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+}
+
+.pair-qr-guide-body {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.5;
+}
+
+/* 风险那句压到最后、颜色最轻：它要看得见，但不该跟「怎么做」抢注意力 */
+.pair-qr-guide-risk {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.5;
+}
+
+/* 引导块比 220×220 的二维码矮一截：兜个最小高度，点完按钮换成真码时弹窗不跳高 */
+.pair-qr-blocked {
+  min-height: 220px;
+}
+
 .pair-code-row {
   align-items: center;
   display: flex;
