@@ -39,6 +39,59 @@
 
 ## 二、行为与文档承诺不符（可能咬人）
 
+### F7 `diff-text.ts` 的 hunk 头新侧起点错一，首行替换时给 0
+
+- 文件：`src/core/diff-text.ts:283`
+  `newStart: first.newLine ?? rows[range.from - 1]?.newLine ?? 0`
+- 现象（本机复现，走 `renderDiff(diffLines(...))`）：
+
+  | 输入 | 实际输出 | GNU diff |
+  | --- | --- | --- |
+  | `'a\nb\nc'` → `'A\nb\nc'`，上下文 1 | `@@ -1,2 +0,2 @@` | `@@ -1,2 +1,2 @@` |
+  | `'a\nb\nc'` → `'a\nB\nc'`，上下文 0 | `@@ -2 +1 @@` | `@@ -2 +2 @@` |
+
+- 严重性：`+0` 不是合法行号；审查面板与模型看到的 hunk 行号与正文自相矛盾。hunk 以删除行开头时必错
+- 修法：删除行开头时取「本段第一个有 `newLine` 的行」的行号；纯删除保持现状（已与 GNU 一致）
+- 现状：测试**故意没有钉住错值**，只钉正文与旧侧起点，避免把缺陷固化成期望
+- 发现：P1a 文本类 spec 批次（`src/core/diff-text.spec.ts`）
+
+### F8 `text-format.ts` 的注释与实现差一个斜杠
+
+- 文件：`src/core/text-format.ts:22,25`
+- 现象：注释写 `/a/b/c/d → …/c/d`，实现产出 `…c/d`
+- 影响：显示层面，一条短路径前缀少个斜杠
+- 现状：测试按现状钉住并注明差异；若判定是缺陷，改实现时同批改那条用例
+- 发现：同上
+
+### F9 `unified-diff.ts` 对 CRLF 的 diff 取错文件路径
+
+- 文件：`src/core/unified-diff.ts:98`，正则 `^a\/(.*) b\/(.*)$`
+- 现象（本机复现）：喂 `diff --git a/src/a.ts b/src/a.ts\r\n--- …` 这类 CRLF diff，`splitUnifiedDiffByFile` 返回的 `path` 是整行 `'a/src/a.ts b/src/a.ts'`
+- 原因：`(.*)` 不匹配 `\r`，而 `$` 要求整串结尾，于是整条匹配失败
+- 影响：`parseUnifiedDiff` 本身能吃 CRLF，只有按文件切段这一支坏
+- 修法：切出首行后 `.trim()` 再匹配，或正则改 `\r?$`
+- 发现：同上
+
+### F10 `redact.ts` 有四个真实的凭证形态漏抹（安全相关）
+
+- 文件：`src/core/redact.ts`
+- 实测未被抹除的输入：
+
+  | 形态 | 例子 |
+  | --- | --- |
+  | AWS Access Key ID | `AKIAIOSFODNN7EXAMPLE` |
+  | GitHub token | `ghp_xxxxxxxx…` |
+  | OpenAI 风格密钥的大写写法 | `SK-…`（现有第四条规则没带 `i` 标志，只认小写 `sk-`） |
+  | AWS secret 赋值形式 | `aws_secret_access_key=…` |
+  | 不带 `Bearer` 前缀的裸 JWT | `eyJhbGci….eyJzdWIi….sig` |
+
+- 影响：这些内容会原样进请求体发往模型提供方。前四种是真实常见形态
+- 修法：补规则，或给第四条加 `i`。**注意**：加了 `i` 之后 `sk-` 会匹配到更多正常文本，要连带跑一遍「不误伤」的用例
+- 现状：测试按现状写（没把漏抹当期望），并在用例标题里写明「已知盲区」
+- 发现：同上（`src/core/redact.spec.ts`）
+
+> F10 是我认为唯一值得从「记录」升级成「尽快修」的一条：它不是显示问题，是把密钥发给第三方。
+
 ### F5 `json-text.ts` 对 NaN / Infinity 返回字符串 `'null'`，不是 `null`
 
 - 文件：`src/core/json-text.ts`
@@ -70,6 +123,14 @@ F5  jsonText(NaN)           → string "null" （不是 null 值）
 
 F2、F3 是读代码直接可判（`isRecord(new Date())`、注释与实现的归属），未单独跑；
 F6 只在 Windows 上观察到这一支行为，未判定是 bug。
+
+F7、F9 另跑过一遍（2026-11-13，走 `lib/` 编译产物）：
+
+```
+renderDiff(diffLines('a\nb\nc', 'A\nb\nc', 1)) → @@ -1,2 +0,2 @@     ← 新侧起点 0
+renderDiff(diffLines('a\nb\nc', 'a\nB\nc', 0)) → @@ -2 +1 @@        ← 新侧少一
+splitUnifiedDiffByFile(CRLF 的 diff)          → path = 'a/src/a.ts b/src/a.ts'
+```
 
 ## 五、覆盖缺口（不是 bug，是没测到的面）
 
