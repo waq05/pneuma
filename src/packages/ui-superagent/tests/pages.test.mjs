@@ -132,6 +132,19 @@ test('清理：只有 ended 时可点，且点之前过二次确认', () => {
   passed += 1
 })
 
+// G1：候选收件箱的两颗钮只回传 id，判定结果留在宿主库里——界面转手那份 JSON 最容易
+// 改坏（少一个 rules 就会被引擎按「推断候选没有命中规则」拒掉）。
+test('待确认：接单 / 忽略只回传 id，不碰判定结果', () => {
+  const overview = read('../ui/overview.tsx')
+  for (const method of ['superagentAcceptCandidate', 'superagentIgnoreCandidate']) {
+    assert.ok(overview.includes(`'${method}'`), `overview.tsx 没有调 ${method}`)
+  }
+  assert.ok(overview.includes('[{ id }]'), '两个动作要统一传 { id }')
+  // 候选那一格是「可选」的：整格缺席时整块不画（与空数组区分开）。
+  assert.match(overview, /surface\.candidates === undefined \? null/)
+  passed += 1
+})
+
 after(() => {
   console.log('通过 ' + String(passed) + ' 项')
 })
