@@ -416,6 +416,15 @@
       "bundle": null
     },
     {
+      "file": "superagent",
+      "name": "Super Agent",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "superagent",
+      "bundle": null
+    },
+    {
       "file": "surfaces",
       "name": "快照片段注册表",
       "enabled": true,
@@ -607,6 +616,15 @@
     {
       "file": "ui-statusbar",
       "name": "状态栏（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-superagent",
+      "name": "Super Agent（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "builtin",
@@ -922,6 +940,11 @@
     },
     {
       "id": "statusbar",
+      "platform": "web",
+      "api": "^0.9.1"
+    },
+    {
+      "id": "superagent",
       "platform": "web",
       "api": "^0.9.1"
     },

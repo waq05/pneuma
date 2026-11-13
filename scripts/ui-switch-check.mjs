@@ -82,7 +82,12 @@ console.log('这一行真的存在（基础包 + 包的产物 + 界面产物）'
   check('这一行的 name 指到 @pneuma/ui-transcript', row?.name === '@pneuma/ui-transcript', String(row?.name))
   const pkgFile = new URL('../lib/node_modules/@pneuma/ui-transcript/package.json', import.meta.url)
   const manifest = JSON.parse(readFileSync(pkgFile, 'utf8'))
-  check('包的入口 exports["."] 指着 index.js', manifest.exports?.['.'] === './index.js', JSON.stringify(manifest.exports))
+  // 源清单写字符串 `"./index.js"` 时产物里就是字符串；写 dsh 的 `{types, default}` 时产物原样保留
+  // （`scripts/build-packages.mjs:147-159`：它把源 exports 铺在基础两条之上，并明说「只看 default」）。
+  // 所以判据是「入口指向 index.js」，不是「必须是字符串」。
+  const entry = manifest.exports?.['.']
+  const entryTarget = typeof entry === 'string' ? entry : entry?.default
+  check('包的入口 exports["."] 指着 index.js', entryTarget === './index.js', JSON.stringify(manifest.exports))
   check('包的 exports 里去掉了包内不存在的界面入口', manifest.exports?.['./client'] === undefined, JSON.stringify(manifest.exports))
   // 空 apply 也要能被 Loader 认成插件对象：dsh 形状（模块自身带 apply）是我们的第三种认法。
   const mod = await import(new URL('../lib/node_modules/@pneuma/ui-transcript/index.js', import.meta.url).href)
@@ -99,7 +104,7 @@ const initial = collectUiArtifactsForPlatform('web', { force: true })
 const total = initial.entries.length
 check('transcript 在产物表里', inTable(initial, 'transcript'))
 check('没有被停用的单元', initial.disabled.length === 0, JSON.stringify(initial.disabled))
-check('内置产物 21 个界面单元（19 个单元 + 布局 + 渲染器）', total === 21, String(total))
+check('内置产物 22 个界面单元（20 个单元 + 布局 + 渲染器）', total === 22, String(total))
 const initialGraph = composeUiBootGraph(host, toUiPluginRows(initial.entries), initial.disabled)
 check('transcript 在启动图里', inGraph(initialGraph, 'transcript'))
 check('启动图没有「被停用」段', initialGraph.disabled === undefined, JSON.stringify(initialGraph.disabled))
@@ -110,7 +115,7 @@ writeSwitch('ui-transcript', false)
 const off = collectUiArtifactsForPlatform('web')
 check('transcript 不在产物表里', !inTable(off, 'transcript'))
 check('disabled 报得出「它被停用了」', off.disabled.includes('transcript'), JSON.stringify(off.disabled))
-check('其余单元照旧（19 → 18）', off.entries.length === total - 1, String(off.entries.length))
+check('其余单元照旧（只少这一个）', off.entries.length === total - 1, String(off.entries.length))
 const offGraph = composeUiBootGraph(host, toUiPluginRows(off.entries), off.disabled)
 check('transcript 不在启动图里', !inGraph(offGraph, 'transcript'))
 check('启动图把它记进 disabled', (offGraph.disabled ?? []).includes('transcript'), JSON.stringify(offGraph.disabled))
@@ -134,27 +139,27 @@ const onGraph = composeUiBootGraph(host, toUiPluginRows(on.entries), on.disabled
 check('transcript 回到启动图', inGraph(onGraph, 'transcript'))
 check('整图 rev 与出厂态一致（内容没变）', onGraph.rev === initialGraph.rev, onGraph.rev + ' ≠ ' + initialGraph.rev)
 
-console.log('21 个单元逐个停用/启用')
+console.log('22 个单元逐个停用/启用')
 {
   const ids = initial.entries.map((entry) => entry.id).sort()
-  check('出厂态 21 个单元（逐个开关的前提）', ids.length === 21, String(ids.length))
+  check('出厂态 22 个单元（逐个开关的前提）', ids.length === 22, String(ids.length))
   const missed = []
   const collateral = []
   for (const id of ids) {
     writeSwitch('ui-' + id, false)
     const off = collectUiArtifactsForPlatform('web')
     if (inTable(off, id) || !off.disabled.includes(id)) missed.push(id)
-    if (off.entries.length !== 20) collateral.push(id + ':' + String(off.entries.length))
+    if (off.entries.length !== total - 1) collateral.push(id + ':' + String(off.entries.length))
   }
   check('每一个 ui-<id> 都能单独停掉（键写错就会漏）', missed.length === 0, missed.join(','))
   check('停一个只少一个（没有牵连别的单元）', collateral.length === 0, collateral.join(';'))
   writeSwitches(ids.map((id) => 'ui-' + id), false)
   const allOff = collectUiArtifactsForPlatform('web')
-  check('21 个全停：产物表为空', allOff.entries.length === 0, String(allOff.entries.length))
-  check('20 个全停：disabled 报满 20 个', allOff.disabled.length === ids.length, String(allOff.disabled.length))
+  check('22 个全停：产物表为空', allOff.entries.length === 0, String(allOff.entries.length))
+  check('22 个全停：disabled 报满 22 个', allOff.disabled.length === ids.length, String(allOff.disabled.length))
   writeSwitches(ids.map((id) => 'ui-' + id), true)
   const allOn = collectUiArtifactsForPlatform('web')
-  check('21 个全开：都回到产物表', allOn.entries.length === ids.length, String(allOn.entries.length))
+  check('22 个全开：都回到产物表', allOn.entries.length === ids.length, String(allOn.entries.length))
   const allOnGraph = composeUiBootGraph(host, toUiPluginRows(allOn.entries), allOn.disabled)
   check(
     '全开后整图 rev 与出厂态一致（内容没变）',
