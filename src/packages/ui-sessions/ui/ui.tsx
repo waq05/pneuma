@@ -207,10 +207,18 @@ function SessionList() {
   const page = useShellPage()
   /** 「插件」整页还有人报名没有：停用 ui-plugins 之后这颗钮不能再留着（点进去是空白主区）。 */
   const pluginPage = usePageEntryAvailable('plugins')
+  /**
+   * 当前整页还有人报名没有——对**任意**整页生效，不只 plugins。
+   *
+   * 为什么不能只给 plugins 写特判：每个界面包（skills、superagent……）都可能被单独停用，
+   * 停用之后主区留在一片空白上，只有点一条会话才回得来。判据是同一份启动图帧，
+   * 这里只是把「哪一页」从常量换成当前页。
+   */
+  const pageEntry = usePageEntryAvailable(page ?? '')
   useEffect(() => {
-    // 正停在这一页上时插件被停用：退回对话页，别把用户留在空白主区里。
-    if (!pluginPage && page === 'plugins') setShellPage(null)
-  }, [pluginPage, page])
+    // 正停在这一页上时它的界面包被停用：退回对话页，别把用户留在空白主区里。
+    if (page !== null && !pageEntry) setShellPage(null)
+  }, [pageEntry, page])
   const [fault, setFault] = useState<string | null>(null)
   /** 正在挑"从哪条消息分叉"（null = 没在挑）。 */
   const [forking, setForking] = useState<{ id: string; messages: string[] } | null>(null)

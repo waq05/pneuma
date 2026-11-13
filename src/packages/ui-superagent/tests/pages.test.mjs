@@ -1,5 +1,5 @@
 /**
- * `@pneuma/ui-superagent` 的页面级测试：钉「五个真页面接上去之后」仍然成立的静态事实。
+ * `@pneuma/ui-superagent` 的页面级测试：钉「六个真页面接上去之后」仍然成立的静态事实。
  *
  * 只测不渲染 React 的东西（与其它界面包的包级测试同一档）：字典键集、字面量取词的键、
  * 两个槽注册、页内信号的存放位置、五个写方法的入参形状、清理按钮的可用条件。
@@ -63,9 +63,10 @@ test('装配：侧栏 order 2、整页 order 30，页条目在组件体里比对
   passed += 1
 })
 
-test('页签：三页状态是 state.ts 的模块级信号，ui.tsx 挂上三个页面组件', () => {
+test('页签：四页状态是 state.ts 的模块级信号，ui.tsx 挂上四个页面组件', () => {
   const state = read('../ui/state.ts')
   // 页签必须活过整页卸载（app.tsx:477），所以不能是 useState。
+  assert.match(state, /export type SuperagentTab =[^\n]*'overview'/)
   assert.match(state, /createSignal<SuperagentTab>\('publish'\)/)
   assert.match(state, /const selectedSignal = createSignal<string \| null>\(null\)/)
   assert.match(state, /const highlightSignal = createSignal<string \| null>\(null\)/)
@@ -74,9 +75,11 @@ test('页签：三页状态是 state.ts 的模块级信号，ui.tsx 挂上三个
   assert.ok(!/import\s*\{[^}]*\buseState\b[^}]*\}\s*from\s*'react'/.test(state), 'state.ts 不该 import useState')
 
   const source = read('../ui/ui.tsx')
-  for (const name of ['PublishPage', 'TicketsPage', 'SettingsPage']) {
+  for (const name of ['OverviewPage', 'PublishPage', 'TicketsPage', 'SettingsPage']) {
     assert.ok(source.includes(name), `ui.tsx 没有挂 ${name}`)
   }
+  // 页签按钮与上面四个组件一一对应，少一个就是有页面进不去。
+  assert.equal((source.match(/role="tab"/g) ?? []).length, 4, 'ui.tsx 应有四个页签按钮')
   passed += 1
 })
 

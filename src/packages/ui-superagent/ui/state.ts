@@ -300,8 +300,8 @@ export function useNeedsYou(): number {
   return useHostSelector(readNeedsYou)
 }
 
-/** 页内三页。 */
-export type SuperagentTab = 'publish' | 'tickets' | 'settings'
+/** 页内四页。 */
+export type SuperagentTab = 'overview' | 'publish' | 'tickets' | 'settings'
 
 /** 当前页签：模块级，整页卸载后不跳回第一页。 */
 const tabSignal = createSignal<SuperagentTab>('publish')

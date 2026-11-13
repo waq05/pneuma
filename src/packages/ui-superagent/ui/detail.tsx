@@ -129,11 +129,15 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
   /** 请求编号：连着点两次刷新时，只认最后一次的响应。 */
   const requestRef = useRef(0)
 
-  const load = useCallback((): void => {
+  const load = useCallback((silent = false): void => {
     const token = requestRef.current + 1
     requestRef.current = token
-    setLoading(true)
-    setPeekError('')
+    // 静默刷新（自动轮询）不动 loading 与错误：转圈闪一下、或一次网络抖动把整块时间线
+    // 换成红字，都是打扰。手动点刷新时才报。
+    if (!silent) {
+      setLoading(true)
+      setPeekError('')
+    }
     void channel
       .invoke<TranscriptEntry[]>('superagentPeekSession', [{ id }])
       .then((list) => {
@@ -141,12 +145,12 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
         setEntries(Array.isArray(list) ? list : [])
       })
       .catch((error: unknown) => {
-        if (requestRef.current !== token) return
+        if (requestRef.current !== token || silent) return
         setEntries([])
         setPeekError(humanErrorText(error).text)
       })
       .finally(() => {
-        if (requestRef.current === token) setLoading(false)
+        if (requestRef.current === token && !silent) setLoading(false)
       })
   }, [channel, id])
 
@@ -158,6 +162,24 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
     load()
     // 只认工单 id：ticket 是每次渲染重新找出来的对象。
   }, [ticket === null, load])
+
+  /**
+   * 工单还在跑时自动重读时间线。
+   *
+   * 为什么只轮询 `working` / `idle`：已结束的工单转录不会再变，`person` 那几档在等人
+   * （worker 停着），轮询只会白读盘。5 秒是「人眼觉得跟得上」与「读盘次数」之间的折中：
+   * 详情页一次读的是执行会话的 jsonl，工单跑久了这个文件会很大。
+   */
+  const live = ticket !== null && (ticket.stage.stage === 'working' || ticket.stage.stage === 'idle')
+  useEffect(() => {
+    if (!live) return
+    const timer = setInterval(() => {
+      load(true)
+    }, 5000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [live, load])
 
   /** 停 / 重试 / 清理共用的执行壳：忙态、成功回执、失败原因都在这里收口。 */
   const act = (kind: 'stop' | 'retry' | 'clean', run: () => Promise<unknown>, okText: string): void => {
@@ -295,7 +317,7 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
             title={t('superagent.detail.timeline.refresh')}
             aria-label={t('superagent.detail.timeline.refresh')}
             disabled={loading}
-            onClick={load}
+            onClick={() => { load() }}
           >
             <IconRefresh size={16} />
           </button>
