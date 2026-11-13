@@ -53,3 +53,4 @@
 | --- | --- | --- | --- |
 | K1 | `check-core.mjs` 全量跑两遍都是 121/122 | 失败的是 `scripts/panel-prefs-test.mjs`，退出码 `0xC0000409`（进程崩溃，非断言失败）；单独跑 41/41 全绿。runner 自己在结尾也抛 libuv 断言 `!(handle->flags & UV_HANDLE_CLOSING)` | 旧体系回归证据只能算「121 条确认通过 + 1 条环境崩溃」。不是本次改动引起（本次没碰 src 逻辑），但没有第二台机器对照 |
 | K2 | `src/packages/superagent/tests/executor.test.mjs` 在 `check:plugin` 跑批时红过一次 | 断言「会话文件应在 start 之后落盘」；单独连跑三次全绿 | 既有时序不稳。它已随 119 条进 PR 门，会表现为偶发红。设计 P6 的 flake 治理有了第一个具体对象 |
+| K3 | 并行代理共用一个 git index，早期提交卷入了别人的暂存文件 | `b716504d`（agent）里带了别人的 `skeleton.test.mjs` 删除；`05e0bb42`（tools）里带了六个包的纯重命名（0 内容改动） | 终点状态正确（文件最终都在该在的位置），只是这两个 commit 的边界不干净。原因是 `git add` 与 `git commit` 之间别人也 `add` 了。后续统一改用 `git commit --only -- <路径>`，不再发生。要不要改写这两个 commit 的历史，等全部阶段结束后再定 |
