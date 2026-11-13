@@ -145,7 +145,7 @@ export function createSuperagentHealth(probe: SuperagentHealthProbe): HealthChec
           ...base,
           status: 'warn',
           summary: `${String(running.orphaned)} 张工单卡在 running，进程里没有 worker`,
-          fix: '重启宿主会触发恢复：这些工单会被自动接续（起新分配、复用工作树）；也可以对单张用 /sa retry 重派',
+          fix: '重启宿主会触发恢复：还没报结论的单会被自动接续；报过失败或卡住的单要人按 /sa retry 继续',
         }
       }
       return { ...base, status: 'ok', summary: '正常（库可写、锁空着、没有卡住的工单）' }

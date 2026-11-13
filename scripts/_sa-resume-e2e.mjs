@@ -162,10 +162,19 @@ async function startHost() {
   return { proc, stderr, invoke: send }
 }
 
-/** 硬杀：`taskkill /F /T` 连子进程一起，模拟断电而不是优雅退出。 */
+/**
+ * 硬杀：模拟断电而不是优雅退出。
+ *
+ * Windows 上要 `taskkill /F /T` 连子进程一起收；POSIX 上直接 SIGKILL 进程组
+ * （`detached` 没开，所以只杀自己这一个进程也够用）。
+ */
 function killHard(proc) {
   if (proc?.pid === undefined || proc.exitCode !== null) return
-  spawnSync('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { stdio: 'ignore' })
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { stdio: 'ignore' })
+    return
+  }
+  try { proc.kill('SIGKILL') } catch { /* 已经退了 */ }
 }
 
 /** 等某个条件成立；返回是否等到。 */

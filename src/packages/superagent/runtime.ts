@@ -288,7 +288,7 @@ export class SuperagentRuntime {
   }
 
   /**
-   * 启动恢复：扫一遍工单，把「上次宿主崩在中间」留下的两种状态各自收口。
+   * 启动恢复：扫一遍工单，把「上次宿主崩在中间」留下的三种状态各自收口。
    *
    * 判据只有一条：**库里说最新分配还在跑，进程里却没有对应 worker**。
    *   - `pending`：还没派出去就崩了 → 重新入队（`executor.start`，它会按「工单 + 分配」去重）；
@@ -298,9 +298,9 @@ export class SuperagentRuntime {
    *   - `ended`：领域已经收尾，一律不碰。
    *
    * **不判失败**：DSC 的 worker 是进程内的 MiniAgent，宿主一死会话就没了，重开一份新分配
-   * 是唯一能继续的路；判失败只会把一张还能干的单推给人。报过 `failed` / `blocked` 的单除外
-   * ——那是 worker 明确交给人的结论（失败原因、要人拍板的问题），重跑会把结论盖掉，交给人
-   * 用 `/sa retry` 决定。
+   * 是唯一能继续的路；判失败只会把一张还能干的单推给人。至于「worker 已经报了结论、之后
+   * 没人接话」的单（失败原因、要人拍板的问题），领域自己会保留原分配，这里不算接续、也不发
+   * 「已自动接续」的通知——那份结论留在界面上等人处理。
    *
    * **不在这里建工作树**：新分配的派工走执行器自己的 `start → launch → ensureWorktree`，
    * 与正常派工同一条路；`ensureWorktree` 本身幂等（同名树在就复用，`adapters/worktree.ts:192`），
@@ -332,12 +332,13 @@ export class SuperagentRuntime {
       }
       // 下面是 running：进程里还有 worker 的说明这次不是崩溃残留（例如刚恢复完又重进这里）。
       if (live.has(ticket.id)) continue
-      // 报过 failed / blocked 的不接续：那份结论是 worker 交给人的，重跑会把它盖掉。
-      const reported = assignment.report?.state
-      if (reported === 'failed' || reported === 'blocked') continue
       try {
+        // 该不该换分配，交给领域判（`core/assignments.ts:83-92`）：它只在「最新报告是
+        // waiting / ready / blocked / failed，且之后没有新输入投给 worker」时才保留原分配。
+        // 在适配层另写一份更粗的判据（比如「报过 failed 就不接续」）会漏掉「报了失败、
+        // 人又说了一句、worker 正跑着」这个窗口，留下既不能接续、也不能重试的卡单。
         this.engine.assignmentInterrupted(ticket.id, assignment.id)
-        // 领域也可能判定「这一单本来就在等人」而不换分配；只把真换了分配的算作接续。
+        // 领域判定「这一单本来就在等人」时不换分配；只把真换了分配的算作接续。
         if (latestAssignment(this.repos.tickets.get(ticket.id) ?? ticket)?.id === assignment.id) continue
         resumed.push(ticket.id)
         this.notifyRecovered(ticket, assignment.id)

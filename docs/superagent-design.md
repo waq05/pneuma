@@ -632,10 +632,16 @@ export interface SuperagentSurface {
 库是唯一真相。重启后：
 
 - `pending` 工单 → 重新派工；
-- `running` 且没有对应 worker → 起新 Assignment，系统提示词里带一条「上次中断了，先看目录和 git 状态」；
-- 报过 `failed` / `blocked` 的 → **不接续**：那是 worker 明确交给人的结论（失败原因、要人拍板
-  的问题），自动重跑会把结论盖掉，留给人用 `/sa retry` 决定；
+- `running` 且没有对应 worker → 起新 Assignment，并把一条「上次中断了，先看工作树和 git 状态」
+  的提示词作为第一条输入投给新 worker；
+- 最新报告是 `failed` / `blocked`、且之后没有再收到人话的 → **保留原分配，不接续**：那是 worker
+  交给人的结论（失败原因、要人拍板的问题），自动重跑会把结论盖掉，等人按 `/sa retry` 决定；
 - `ended` 工单 → 不动，目录保留。
+
+**接不接续由领域判**（`core/assignments.ts:83-92` 的 `interrupted`），适配层不另写一份判据：它只在
+「最新报告是 `waiting` / `ready` / `blocked` / `failed`，且之后没有新输入投给 worker」时保留原分配，
+其余一律换新分配。适配层再写一份更粗的规则（例如「报过 `failed` 就跳过」）会漏掉「报了失败、人又
+说了一句、worker 正跑着」这个窗口，留下既不能接续、也不能重试的卡单。
 
 为什么是「起新 Assignment」而不是「把会话接回来」：DSC 的 worker 是进程内的 MiniAgent，宿主一死
 会话就没了。新分配的工作树与分支按工单 id 复用（`ensureWorktree` 幂等、`worktreeNameOf` 定名），
@@ -643,8 +649,11 @@ export interface SuperagentSurface {
 
 ### 9.4 超时
 
-单个 worker 回合超过设置的上限（默认 30 分钟）→ `agent.cancel()`，工单记 `failed`、原因写
+工单从建单到现在超过设置的上限（默认 30 分钟）→ `agent.cancel()`，工单记 `failed`、原因写
 「超过 N 秒未完成，已取消」，面板能看到，人按 `/sa retry` 继续。
+
+（判据落在工单的 `createdAt` 上，不是「单个回合」的时长：`runtime.ts` 的 `expireOverdue()` 每拍
+拿 `now - createdAt` 比上限。想在回合级别计时，得先有回合开始的时刻，现在库里没有这个字段。）
 
 **与最初设计不同（原写「工单报 `waiting`」）**，理由是 `waiting` 在这个适配器里没有出口：
 
@@ -709,7 +718,7 @@ export interface SuperagentSurface {
 
 ## 12. 开发规划
 
-八步，每步都能独立验收。**前一步没验收通过，不开下一步。**
+八步，每步都能独立验收。**前一步没验收通过，不开下一步。**（P1 的崩溃接续是第 9 步，记在 §15。）
 
 ### 第 1 步：包骨架（半天）
 
@@ -1018,8 +1027,13 @@ P1 的出口条件是「杀宿主重启后工单自动接续，不重复建分�
 
 产出：`runtime.recover()` 对「`running` 且没有 worker」的单改走 `engine.assignmentInterrupted`
 （`core/assignments.ts:83-92`，上游本来就有，之前一直没接线）；`RecoveryReport.failed` 改名
-`resumed`；通知文案改成「已自动接续」；体检项里那条修法提示同步改口。报过 `failed` /
-`blocked` 的单仍然不接续，理由写在 §9.3。
+`resumed`；通知文案改成「已自动接续」；体检项里那条修法提示同步改口。
+
+**接不接续交给领域判，适配层不另写判据**。最初我在 `recover()` 里加了一条「报过 `failed` /
+`blocked` 就跳过」，审查时用临时库复现出它的漏账：那张单会被留成 `running` 且没有 worker，
+`stage` 报 `working`、`canRetry` 因为「失败之后来了人话」变 false，人既等不到接续也不能重试。
+删掉这条粗判据后，领域只在「报告之后没人接话」时保留原分配，其余换新分配——这条判据的归属
+写在 §9.3。
 
 **真机验收**：`node scripts/_sa-resume-e2e.mjs`（新脚本，下划线前缀不进测试电池；临时 HOME、
 临时 git 仓库、假模型端点、真宿主进程，通道走宿主 stdio 协议）：

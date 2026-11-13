@@ -229,6 +229,60 @@ test('running 却没有 worker：起新分配接续，提示词写明上次中�
   })
 })
 
+// ── 2b. 崩溃恢复：接续之后又崩一次 ──────────────────────────────────────────
+
+test('接续之后又崩一次：再起第三份分配，两份旧分配都记为宿主重启', () => {
+  const { executor, calls } = fakeExecutor()
+  withRuntime('orphan-twice', { executor }, ({ runtime, store }) => {
+    const id = runtime.publish({ title: '连崩两次的单', body: '正文' })
+    // 第一次崩：最新分配停在 running。
+    editTicket(store, id, (ticket) => { ticket.assignments.at(-1).state = 'running' })
+    assert.deepEqual(runtime.recover().resumed, [id])
+
+    // 第二次崩：接续出来的那份分配也停在 running（它跑起来之后宿主又死了）。
+    editTicket(store, id, (ticket) => { ticket.assignments.at(-1).state = 'running' })
+    calls.start.length = 0
+    assert.deepEqual(runtime.recover().resumed, [id], '第二份分配也该被接续')
+
+    const ticket = readTicket(store, id)
+    assert.equal(ticket.assignments.length, 3, '两次崩溃两份新分配')
+    assert.deepEqual(
+      ticket.assignments.slice(0, 2).map((item) => item.endedReason),
+      ['hostRestarted', 'hostRestarted'],
+      '两份被换掉的分配都写清是宿主重启',
+    )
+    assert.equal(ticket.assignments.at(-1).state, 'pending')
+    assert.equal(store.handle.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 2, '每次崩溃各一条通知')
+  })
+})
+
+// ── 2c. 崩溃恢复：报过 failed，但之后人又接了一句 ──────────────────────────
+
+test('报过 failed 但之后人又接了一句：仍然接续，不留成没人推进的 working', () => {
+  const { executor } = fakeExecutor()
+  withRuntime('orphan-after-failed', { executor }, ({ runtime, store }) => {
+    const id = runtime.publish({ title: '失败后又说了句', body: '正文' })
+    // 现场：worker 报了一轮 failed，人回了一句话、那条消息已经投给 worker（deliveredAt 在
+    // 报告之后），worker 正跑着——宿主就在这时崩了。
+    // 这种单既不满足「等人」（人已经接过话），也不满足「可重试」（`canRetry` 只认等人），
+    // 只有接续一条路；适配层若按「报过 failed 就跳过」处理，它会永远停在 working。
+    editTicket(store, id, (ticket) => {
+      const latest = ticket.assignments.at(-1)
+      latest.state = 'running'
+      latest.report = { state: 'failed', summary: '第一轮失败', at: ticket.createdAt }
+      const deliveredAt = new Date(Date.parse(ticket.createdAt) + 1_000).toISOString()
+      latest.deliveredAt = deliveredAt
+      ticket.inputs.push({ id: 'human-after-failed', kind: 'trigger', triggerId: 'trg-x', at: deliveredAt })
+    })
+
+    const report = runtime.recover()
+    assert.deepEqual(report.resumed, [id], '人已经接过话的单必须接续')
+    const ticket = readTicket(store, id)
+    assert.equal(ticket.assignments.length, 2)
+    assert.equal(ticket.assignments.at(-1).state, 'pending')
+  })
+})
+
 // ── 3. 崩溃恢复：pending 重新入队 ───────────────────────────────────────────
 
 test('pending 的工单：恢复时重新入队派工，不自己建工作树', () => {
