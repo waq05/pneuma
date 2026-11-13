@@ -35,7 +35,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { DSC_HOME } from '@pneuma/runtime/core/path-policy.js'
 import { DEFAULT_CONFIG_FILE } from '@pneuma/runtime/core/config-store.js'
 import { isInvokableMethod } from '@pneuma/runtime/core/host-methods.js'
-import { validateNativeCall } from '@pneuma/runtime/core/native-bridge.js'
+import { validateNativeCall, NATIVE_BRIDGE_VERSION } from '@pneuma/runtime/core/native-bridge.js'
 import { isUiMethod } from '@pneuma/runtime/core/ui-methods.js'
 import { bootKernel, fakeLLM, type BootedKernel, type FakeLLM } from '../../tests/harness.js'
 
@@ -217,5 +217,10 @@ describe('④ 接线：桥放行、界面通道排除、宿主方法白名单', 
 
   test('宿主方法白名单里有 setConfigFile（桌面端调得到）', () => {
     expect(isInvokableMethod('setConfigFile')).toBe(true)
+  })
+
+  test('桥的协议版本没涨（加操作不涨，改语义才涨）', () => {
+    // 这一条钉的是协议契约本身：换文件只是加了一条 op，版本号仍是 3。
+    expect(NATIVE_BRIDGE_VERSION).toBe(3)
   })
 })
