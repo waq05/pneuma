@@ -134,8 +134,17 @@ export function tempHome(prefix = 'dsc-test-'): { home: string; restore: () => v
 
 /** `fakeLLM` 的剧本与钩子。 */
 export interface FakeLLMOptions {
-  /** 每轮返回什么：字符串 = 纯文本回复；对象 = 一次工具调用。 */
-  turns: Array<string | { toolCall: { name: string; args: unknown } }>
+  /**
+   * 每轮返回什么：
+   * - 字符串 = 纯文本回复
+   * - { toolCall } = 一次工具调用
+   * - { reasoning, content? } = 先一段 easoning_content（thinking 行）再正文
+   */
+  turns: Array<string | { toolCall: { name: string; args: unknown } } | { reasoning: string; content?: string }>
+  /** 非 2xx 的应答：整份剧本都用这个状态码回（错误体是 { error }）。 */
+  status?: number
+  /** 额外响应头，例如 x-request-id；与 SSE 的 content-type 合并，同名以后者为准。 */
+  headers?: Record<string, string>
   /** 每次请求到达时的钩子，用于断言请求体；标题请求的 turn 是 0。 */
   onRequest?: (body: unknown, turn: number) => void
   /** 自定义「这是标题请求」的判据；给了就**替换**默认判据，而不是叠加。 */
@@ -162,7 +171,11 @@ interface SseChunk {
 }
 
 /** 剧本校验后的内部形状：字符串轮直接摊平成正文增量。 */
-type NormalizedTurn = { content: string } | { toolCall: { name: string; args: unknown } }
+type NormalizedTurn =
+  | { content: string }
+  | { toolCall: { name: string; args: unknown } }
+  /** 带思考过程的轮：先 reasoning_content 再正文，真模型就是这么两段下来的。 */
+  | { reasoning: string; content: string }
 
 /**
  * SSE 帧。协议逐字节照抄 `scripts/todo-reminder-test.mjs:154-163` 的抓包：
@@ -269,7 +282,18 @@ function normalizeTurns(input: unknown): NormalizedTurn[] {
       stringifyArgs(args, where)
       return { toolCall: { name, args } }
     }
-    throw new Error(`${where} 既不是字符串，也不是 { toolCall: { name, args } }`)
+    if (turn !== null && typeof turn === 'object' && 'reasoning' in turn) {
+      // 思考段：真模型的 thinking 行就是从 `reasoning_content` 增量拼出来的，
+      // 剧本里不给这一段，transcript 的 thinking 行永远不会出现，相关断言要么恒空要么测不到。
+      const reasoning = (turn as { reasoning?: unknown }).reasoning
+      if (typeof reasoning !== 'string' || reasoning.trim() === '') {
+        throw new Error(`${where} 的 reasoning 必须是非空字符串`)
+      }
+      const content = (turn as { content?: unknown }).content ?? ''
+      if (typeof content !== 'string') throw new Error(`${where} 的 content 必须是字符串`)
+      return { reasoning, content }
+    }
+    throw new Error(`${where} 既不是字符串，也不是 { toolCall: { name, args } } 或 { reasoning, content }`)
   })
 }
 
@@ -281,6 +305,9 @@ interface FakeServerOptions {
   isTitleRequest: (body: unknown) => boolean
   /** 请求到达钩子。 */
   onRequest?: (body: unknown, turn: number) => void
+  /** 成功应答的状态码与额外响应头（缺省 200 + 只有 content-type）。 */
+  status?: number
+  headers?: Record<string, string>
   /** 给出这一轮的应答；返回错误形态表示「这次请求不该被正常应答」。 */
   respond: (body: unknown, turn: number) => SseChunk[] | { status: number; message: string }
 }
@@ -300,6 +327,9 @@ async function startFakeServer(options: FakeServerOptions): Promise<FakeLLM> {
   const sockets = new Set<Socket>()
   let requestCount = 0
   let closed = false
+  /** 成功应答的状态码与响应头：默认 200 + 只有 content-type，可由调用方覆盖。 */
+  const successStatus = options.status ?? 200
+  const successHeaders = options.headers ?? {}
 
   const server = createServer((request, response) => {
     const chunks: Buffer[] = []
@@ -334,7 +364,7 @@ async function startFakeServer(options: FakeServerOptions): Promise<FakeLLM> {
           fail(400, `${options.label}：onRequest 在标题请求上抛错（${errorText(error)}）`)
           return
         }
-        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.writeHead(successStatus, { 'content-type': 'text/event-stream', ...successHeaders })
         response.end(sseBody([{ content: TITLE_REPLY }]))
         return
       }
@@ -367,7 +397,7 @@ async function startFakeServer(options: FakeServerOptions): Promise<FakeLLM> {
         fail(reply.status, reply.message)
         return
       }
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.writeHead(successStatus, { 'content-type': 'text/event-stream', ...successHeaders })
       response.end(sseBody(reply))
     })
   })
@@ -437,12 +467,20 @@ export async function fakeLLM(options: FakeLLMOptions): Promise<FakeLLM> {
   const isTitleRequest = options.isTitleRequest ?? isTitleRequestByPrompt
   return startFakeServer({
     label: 'fakeLLM',
+    ...(options.status === undefined ? {} : { status: options.status }),
+    ...(options.headers === undefined ? {} : { headers: options.headers }),
     isTitleRequest,
     ...(options.onRequest === undefined ? {} : { onRequest: options.onRequest }),
     respond(_body, turn) {
       // 用完继续用最后一条：探针里大多数回合是同一句「收到」，逐个列出来只会淹没重点。
       const turnIndex = Math.min(turn - 1, turns.length - 1)
       const scripted = turns[turnIndex]!
+      if ('reasoning' in scripted) {
+        // 两段分开送：先 reasoning_content 再正文，与真模型的到达顺序一致。
+        const chunks: SseChunk[] = [{ reasoning: scripted.reasoning }]
+        if (scripted.content !== '') chunks.push({ content: scripted.content })
+        return chunks
+      }
       if ('content' in scripted) return [{ content: scripted.content }]
       return [
         {

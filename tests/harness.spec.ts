@@ -426,3 +426,60 @@ describe('expectGolden', () => {
     expect(() => expectGolden('x', '')).toThrow(/非空字符串/)
   })
 })
+
+describe('fakeLLM：状态码、响应头、思考段', () => {
+  test('status 能让整份剧本回非 2xx（验超时与重试那批要用）', async () => {
+    const llm = await fakeLLM({ turns: ['不该被当成正常回复'], status: 503 })
+    try {
+      const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      })
+      expect(response.status).toBe(503)
+    } finally {
+      await llm.close()
+    }
+  })
+
+  test('headers 能把 x-request-id 这类响应头带出来', async () => {
+    const llm = await fakeLLM({ turns: ['ok'], headers: { 'x-request-id': 'req-fake-1' } })
+    try {
+      const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      })
+      expect(response.headers.get('x-request-id')).toBe('req-fake-1')
+      // content-type 不能被覆盖：少了它，流式解析整条走错分支。
+      expect(response.headers.get('content-type')).toContain('text/event-stream')
+    } finally {
+      await llm.close()
+    }
+  })
+
+  test('{ reasoning, content } 先送 reasoning_content 再送正文', async () => {
+    const llm = await fakeLLM({ turns: [{ reasoning: '先想一下', content: '结论' }] })
+    try {
+      const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      })
+      const text = await response.text()
+      const reasoningAt = text.indexOf('reasoning_content')
+      const contentAt = text.indexOf('"content"')
+      expect(reasoningAt).toBeGreaterThan(-1)
+      expect(contentAt).toBeGreaterThan(reasoningAt)
+    } finally {
+      await llm.close()
+    }
+  })
+
+  test('reasoning 为空串要报可读的错，不许静默当成纯正文轮', async () => {
+    // `fakeLLM` 是 async：校验失败是 rejected promise，不是同步抛。
+    // 写成 `expect(() => fakeLLM(...)).toBeTruthy()` 会恒真（Promise 永远 truthy），
+    // 那等于没测——这里用 rejects 才真的等到校验那一步。
+    await expect(fakeLLM({ turns: [{ reasoning: '  ', content: 'x' }] })).rejects.toThrow(/reasoning 必须是非空字符串/)
+  })
+})
