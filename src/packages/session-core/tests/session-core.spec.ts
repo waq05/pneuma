@@ -1,69 +1,63 @@
 /**
- * `@pneuma/session-core` 的包级测试：钉库包身份、桶文件转出与产物可加载。
- * 产物那条读 lib/packages/session-core/index.js（先 pnpm run build）；还没构建时明确打印
- * 「待构建」并跳过，不伪造通过。单独跑：node src/packages/session-core/tests/session-core.test.mjs
+ * `@pneuma/session-core` 的包级测试：钉库包身份、桶文件转出与入口可加载。
+ *
+ * 「逐行转出」这条原来读 `index.ts` 文本找 `export * from './x.js'`，现在改成
+ * 真的 import 每个模块与桶文件，逐键比对「模块导出的每个值都能从桶文件拿到、
+ * 且是同一个绑定」——桶文件漏转出会当场红，改引号/缩进不会。
+ *
+ * @module @pneuma/session-core/tests
  */
-import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { after, test } from 'node:test'
+import { expect, test } from 'vitest'
+import * as compact from '../compact.js'
+import * as hooks from '../hooks.js'
+import * as loop from '../loop.js'
+import * as modes from '../modes.js'
+import * as prompt from '../prompt.js'
+import * as barrel from '../index.js'
 
-const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
+const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const pkg = JSON.parse(read('../package.json'))
-const MODULES = ["hooks","compact","prompt","loop","modes"]
-let passed = 0
-let skipped = 0
+const MODULES = ['hooks', 'compact', 'prompt', 'loop', 'modes'] as const
+const modules: Record<(typeof MODULES)[number], Record<string, unknown>> = { hooks, compact, prompt, loop, modes }
 
 test('库包身份：private + pneuma.library，没有装配行', () => {
-  assert.equal(pkg.name, '@pneuma/session-core')
-  assert.equal(pkg.version, JSON.parse(read('../../../../package.json')).version)
-  assert.equal(pkg.private, true)
-  assert.equal(pkg.type, 'module')
-  assert.equal(pkg.pneuma.library, true)
-  assert.equal(pkg.pneuma.bundle, undefined)
-  assert.ok(!existsSync(new URL('../cordis.patch.yml', import.meta.url)), '库包不该有 cordis.patch.yml')
-  passed += 1
+  expect(pkg.name).toBe('@pneuma/session-core')
+  expect(pkg.version).toBe(JSON.parse(read('../../../../package.json')).version)
+  expect(pkg.private).toBe(true)
+  expect(pkg.type).toBe('module')
+  expect(pkg.pneuma.library).toBe(true)
+  expect(pkg.pneuma.bundle).toBeUndefined()
+  expect(existsSync(new URL('../cordis.patch.yml', import.meta.url))).toBe(false)
 })
 
 test('exports 的模块子路径键与目标一字不差', () => {
-  assert.equal(pkg.exports['.'].default, './index.js')
-  assert.equal(pkg.exports['./package.json'], './package.json')
-  for (const name of MODULES) assert.equal(pkg.exports[`./${name}.js`], `./${name}.js`)
-  passed += 1
+  expect(pkg.exports['.'].default).toBe('./index.js')
+  expect(pkg.exports['./package.json']).toBe('./package.json')
+  for (const name of MODULES) expect(pkg.exports[`./${name}.js`]).toBe(`./${name}.js`)
 })
 
-test('index.ts 逐行转出全部模块，源码文件都在包里', () => {
-  const entry = read('../index.ts')
+test('桶文件转出全部模块，且拿到的是同一个绑定', () => {
   for (const name of MODULES) {
-    assert.ok(entry.includes(`export * from './${name}.js'`), `index.ts 没转出 ${name}.js`)
-    assert.ok(existsSync(new URL(`../${name}.ts`, import.meta.url)), `${name}.ts 不在包里`)
+    expect(existsSync(new URL(`../${name}.ts`, import.meta.url))).toBe(true)
+    const entries = Object.entries(modules[name])
+    expect(entries.length).toBeGreaterThan(0)
+    for (const [key, value] of entries) {
+      expect(barrel[key as keyof typeof barrel], `桶文件没转出 ${name}.ts 的 ${key}`).toBe(value)
+    }
   }
-  passed += 1
 })
 
 test('README 两段都在', () => {
   const text = read('../README.md')
-  assert.match(text, /^## Model Experience/m)
-  assert.match(text, /^## Known Limitations/m)
-  passed += 1
+  expect(text).toMatch(/^## Model Experience/m)
+  expect(text).toMatch(/^## Known Limitations/m)
 })
 
-test('lib 产物能加载，且至少导出函数或常量', async () => {
-  const url = new URL('../../../../lib/packages/session-core/index.js', import.meta.url)
-  if (!existsSync(url)) {
-    skipped += 1
-    console.log('待构建：lib/packages/session-core/index.js 还没生成（主控 pnpm run build 后复跑本项）')
-    return
-  }
-  const mod = await import(url.href)
-  const values = Object.values(mod)
-  assert.ok(values.length > 0, '产物没有任何导出')
-  assert.ok(
+test('入口能加载，且至少导出函数或常量', () => {
+  const values = Object.values(barrel)
+  expect(values.length).toBeGreaterThan(0)
+  expect(
     values.some((value) => typeof value === 'function' || (typeof value === 'object' && value !== null)),
-    '产物里没有函数或常量导出',
-  )
-  passed += 1
-})
-
-after(() => {
-  console.log(`通过 ${String(passed)} 项${skipped > 0 ? `，待构建 ${String(skipped)} 项（见上方日志）` : ''}`)
+  ).toBe(true)
 })
