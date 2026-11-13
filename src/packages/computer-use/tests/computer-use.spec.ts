@@ -10,6 +10,7 @@
  * @module @pneuma/computer-use/tests
  */
 import { readFileSync } from 'node:fs'
+import type { ChatContentPart, ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { expect, test } from 'vitest'
 import { canonicalAction } from '../desktop-control.js'
 import { computerUsePlugin, dropStaleScreenshots, LOOK_ACTIONS } from '../index.js'
@@ -70,7 +71,7 @@ test('只读动作表不含动手动作，窗口别名归一', () => {
 
 // 旧截图：只留最新一张，旧的那张换成一句文本说明；非工具消息原样返回。
 test('旧截图只留最新一张，旧的换成一句说明', () => {
-  const shot = (mark: string): { role: string; content: Array<Record<string, unknown>> } => ({
+  const shot = (mark: string): ChatMessage => ({
     role: 'tool',
     content: [
       { type: 'image_url', image_url: { url: 'data:x' } },
@@ -78,8 +79,9 @@ test('旧截图只留最新一张，旧的换成一句说明', () => {
     ],
   })
   const dropped = dropStaleScreenshots([shot('a'), shot('b')])
-  expect(dropped[0]?.content.length, '旧截图该被换成纯文本').toBe(1)
-  expect(dropped[0]?.content[0]?.type).toBe('text')
-  expect(dropped[1]?.content.length, '最新那张要原样保留').toBe(2)
+  const oldest = dropped[0]!.content as ChatContentPart[]
+  expect(oldest.length, '旧截图该被换成纯文本').toBe(1)
+  expect(oldest[0]?.type).toBe('text')
+  expect((dropped[1]!.content as ChatContentPart[]).length, '最新那张要原样保留').toBe(2)
   expect(dropStaleScreenshots([{ role: 'user', content: 'x' }]).length).toBe(1)
 })

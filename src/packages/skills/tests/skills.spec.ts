@@ -119,7 +119,7 @@ function runApply(): Harness {
     emit: () => {},
   }
   // 假 ctx 只实现 apply 用到的面；真实 Context 的字段远多于它。
-  skillsPlugin.apply(ctx as unknown as Context)
+  skillsPlugin.apply(ctx as unknown as Context, undefined)
   return harness
 }
 
@@ -134,7 +134,7 @@ async function appliedAndScanned(): Promise<Harness> {
 test('插件对象：名字、提供服务、四个注入', () => {
   expect(skillsPlugin.name).toBe('skills')
   expect(skillsPlugin.provide).toBe('skills')
-  expect([...(skillsPlugin.inject ?? [])]).toStrictEqual(['session', 'tools', 'commands', 'transcript'])
+  expect([...(skillsPlugin.inject as string[])]).toStrictEqual(['session', 'tools', 'commands', 'transcript'])
   expect(typeof skillsPlugin.apply).toBe('function')
 })
 

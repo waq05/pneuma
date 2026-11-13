@@ -203,7 +203,7 @@ function serverConfig(extra: Record<string, unknown> = {}): string {
 test('插件对象：名字、六个注入，服务在 apply 里挂', () => {
   expect(mcpPlugin.name).toBe('mcp')
   expect(mcpPlugin.provide).toBeUndefined()
-  expect([...(mcpPlugin.inject ?? [])]).toStrictEqual([
+  expect([...(mcpPlugin.inject as string[])]).toStrictEqual([
     'tools',
     'transcript',
     'settings',

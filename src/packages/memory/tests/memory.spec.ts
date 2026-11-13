@@ -125,7 +125,7 @@ function runApply(): Harness {
     agent: { followup: () => {} },
   }
   // 假 ctx 只实现 apply 用到的面；真实 Context 的字段远多于它。
-  memoryPlugin.apply(ctx as unknown as Context)
+  memoryPlugin.apply(ctx as unknown as Context, undefined)
   return harness
 }
 
@@ -140,7 +140,7 @@ function memoryTool(harness: Harness): CapturedTool {
 test('插件对象：名字、提供服务、八个注入', () => {
   expect(memoryPlugin.name).toBe('memory')
   expect(memoryPlugin.provide).toBe('memory')
-  expect([...(memoryPlugin.inject ?? [])]).toStrictEqual([
+  expect([...(memoryPlugin.inject as string[])]).toStrictEqual([
     'session',
     'tools',
     'prompt',

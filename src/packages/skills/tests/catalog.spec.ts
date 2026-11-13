@@ -106,7 +106,7 @@ function runApply(): Harness {
     },
     emit: () => {},
   }
-  skillsPlugin.apply(ctx as unknown as Context)
+  skillsPlugin.apply(ctx as unknown as Context, undefined)
   return harness
 }
 

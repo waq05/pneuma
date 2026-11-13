@@ -121,7 +121,7 @@ function applyPlugin(): Captured {
     },
   }
   // 假 ctx 只实现 apply 用到的面；真实 Context 的字段远多于它。
-  webSearchPlugin.apply(ctx as unknown as Context)
+  webSearchPlugin.apply(ctx as unknown as Context, undefined)
   return captured
 }
 
@@ -145,7 +145,7 @@ function stubFetch(body: unknown): Array<{ url: string; init: RequestInit }> {
 // 第 1 条：插件对象本体——名字与它依赖的三个服务。
 test('插件对象：名字与它依赖的三个服务', () => {
   expect(webSearchPlugin.name).toBe('web-search')
-  expect([...(webSearchPlugin.inject ?? [])]).toStrictEqual(['tools', 'prompt', 'settings'])
+  expect([...(webSearchPlugin.inject as string[])]).toStrictEqual(['tools', 'prompt', 'settings'])
   expect(typeof webSearchPlugin.apply).toBe('function')
 })
 
