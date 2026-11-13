@@ -13,7 +13,7 @@
 | **P0 地基** | ✅ 完成 | Vitest 4 + 解析插件 + 四个分层 project + 三条 POC + CI 接线 |
 | **P1a 设施** | ✅ 完成 | `tests/harness.ts`（8 个 API）、内核 16 个模块的 spec |
 | **P1b 包级测试** | ✅ 完成 | 119 条 `.test.mjs` → `.spec.ts`，806 条用例；旧脚手架已拆 |
-| **P2 内核探针** | ⏳ 约 85% | 122 → 20，其中 8 条还要迁、其余是有意保留（见 §4） |
+| **P2 内核探针** | ⏳ 收尾中 | 122 → 20：3 条还要迁、7 条永远留 Node 侧、8 条归 P3、2 条归 P7（见 §4） |
 | P3 ui 层 | 未开始 | 80 条 `ui-*` 探针 + 8 条从 P2 转来的缺口 |
 | P4 快照层 | 未开始 | 录制回放 + golden |
 | P5 真模型/性能 | 未开始 | 需要 key 的 e2e、bench |
@@ -56,12 +56,14 @@
 
 ## 4 那 20 条探针是什么性质（别误读成「没做完」）
 
-| 类别 | 条数 | 处理 |
+合计 20 条，四类加起来正好是 20：
+
+| 类别 | 条数 | 明细 |
 | --- | --- | --- |
-| **还要迁** | 8 | `hmr-dispose`、`ops`、`remote-host` 三条 R1 没做完；其余在 P2 尾批 |
+| **还要迁** | 3 | `hmr-dispose`、`ops`、`remote-host`——R1 做到一半没完成，探针原样还在 |
 | **永远留 Node 侧** | 7 | `plugin-hot-update`、`plugin-library`、`session-permissions`、`settings`、`settings-embed-slot`、`session-picker-mouse`、`session-title-live`。理由见 D26/D28——**迁了会变成假绿** |
-| **归 P3** | 4 | `injection-card-tip` 与 3 条 `tui-*` |
-| **归 P7** | 2 | `readme`、`release-notes` |
+| **归 P3（ui/tui 层）** | 8 | `injection-card-tip` + 7 条 `tui-*` |
+| **归 P7（文档闸）** | 2 | `readme`、`release-notes` |
 
 `check-core.mjs` 的文件头已经写明它**不再是主测试入口**，而是跑那些 Vitest 表达不了的
 探针的通道。别看到还剩 20 条就以为没迁完——先查 [testing-backlog.md](testing-backlog.md)。
