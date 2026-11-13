@@ -76,6 +76,44 @@ async function withRuntime(label, work) {
   }
 }
 
+// G1：候选收件箱在快照面里那一格。
+// 钉三件事：没开「先等我确认」时整格缺席（不是空数组）；开了之后写进去的候选能读出来；
+// 定过结论的不再列出来。两种「空」在界面上是两件事，所以这里分两次断言。
+test('快照面：候选收件箱那一格随开关出现，定过结论的不再列', async () => {
+  const root = tempRoot('candidates')
+  const previous = process.env.DSC_HOME
+  process.env.DSC_HOME = root
+  const store = openStore()
+  const { buildSurface } = await import('../../../../lib/packages/superagent/surface.js')
+  try {
+    const off = new SuperagentRuntime(store, { now: () => AT, log: () => {} })
+    assert.equal(buildSurface(off).candidates, undefined, '没开时整格缺席，不是空数组')
+    off.close()
+
+    store.saveCandidate('eval-1', 'trg-1', 'manual:trg-1', {
+      outcome: { kind: 'accept', title: '改文案', scope: 'docs/', reason: '命中规则' },
+      title: '改文案',
+      reason: '命中规则',
+      scope: 'docs/',
+      source: 'manual',
+    })
+    const on = new SuperagentRuntime(store, { now: () => AT, log: () => {}, confirmInferred: true })
+    const surface = buildSurface(on)
+    assert.equal(surface.candidates.length, 1, '开着的 runtime 要带这一格')
+    assert.equal(surface.candidates[0].id, 'eval-1')
+    assert.equal(surface.candidates[0].title, '改文案')
+    assert.equal(surface.candidates[0].source, 'manual')
+
+    store.settleCandidate('eval-1', 'ignored')
+    assert.deepEqual(buildSurface(on).candidates, [], '定过结论的不再列出来，但那一格还在')
+    on.close()
+  } finally {
+    store.close()
+    if (previous === undefined) delete process.env.DSC_HOME
+    else process.env.DSC_HOME = previous
+  }
+})
+
 /** 一台只记调用的假运行期：转发用例只要「调到了哪个方法、给了什么」。 */
 function fakeRuntime() {  const calls = []
   const runtime = {

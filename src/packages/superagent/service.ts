@@ -47,7 +47,10 @@ function pulseOf(runtime: SuperagentRuntime): string {
   const tickets = runtime.list().map((ticket) =>
     `${ticket.id}:${ticket.stage.stage}:${'action' in ticket.stage ? ticket.stage.action ?? '' : ''}`)
   const recent = runtime.recent().map((notice) => notice.at)
-  return `${tickets.join('|')}||${recent.join(',')}`
+  // 候选进出也要算进指纹（backlog G1）：判定器写库发生在泵之外，不把它算进来，
+  // 界面上那条「待确认」要等下一次工单或最近动态变化才看得到。
+  const candidates = runtime.candidates().map((item) => item.id)
+  return `${tickets.join('|')}||${recent.join(',')}||${candidates.join(',')}`
 }
 
 /**
