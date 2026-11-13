@@ -215,7 +215,7 @@ function makeTicket(seed, title) {
 }
 
 /** 假宿主：模型不会被调用，工具只要名字对得上，守卫一律 defer。 */
-function fakeHost() {
+function fakeHost(jobs) {
   const names = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'superagent_report', 'web_search']
   const tools = names.map((name) => ({ name, description: name, inputSchema: {}, risk: 'read', run: async () => '' }))
   return {
@@ -228,7 +228,54 @@ function fakeHost() {
     },
     tools: { list: () => tools },
     guards: { gate: async () => ({ action: 'defer' }), observe: (_name, text) => text },
+    ...(jobs === undefined ? {} : { jobs }),
   }
+}
+
+/**
+ * 假作业表：只实现执行器用到的四个动作（list / running / wait / kill），外加两个
+ * 测试专用方法（add 造一个在跑的作业，finish 让它结束）。
+ *
+ * 为什么不用真 `JobTable`：真表要起子进程，用例得等真的 `sleep`；这里要验的是执行器
+ * 的等待与终止逻辑，作业是真是假不影响判据。
+ */
+function fakeJobs() {
+  const jobs = new Map()
+  let counter = 0
+  const service = {
+    killed: [],
+    list(owner) {
+      return [...jobs.values()].filter((job) => owner === undefined || job.owner === owner)
+    },
+    running(owner) {
+      return service.list(owner).filter((job) => job.status === 'running')
+    },
+    async wait() {
+      return true
+    },
+    kill(id) {
+      const job = jobs.get(id)
+      if (job === undefined || job.status !== 'running') return false
+      job.status = 'killed'
+      job.finishedAt = Date.now()
+      service.killed.push(id)
+      return true
+    },
+    add(owner) {
+      counter += 1
+      const id = `job-${String(counter)}`
+      jobs.set(id, { id, owner, status: 'running', command: 'pnpm test', startedAt: Date.now(), exitCode: null })
+      return id
+    },
+    finish(id, status = 'completed') {
+      const job = jobs.get(id)
+      if (job === undefined) throw new Error(`没有作业 ${id}`)
+      job.status = status
+      job.exitCode = status === 'completed' ? 0 : 1
+      job.finishedAt = Date.now()
+    },
+  }
+  return service
 }
 
 /**
@@ -271,7 +318,7 @@ function setup(label, options = {}) {
   const queue = new MemoryEffects()
 
   const executor = new WorkerExecutor(null, {
-    host: fakeHost(),
+    host: fakeHost(options.jobs),
     repo: join(root, 'repo'),
     maxWorkers: options.maxWorkers ?? 2,
     effects: queue,
@@ -307,6 +354,8 @@ function setup(label, options = {}) {
     log: options.log ?? (() => {}),
     readTriggerText: () => '把错误提示改成中文',
     ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
+    ...(options.backgroundLimitMs === undefined ? {} : { backgroundLimitMs: options.backgroundLimitMs }),
+    ...(options.backgroundPollMs === undefined ? {} : { backgroundPollMs: options.backgroundPollMs }),
     ...(options.prepare === undefined ? {} : { prepare: options.prepare }),
   })
   // 记工单要在 start 之前：`start` 里只写入队，handler 读工单发生在其后的 microtask。
@@ -855,6 +904,106 @@ test('按会话找不到 worker 时返回 false，报告工具据此抛错', asy
       '工具要把 false 翻译成一句模型看得懂的话',
     )
     assert.equal(s.events.reports.length, 0, '找不到 worker 时一条报告都不该写')
+  } finally {
+    s.cleanup()
+  }
+})
+
+// ── G3：回合结束后的后台作业 ─────────────────────────────────────────────────
+//
+// 对齐上游 `executor/dsh.ts:629-656`：回合结束后还有作业在跑就先不报交付，等作业静默；
+// 静默后唤醒 worker 去读输出；到 30 分钟还在跑就杀掉并报 waiting；停工单时一并杀。
+
+test('回合结束还有后台作业：先不报交付，作业结束再唤醒 worker', async () => {
+  const jobs = fakeJobs()
+  const s = setup('bg-wait', { jobs, backgroundPollMs: 20 })
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c41', '等后台作业')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    const jobId = jobs.add(agent.session.meta.id)
+
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'message', text: '构建已经转到后台' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(s.events.reports.length, 0, '作业还在跑，不该报 ready')
+
+    // 作业结束：唤醒 worker 去读输出，而不是由这里报交付。
+    jobs.finish(jobId)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(s.events.reports.length, 0, '唤醒 worker 之后也不该由这里报交付')
+    assert.equal(agent.followups.length, 2, '派工的工单文本 + 作业结束通知')
+    assert.match(agent.followups[1], /job-1/, '通知要写明是哪个作业')
+    assert.match(agent.followups[1], /job_output/, '通知要告诉它怎么读输出')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('等作业期间 worker 起了新回合：旧等待中止，不再唤醒', async () => {
+  const jobs = fakeJobs()
+  const s = setup('bg-interrupt', { jobs, backgroundPollMs: 20 })
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c42', '等待被打断')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    const jobId = jobs.add(agent.session.meta.id)
+
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(s.events.reports.length, 0, '作业还在跑，不该报 ready')
+
+    // 新回合起来：旧的等待到此为止，它不该再去唤醒 worker。
+    agent.deps.emit({ type: 'turn/start' })
+    jobs.finish(jobId)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(agent.followups.length, 1, '中止的等待不该再唤醒 worker')
+    assert.equal(s.events.reports.length, 0, '新回合还没结束，不该有报告')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('后台作业跑过上限：杀掉并报 waiting，摘要写明是哪几个', async () => {
+  const jobs = fakeJobs()
+  const s = setup('bg-limit', { jobs, backgroundLimitMs: 60, backgroundPollMs: 10 })
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c43', '作业跑过头')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    const jobId = jobs.add(agent.session.meta.id)
+
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'message', text: '还没跑完' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    assert.equal(s.events.reports.length, 1, '到点要报一条')
+    assert.equal(s.events.reports[0].report.state, 'waiting', '报的是 waiting 而不是 ready')
+    assert.match(s.events.reports[0].report.summary, /job-1/, '摘要要写明杀的是哪个作业')
+    assert.deepEqual(jobs.killed, [jobId], '到点的作业要真的被终止')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('停工单：它的后台作业一并终止', async () => {
+  const jobs = fakeJobs()
+  const s = setup('bg-stop', { jobs, backgroundPollMs: 20 })
+  try {
+    const { ticket, assignment } = makeTicket('7a1b2c44', '停工单收作业')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    const jobId = jobs.add(agent.session.meta.id)
+
+    s.executor.stop(ticket, assignment, '用户停止')
+    assert.deepEqual(jobs.killed, [jobId], '工单停了，作业不该继续跑')
   } finally {
     s.cleanup()
   }

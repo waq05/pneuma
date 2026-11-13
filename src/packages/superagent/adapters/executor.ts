@@ -73,7 +73,7 @@ import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardChain, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import type { PromptSectionView } from '@pneuma/runtime/contract.js'
-import type { CompactService, LlmService, SandboxService, ToolService } from '@pneuma/runtime/services/types.js'
+import type { CompactService, JobsService, LlmService, SandboxService, ToolService } from '@pneuma/runtime/services/types.js'
 import { MiniAgent, type AgentDeps } from '@pneuma/session-core/loop.js'
 import { writePermissions } from '@pneuma/permission-core/permission-scope.js'
 import { latestAssignment, runningAssignment, type Assignment, type Executor, type EngineForExecutor, type Ticket,
@@ -104,6 +104,13 @@ export interface WorkerHost {
   sandbox?: Pick<SandboxService, 'check'>
   /** 压缩服务（插件关着时不存在）：worker 也会跑长会话，爆窗前要能压。 */
   compact?: Pick<CompactService, 'check' | 'forceCompact'>
+  /**
+   * 后台作业表（tools-default 提供；插件关着时不存在）。
+   *
+   * 有它，执行器才能在回合结束后等 worker 起的作业收尾（backlog G3）；没有它
+   * 就按老行为「`turn/end` 一到就报交付」，作业继续跑、工单已结束。
+   */
+  jobs?: JobsService
 }
 
 /** 无人值守审批档（设计文档 §7.2）：`deny` 保守、`allow` 自动化、`ask` 有人在旁边。 */
@@ -187,6 +194,18 @@ export interface WorkerExecutorOptions {
    * 只给测试用：真实重试要等 15 / 30 / 60 秒，用例不能真等一分钟。
    */
   retryDelayMs?: number
+  /**
+   * 后台作业的等待上限（毫秒），默认 {@link BACKGROUND_LIMIT_MS}（30 分钟）。
+   *
+   * 只给测试用：到点要杀作业并报 `waiting`，真等 30 分钟的用例没法跑。
+   */
+  backgroundLimitMs?: number
+  /**
+   * 等后台作业的轮询间隔（毫秒），默认 {@link BACKGROUND_POLL_MS}（500ms）。
+   *
+   * 只给测试用：用例要在一百毫秒内看到「作业结束 → 唤醒 worker」。
+   */
+  backgroundPollMs?: number
 }
 
 /** worker 的最小面：真身是 `MiniAgent`（`session-core/loop.ts:143`）。 */
@@ -248,6 +267,15 @@ interface Worker {
   transientTries: number
   /** 正在等退避重试：`turn/end(error)` 不报 failed，等重试那一回合重新收尾。 */
   retryPending: boolean
+  /**
+   * 正在等后台作业收尾（backlog G3）。
+   *
+   * 有它 = 回合已经结束、但作业还在跑，交付报告先不写。三种情况会中止这个等待：
+   * worker 起了新回合（`turn/start`）、工单被停（`terminate`）、30 分钟到点（自己结束）。
+   * 为什么要一个控制器而不是布尔：等待里有一个 500ms 的 sleep，不中止的话「用户点了
+   * 停止」还要等最多半秒才生效。
+   */
+  settling?: AbortController
 }
 
 /**
@@ -275,6 +303,28 @@ const NO_SUMMARY = '（worker 这一回合没有留下文字总结，改动请�
 /** 把未知异常压成一行可读文本。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 等 `ms` 毫秒；`signal` 中止就提前返回。
+ *
+ * 为什么要能中止：等后台作业的循环里有一个 500ms 的 sleep，工单被停时不该再等它
+ * 睡完——那半秒里 worker 的会话还开着，用户点了停止却要等它睡完才见效。
+ */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    timer.unref?.()
+    signal?.addEventListener('abort', done, { once: true })
+    // 登记之后到这一句之间可能刚好被中止：补一次，别白等满。
+    if (signal?.aborted === true) done()
+  })
 }
 
 /**
@@ -372,6 +422,23 @@ const TRANSIENT_BACKOFF_MS = 15_000
  * 它会一直攥着一个并发名额，工单既不动也不报错。
  */
 const PREPARE_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * worker 回合结束后，它起的后台作业还能跑多久：30 分钟。
+ *
+ * 与上游 `BACKGROUND_LIMIT_MS` 一致（`executor/dsh.ts:32`）。为什么要这个上限：作业是
+ * 「回合结束后继续跑」的，没有上限的话一个卡住的构建会让工单永远停在「运行中」，
+ * worker 的并发名额也一直被它占着。到点就杀掉并报 `waiting`，让人知道发生了什么。
+ */
+const BACKGROUND_LIMIT_MS = 30 * 60_000
+
+/**
+ * 等后台作业时的轮询间隔：500 毫秒。
+ *
+ * 为什么不用事件：作业表只提供查询（`ctx.jobs`），给它加一套订阅与广播不值得——
+ * 等的人只有执行器一个，500ms 的延迟对「作业结束」这件事完全够用。
+ */
+const BACKGROUND_POLL_MS = 500
 
 /** 准备命令只留尾部这么多字符：装依赖会刷几千行，全留着没有信息量。 */
 const PREPARE_OUTPUT_LIMIT = 4000
@@ -569,6 +636,7 @@ function hostFromContext(ctx: Context): { host: WorkerHost | null; missing: stri
       guards,
       sandbox: ctx.get('sandbox') as WorkerHost['sandbox'],
       compact: ctx.get('compact') as WorkerHost['compact'],
+      jobs: ctx.get('jobs') as WorkerHost['jobs'],
     },
     missing,
   }
@@ -635,6 +703,10 @@ export class WorkerExecutor implements Executor {
   private readonly retryTimers = new Set<NodeJS.Timeout>()
   /** 临时故障的首次退避（毫秒）；测试注入 0，免等。 */
   private readonly retryDelayMs: number
+  /** 后台作业的等待上限（毫秒）；测试注入小值，免等 30 分钟。 */
+  private readonly backgroundLimitMs: number
+  /** 等后台作业的轮询间隔（毫秒）；测试注入小值，让用例几十毫秒内看到结果。 */
+  private readonly backgroundPollMs: number
 
   /**
    * @param ctx - cordis 上下文；`options.host` 给了就优先用后者（测试）。允许 `null`：
@@ -674,6 +746,8 @@ export class WorkerExecutor implements Executor {
     this.attachSession = options.attachSession
     this.detachSession = options.detachSession
     this.retryDelayMs = options.retryDelayMs ?? TRANSIENT_BACKOFF_MS
+    this.backgroundLimitMs = options.backgroundLimitMs ?? BACKGROUND_LIMIT_MS
+    this.backgroundPollMs = options.backgroundPollMs ?? BACKGROUND_POLL_MS
     if (this.host === null) {
       this.log(
         `[superagent] 执行器未接宿主（缺 ${this.hostProblem.join('、') || '未知服务'}）：` +
@@ -1177,6 +1251,9 @@ export class WorkerExecutor implements Executor {
    */
   private emitOf(worker: Worker, event: CoreEvent): void {
     if (event.type === 'turn/start') {
+      // 新回合接手了：上一回合结束后那个「等作业」的等待到此为止，收尾由这一回合判
+      //（对齐上游 `executor/dsh.ts:481`：`status === 'running'` 就中止 settling）。
+      worker.settling?.abort()
       worker.lastText = ''
       delete worker.lastError
       // 上一回合的终态不许漏到这一回合：新回合没再报，就按这一回合自己的收尾判。
@@ -1217,11 +1294,100 @@ export class WorkerExecutor implements Executor {
       // ready / dropped 已经结束工单，再写只会撞 `ticketEnded` 白记一行日志。
       // error 不走这里：出错一律按 failed 报，见下面。
       if (event.reason === 'completed' && worker.reported !== undefined) return
+      // 回合结束了，但它起的后台作业还在跑：先不写交付报告，等作业静默（backlog G3，
+      // 对齐上游 `executor/dsh.ts:629-656` 的 `untilQuiet`）。`error` 不等：它已经按
+      // failed 报过，作业的去留由 `terminate` 收。
+      if (event.reason !== 'error' && this.awaitBackground(worker)) return
       const report = event.reason === 'error' && worker.failedReported
         ? null
         : turnEndReport(event.reason, worker.lastText, worker.lastError)
       if (report !== null) this.report(worker, report)
     }
+  }
+
+  /**
+   * 回合结束后，等 worker 起的后台作业收尾。
+   *
+   * 为什么要有这一步：`bash` 的 `run_in_background` 对 worker 开着，worker 完全可能
+   * 「起了一个构建，回合结束」——这时候报 `ready` 就是把没跑完的活当成交付。上游的
+   * `untilQuiet`（`executor/background.ts:96-104`）等的正是这个。
+   *
+   * @returns true = 还有作业在跑，已经接手等待（调用方不要再写报告）；false = 没有作业。
+   */
+  private awaitBackground(worker: Worker): boolean {
+    const jobs = this.host?.jobs
+    if (jobs === undefined) return false
+    const running = jobs.running(worker.session.meta.id)
+    if (running.length === 0) return false
+    // 上一轮的等待还挂着（同一回合不可能有两次 turn/end，但重启后可能有）：换一个新的。
+    worker.settling?.abort()
+    const look = new AbortController()
+    worker.settling = look
+    this.log(
+      `[superagent] 工单 ${worker.ticketId} 的回合结束，等 ${String(running.length)} 个后台作业收尾：` +
+        running.map(job => job.id).join(', '),
+    )
+    void this.settleBackground(worker, look)
+      .catch((error: unknown) => {
+        this.log(`[superagent] 工单 ${worker.ticketId} 等后台作业失败：${describe(error)}`)
+      })
+      .finally(() => {
+        if (worker.settling === look) delete worker.settling
+      })
+    return true
+  }
+
+  /**
+   * 等作业静默，最多 {@link BACKGROUND_LIMIT_MS}。三种收场：
+   *
+   * 1. **作业全结束**：叫 worker 去读输出——`followup` 会起新回合，这一回合的收尾由
+   *    新回合的 `turn/end` 再判（上游靠 DSH 的 jobs 服务自动唤醒，DSC 得自己投这一句）。
+   * 2. **worker 起了新回合**：`look` 被中止，这里什么都不做（新回合接手）。
+   * 3. **到点还在跑**：杀掉剩下的，报 `waiting` 并写明杀的是哪几个（上游同款措辞，
+   *    `executor/dsh.ts:650-655`）。
+   */
+  private async settleBackground(worker: Worker, look: AbortController): Promise<void> {
+    const jobs = this.host?.jobs
+    if (jobs === undefined) return
+    const sessionId = worker.session.meta.id
+    const deadline = Date.now() + this.backgroundLimitMs
+    let timedOut = false
+    for (;;) {
+      if (look.signal.aborted) return
+      const running = jobs.running(sessionId)
+      if (running.length === 0) break
+      if (Date.now() >= deadline) { timedOut = true; break }
+      await delay(this.backgroundPollMs, look.signal)
+    }
+    if (look.signal.aborted) return
+    if (timedOut) {
+      const killed = jobs.running(sessionId)
+      for (const job of killed) {
+        try { jobs.kill(job.id) } catch (error) { this.log(`[superagent] 终止作业 ${job.id} 失败：${describe(error)}`) }
+      }
+      const minutes = Math.round(this.backgroundLimitMs / 60_000)
+      const names = killed.map(job => job.id).join(', ')
+      this.report(worker, {
+        state: 'waiting',
+        summary: names === ''
+          ? `后台作业跑过了回合结束后 ${String(minutes)} 分钟的上限。`
+          : `后台作业跑过了回合结束后 ${String(minutes)} 分钟的上限，已终止：${names}。`,
+      })
+      return
+    }
+    // 已经报过终态的 worker 不再叫醒——它说了交付，作业的输出留给下一次工单。
+    // 这里补报交付：等待期间 worker 没起新回合，也就没有下一次 `turn/end` 来报。
+    if (worker.reported !== undefined || worker.stopping) {
+      const text = worker.lastText.trim()
+      this.report(worker, { state: 'ready', summary: text === '' ? NO_SUMMARY : text })
+      return
+    }
+    const finished = jobs.list(sessionId).filter(job => job.status !== 'running')
+    if (finished.length === 0) return
+    const lines = finished.map(job => `- ${job.id}：${job.status === 'completed' ? '成功完成' : job.status === 'killed' ? '被终止' : `失败（退出码 ${String(job.exitCode ?? '?')}）`}`)
+    worker.agent?.followup(
+      `你的后台作业已经结束，这一回合还没有交付。用 job_output 读结果，然后接着把工单干完：\n${lines.join('\n')}`,
+    )
   }
 
   /** 报告写回引擎；失败只记日志。返回值表示这次报告有没有真的写进去（工具据此决定记不记终态）。 */
@@ -1304,9 +1470,14 @@ export class WorkerExecutor implements Executor {
   private terminate(worker: Worker, reason: string): void {
     if (worker.stopping) return
     worker.stopping = true
+    // 等作业的那个循环先停：工单都要停了，等它静默没有意义（作业下面一并杀掉）。
+    worker.settling?.abort()
     // 停掉的 worker 不再重试；计数一并清掉，与上游 `stop()` 里的 `transient.delete(assignment.id)` 同义。
     worker.transientTries = 0
     worker.retryPending = false
+    // 工单停了，它的后台作业也停：会话一关，这些进程就没人认领了。
+    // 上游同一步在 `stopBackground` 里（`executor/background.ts:110-119` 的 `killJobs`）。
+    this.killBackgroundJobs(worker)
     const agent = worker.agent
     this.workers.delete(worker.ticketId)
     try {
@@ -1323,6 +1494,26 @@ export class WorkerExecutor implements Executor {
     }
     // 一个名额刚让出来：催一拍队列，等着的派工不必等下一次泵。
     this.effects?.kick()
+  }
+
+  /**
+   * 杀掉 worker 还在跑的后台作业（工单结束 / 插件卸载时调）。
+   *
+   * 为什么不在这里等进程真死：`ctx.jobs.kill` 已经发了整树收尾的信号，而会话关闭
+   * 只是关 jsonl 文件、不等子进程。上游的 `SHUTDOWN_STOP_MS`（10 秒）等的是 DSH 的
+   * jobs 服务回报「已退出」，DSC 这一层没有那个回报点，等了也没有判据。
+   */
+  private killBackgroundJobs(worker: Worker): void {
+    const jobs = this.host?.jobs
+    if (jobs === undefined) return
+    for (const job of jobs.running(worker.session.meta.id)) {
+      try {
+        jobs.kill(job.id)
+        this.log(`[superagent] 工单 ${worker.ticketId} 停止，已终止后台作业 ${job.id}`)
+      } catch (error) {
+        this.log(`[superagent] 终止工单 ${worker.ticketId} 的后台作业 ${job.id} 失败：${describe(error)}`)
+      }
+    }
   }
 
   /** 关闭会话（幂等）；释放写租约，并让出一个并发名额。 */
