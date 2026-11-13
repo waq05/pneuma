@@ -13,7 +13,7 @@
 
 | 组 | 项数 | 一句话 |
 | --- | --- | --- |
-| 1 领域能力 | 8 | 编排器、副作用队列、执行器的后台任务与准备命令、报告语义 |
+| 1 领域能力 | 9 | 编排器、副作用队列、执行器的后台任务与准备命令、报告语义、worker 模型 |
 | 2 通道与来源 | 5 | GitHub 两处上下文、飞书发现、lark-cli 打包、真账号验收 |
 | 3 界面 | 6 | 停用复位、转录刷新、空字段、概览与来源页 |
 | 4 运维与验证 | 4 | 安装向导、机器校验、构建门禁、崩溃恢复的边角 |
@@ -115,7 +115,17 @@
 | 补的话动哪 | `src/packages/superagent/prompts/*.md` + 构建时拷进 `lib/`；`buildWorkerPrompt` 改成读文件 |
 | 验收 | 改 md 文件、不重新构建，下一张工单的会话里就是新提示词 |
 | 状态 | **已补**：`prompts/worker.md` + 构建脚本拷两个落点 + 运行时读文件缓存 + 内置兜底（源码树直接跑测试时产物可能还没拷） |
-| 值得补吗 | **按需**。提示词还在高频调整期时，外置收益大；稳定后内联反而少一个文件依赖 |
+| 值得补吗 | **按需**。提示词还在高频调整期时，外置收益大；稳定后内联反而少一个文件依赖。<br>**文案组织是有意差异**：上游 15 个 md 按角色拼装（`shared` / `subscriptions` / `replies` / `handoff/*` / `team/*` 各一段），DSC 的对应内容并入 `worker.md` 一份定稿（设计文档 §6.2.1）——orchestrator / dispatch / admission 三段依附常驻主会话（G1 有意不做），其余场景 DSC 用判定器提示词与工单文本替代 |
+
+### G9 worker 模型与禁令名单（对齐 `executor.model` / `blockedCommands`）
+
+| 项 | 内容 |
+| --- | --- |
+| 上游怎么做 | executor 设置块里 `model`（按角色给 worker 会话种模型，默认 null 跟全局默认，`app/sessions.ts:150`）与 `blockedCommands`（worker-bin shim 按命令名拦截：只拦名字、绝对路径照样能跑、非安全边界，`app/settings.ts:187`） |
+| 当前怎么样 | 已补。执行器的 `WorkerModel` 路由与 `blockedCommands` 提示词注入位早已备好（`adapters/executor.ts:126/161`），本轮接上设置面：`workerModel`（`provider/model`，空=跟随选路）与 `workerBlockedCommands`（逗号分隔，只进系统提示词「可用命令」一句） |
+| 差异 | 上游的 shim 强制层在 DSC 没有对应物——worker 命令面走宿主守卫与工具目录白名单，没有独立 PATH shim 机制；提示词层是嘱咐不是强制 |
+| 补的话动哪 | 已补：`a4803cdd`（设置分区两字段 + `splitRoleModel` 提取 + `WorkerRuntimeOptions` 穿线 + 3 条用例） |
+| 状态 | **已补**：`a4803cdd` |
 
 ---
 
