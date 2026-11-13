@@ -224,7 +224,7 @@ describe('③ 摘要不小于原文时抛错，且会话历史一条没动', () 
       meta: { id: 'unit-tiny' },
       filePath: 'D:\\tmp\\unit-tiny.jsonl',
       summary: '',
-      replaceWithSummary(text: string, kept: unknown[]) {
+      replaceWithSummary(text: string, kept: Array<Record<string, unknown>>) {
         replaced = true
         this.summary = text
         this.messages = kept

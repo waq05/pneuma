@@ -239,7 +239,7 @@ describe('③ 记账缓冲严格保序：多次 state 按产生顺序排在 user
   test('攒着的时候磁盘上还是没有文件', () => {
     session = core.Session.create(WORK, path)
     session.appendState('model', { provider: 'test', model: 'm1', effort: 'default' })
-    session.appendState('permissions', { sandbox: 'workspace-write', policy: 'on-request', reviewer: 'user' })
+    session.appendState('permissions', { sandbox: 'workspace-write', policy: 'auto-edit', reviewer: 'user' })
     session.appendState('model', { provider: 'test', model: 'm1', effort: 'high' })
     expect(existsSync(path)).toBe(false)
   })
