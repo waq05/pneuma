@@ -52,7 +52,7 @@ DeepSeek Harness 上的「主动型编码智能体」，本文只讨论**移植�
 | 阶段 | 内容 | 出口条件 |
 | --- | --- | --- |
 | **P0** | 手动发布 + 执行 + 完整界面 | 面板发一条任务，30 秒内进执行，产出本地分支与改动摘要 |
-| **P1** | 恢复、并发、超时、保留策略、体检 | 杀宿主重启后工单自动接续，不重复建分支 |
+| **P1** | 恢复、并发、超时、保留策略、体检 | 杀宿主重启后工单自动接续，不重复建分支（第 9 步已验证） |
 | **P2** | GitHub + 飞书（写完默认关）+ 模型版编排器 | fixture 测试跑通全链路；真账号下 @ 一次产出 PR |
 | **P3** | 企业微信 webhook（只当 Channel）、QQ 官方机器人 | 按需 |
 
@@ -633,11 +633,30 @@ export interface SuperagentSurface {
 
 - `pending` 工单 → 重新派工；
 - `running` 且没有对应 worker → 起新 Assignment，系统提示词里带一条「上次中断了，先看目录和 git 状态」；
+- 报过 `failed` / `blocked` 的 → **不接续**：那是 worker 明确交给人的结论（失败原因、要人拍板
+  的问题），自动重跑会把结论盖掉，留给人用 `/sa retry` 决定；
 - `ended` 工单 → 不动，目录保留。
+
+为什么是「起新 Assignment」而不是「把会话接回来」：DSC 的 worker 是进程内的 MiniAgent，宿主一死
+会话就没了。新分配的工作树与分支按工单 id 复用（`ensureWorktree` 幂等、`worktreeNameOf` 定名），
+所以上一轮的改动都在，分支也不会重建。
 
 ### 9.4 超时
 
-单个 worker 回合超过设置的上限（默认 30 分钟）→ `agent.cancel()`，工单报 `waiting`，通知面板。
+单个 worker 回合超过设置的上限（默认 30 分钟）→ `agent.cancel()`，工单记 `failed`、原因写
+「超过 N 秒未完成，已取消」，面板能看到，人按 `/sa retry` 继续。
+
+**与最初设计不同（原写「工单报 `waiting`」）**，理由是 `waiting` 在这个适配器里没有出口：
+
+- 执行器只产出 `ready` 与 `failed` 两种报告（`adapters/executor.ts:761-770`）。`waiting` /
+  `blocked` 是上游 DSH 会话里「工人等人回话」的语义，DSC 这边没有对等的产出点；
+- P0 没有回复通道：服务只露 publish / stop / retry / clean / peekSession，而 `canRetry` 只认
+  `blocked` / `failed`（`core/stage.ts:24-26`）——报 `waiting` 的工单既没有人能推进，也不能
+  `/sa retry`，等于晾死；
+- `failed` 是唯一「停住了、人一按就能继续」的状态，与 §10「worker 回合报错 → 记 `failed`，
+  可重试」同一口径。
+
+等补上「把人的话投回执行器」的通道（P1.1 之后再排），才谈得上按上游语义报 `waiting`。
 
 上游同类语义在 `docs/003-execution.md:35`（后台作业 30 分钟上限）。我们把这个上限移到回合级别，
 因为 DSC 里没有「工单保持 slot」这套机制。
@@ -675,6 +694,8 @@ export interface SuperagentSurface {
 | 面板 | 自带 HTTP API | 快照面 + 白名单方法 | DSC 无插件路由入口 |
 | 直接消息 | 12 种 effect | 先实现 6 种 | 按需 |
 | 数据清理 | 无（自认无限增长） | P1 加保留策略 | 不能重复这个坑 |
+| 超时语义 | 工单报 `waiting`，等人回话再续 | 报 `failed`，`/sa retry` 继续 | P0 没有回复通道，`waiting` 没有出口（§9.4） |
+| 崩溃恢复 | 执行器保住会话，隔断后重连 | 起新分配 + 恢复提示词 | DSC 的 worker 是进程内 MiniAgent，宿主一死会话就没了（§9.3） |
 
 ### 11.4 关于 QQ / 微信
 
@@ -972,8 +993,8 @@ clean 后 worktrees = []，git worktree list 从 2 条回到 1 条（只剩主�
 | 项 | 做法 |
 | --- | --- |
 | 设置落盘 | `resolvePluginConfig` / `writePluginConfig` 读写 `~/.dsc/plugins.json` 里 `file: "superagent"` 的 `config`；三个字段：`repoPath` / `maxWorkers`(1–16，默认 2) / `ticketTimeoutSeconds`(默认 1800，0 = 不限) |
-| 崩溃恢复 | 启动时扫工单：最新 Assignment 是 `running` 但进程里没有 worker → 标 `failed` 并通知「用 /sa retry 重派」；`pending` → 重新入队；`ended` 一律不动 |
-| 超时取消 | 泵每轮检查，超过 `ticketTimeoutSeconds` 的 `running` 工单停 worker、转 `failed`。排队中的不参与（否则稍后那次派工会启动一张已判失败的工单） |
+| 崩溃恢复 | 启动时扫工单：最新 Assignment 是 `running` 但进程里没有 worker → 标 `failed` 并通知「用 /sa retry 重派」；`pending` → 重新入队；`ended` 一律不动（第 9 步已改成自动接续，见下一小节） |
+| 超时取消 | 泵每轮检查，超过 `ticketTimeoutSeconds` 的 `running` 工单停 worker、转 `failed`。排队中的不参与（否则稍后那次派工会启动一张已判失败的工单）。口径见 §9.4 |
 | 保留策略 | 启动跑一次、之后每 24 小时一次：只删**已结束超过 30 天**的会话目录；工作树不在范围内 |
 | 体检项 | 扩展点叫 `health`（`src/packages/doctor/index.ts:144`）；登记 `superagent/orchestrator`：库可写、锁是否被占、running 工单数与其中无 worker 的个数 |
 | 文档回填 | 即本节 |
@@ -989,6 +1010,44 @@ clean 后 worktrees = []，git worktree list 从 2 条回到 1 条（只剩主�
 
 新增用例 `recovery.test.mjs` 6 条：设置往返、running 无 worker → failed、pending 重新入队、
 超时取消、sweep 只删超期、sweep 不动未超期。
+
+### 第 9 步：P1 崩溃接续（已完成，真机跑过）
+
+P1 的出口条件是「杀宿主重启后工单自动接续，不重复建分支」。第 8 步交付的是「判失败、等人
+重试」，与 §9.3 不一致；这一步把代码对齐到设计。
+
+产出：`runtime.recover()` 对「`running` 且没有 worker」的单改走 `engine.assignmentInterrupted`
+（`core/assignments.ts:83-92`，上游本来就有，之前一直没接线）；`RecoveryReport.failed` 改名
+`resumed`；通知文案改成「已自动接续」；体检项里那条修法提示同步改口。报过 `failed` /
+`blocked` 的单仍然不接续，理由写在 §9.3。
+
+**真机验收**：`node scripts/_sa-resume-e2e.mjs`（新脚本，下划线前缀不进测试电池；临时 HOME、
+临时 git 仓库、假模型端点、真宿主进程，通道走宿主 stdio 协议）：
+
+```
+PASS 宿主 A 被硬杀（进程已退出）
+PASS 被杀的现场：最新分配还停在 running
+PASS 重启后日志出现「启动恢复：N 张接续」
+PASS 工单有两份分配（旧的 + 接续的）
+PASS 旧分配的结束原因是宿主重启
+PASS 恢复提示词出现在执行会话里（worker 真看到了）
+PASS 工作树仍是 2 行（没有建第二棵）
+PASS agent/* 分支仍只有一条（接续用同一分支）
+PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exit 0
+```
+
+三件只有实跑才知道的事：
+
+1. **工作树与分支天然复用**：`ensureWorktree` 同名树在就复用，分支名由工单 id 与标题算出来
+   （`worktreeNameOf`），所以接续不需要额外写「别让分支重建」的逻辑——它本来就幂等。
+2. **恢复提示词要当「新消息」投**：新分配是新会话，工单原文不会自动重发；`tickets.restart`
+   把提示词塞进 `undelivered`，执行器派工时跟着工单一起发。会话记录里能验到这句话，所以
+   「worker 真的收到了」是可证的，不靠日志口供。
+3. **宿主硬杀后锁自己放开**：Windows 命名互斥量随进程消失，重启直接拿得到，不用清锁文件。
+   （写这份用例时先按「锁锚点文件存在」断言过一次，跑出来是假失败——Windows 上压根不建
+   那个文件，判据要落在库文件上。）
+
+超时语义没有跟着改：见 §9.4，`waiting` 在本适配器里没有出口，保留 `failed`。
 
 ### 实施中修正的设计
 
@@ -1009,7 +1068,7 @@ clean 后 worktrees = []，git worktree list 从 2 条回到 1 条（只剩主�
 pnpm run build                    # exit 0，79 个功能包
 pnpm run build:ui                 # exit 0，22 份界面产物
 pnpm run check:plugin             # exit 0
-node scripts/package-tests.mjs    # exit 0，91 包 / 102 用例 / 649 断言 / 0 失败
+node scripts/package-tests.mjs    # exit 0，91 包 / 110 用例 / 677 断言 / 0 失败
 node scripts/ui-switch-check.mjs  # exit 0，34 PASS / 0 FAIL
 node scripts/plugin-standard-check.mjs  # exit 0，91 包 0 问题
 node scripts/plugin-inventory-check.mjs # exit 0，78 插件 / 26 分区 / 22 界面单元
