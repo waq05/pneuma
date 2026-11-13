@@ -56,6 +56,7 @@
 | D23 | integration 层「位置：与源码同目录 `<module>.int.spec.ts`」（§7.2） | 主体明确属于某个模块的，仍然同目录；**跨领域**或「整套内核装配之后才成立」的探针放 `tests/integration/<topic>.int.spec.ts` | 122 条内核探针里有相当一部分没有「被测模块」：它们起整套内核、跑几轮对话、看会话文件与请求体。硬塞进某个模块目录会让「这个目录的测试全归这个模块」这条约定失效 | 已定 |
 | D24 | 探针迁完「从 `scripts/` 删掉对应 `.mjs`」（§11 P2） | 同左，但删除前提是「新 spec 覆盖了原探针的全部断言」；覆盖不齐时先补再删 | 删早了等于静默丢断言。已有先例：`session-dedupe-test.mjs` 在 POC-2 就已迁成 spec，探针却还在跑，属重复劳动 | 已定 |
 | D26 | P2 把 122 条内核探针都归 integration（§11 P2） | 有两条判定**不该归 integration**：`session-picker-mouse-test.mjs` 主体是 ink 整屏渲染与鼠标序列（假 stdin/stdout 逐帧断言），归 ui/e2e；`session-title-live-test.mjs` 主体是 `examples/plugins/` 的示例插件，且两条断言必须观察回合进行中（integration 的 fakeLLM 没有慢响应接缝），归插件层。两条探针原样保留 | 硬迁只能靠 ANSI 帧与坐标，那不是这一层该干的事；标题插件与内置 `session-title` 抢同一个 `meta.autoTitle`，断言「哪个标题落地」会变成竞态 | **待定**（这两条何时迁、迁到哪层） |
+| D28 | P2 迁完所有内核探针（§11 P2） | `plugin-hot-update-test.mjs` 与 `plugin-library-test.mjs` **永远留在 `scripts/`**，由裸 Node 跑 | 它们验的正是 Node 的 ESM 模块缓存语义：`remountExternalPlugin` 靠 `?t=mtime` 拿新实例。Vitest 的动态 import 走 Vite 模块管线，不吃这个缓存戳——实测写 v2 后仍读 v1，延迟 120ms 也无效。硬迁出来的测试要么恒绿要么恒红，那是假证据 | **已定**（P7 收尾时必须写明：这两层长期并存） |
 
 ## 六、协作方式（不是设计里的内容，是执行时的取舍）
 
