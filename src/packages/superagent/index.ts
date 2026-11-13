@@ -37,7 +37,8 @@ import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { openStore, type DscStore } from './adapters/store.js'
 import { createGithubApi } from './adapters/github/api.js'
-import { createGithubSource } from './adapters/github/source.js'
+import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
+import { pullOf } from './adapters/github/pull.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
@@ -413,7 +414,7 @@ export function apply(ctx: Context, passed?: unknown): void {
    * `busy` 是「上一拍还没回来」：轮询是网络活，慢的时候会比间隔长，不设这道闸就会在
    * 同一个账号上越堆越多请求——配额打满之后症状是「突然一条评论都收不到了」。
    */
-  let github: { source: ReturnType<typeof createGithubSource>; lastAt: number; busy: boolean } | null = null
+  let github: { source: ReturnType<typeof createGithubSource>; api: ReturnType<typeof createGithubApi>; lastAt: number; busy: boolean } | null = null
 
   /**
    * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
@@ -431,9 +432,11 @@ export function apply(ctx: Context, passed?: unknown): void {
       return
     }
     try {
+      const api = createGithubApi({ token, repository: account.repository, log: (line) => { console.warn(line) } })
       github = {
+        api,
         source: createGithubSource({
-          api: createGithubApi({ token, repository: account.repository, log: (line) => { console.warn(line) } }),
+          api,
           repository: account.repository,
           login: account.login,
           engine: target.sourceBridge(),
@@ -459,7 +462,28 @@ export function apply(ctx: Context, passed?: unknown): void {
     github.busy = true
     void github.source.tick()
       .catch((error: unknown) => { console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`) })
+      // 事件流看完再看 PR 的 CI：两件事的失败互不影响，所以各有各的 catch。
+      .then(() => { pollPullCi() })
       .finally(() => { if (github !== null) github.busy = false })
+  }
+
+  /**
+   * 关注了 PR 的工单，每张顺手看一眼 CI。
+   *
+   * 为什么不在 `createGithubSource().tick()` 里做：适配器不知道「哪些 PR 该看」——那是工单
+   * 自己的 `follows` 才记着的事实。分开做也让「事件流失败」与「某张 PR 的 CI 失败」互不牵连。
+   */
+  function pollPullCi(): void {
+    const current = github
+    const target = runtime
+    if (current === null || target === null || store === null) return
+    const options = { api: current.api, engine: target.sourceBridge(), store, now: () => new Date().toISOString() }
+    for (const ticket of target.openTickets()) {
+      const number = pullOf(ticket)
+      if (number === undefined) continue
+      void pollPullChecks(options, number)
+        .catch((error: unknown) => { console.warn(`[superagent] 工单 ${ticket.id} 的 PR CI 轮询失败：${errorText(error)}`) })
+    }
   }
 
   /**

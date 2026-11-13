@@ -298,6 +298,17 @@ export class SuperagentRuntime {
   }
 
   /**
+   * 开着的工单原文。
+   *
+   * 给来源适配器用：GitHub 的 PR CI 轮询要知道「哪些 PR 该看」，而这件事只有工单自己知道
+   * （`Ticket.follows` 记着它关注的 PR）。只读、只露开着的——已结束的工单没人再关心 CI。
+   */
+  openTickets(): Ticket[] {
+    this.assertOpen()
+    return this.repos.tickets.open()
+  }
+
+  /**
    * 给来源适配器用的三个动作。
    *
    * 每次返回新对象：来源只该拿到这三个函数。把运行期本身交出去，来源就能绕过准入闸自己
