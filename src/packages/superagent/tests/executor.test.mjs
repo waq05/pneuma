@@ -1,7 +1,7 @@
 /**
  * @pneuma/superagent 第 5 步的包级测试：执行器（工作树 + 会话 + worker + 并发）。
  *
- * 九条用例，每条只钉一件会「悄悄坏掉」的事：
+ * 十三条用例，每条只钉一件会「悄悄坏掉」的事：
  *   1. `start` 真建了工作树、真按显式路径建了会话，并把工单文本投给 worker；
  *   2. 并发上限生效：同时发 3 个，只起 2 个，第 3 个排队，有人让位才开工；
  *   3. `stop` 调的是「中断回合」而不是杀进程，且重复调不炸；
@@ -10,7 +10,11 @@
  *   6. 临时故障判据：状态码优先、文本兜底、配置错误不能误判；
  *   7. 临时故障退避后用同一会话继续，故障回合不算交付；
  *   8. 临时故障超过 3 次才判 failed；
- *   9. 非临时故障一次都不重试。
+ *   9. 非临时故障一次都不重试；
+ *  10. 准备命令：成功返回输出，非零退出抛错；
+ *  11. 准备命令在工作树里跑，失败判 failed 且不建会话；
+ *  12. 准备阶段收到停止，准备结束后不再派工；
+ *  13. 缺宿主时只记日志不假装成功。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -27,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport, transient } =
+const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
   await import('../../../../lib/packages/superagent/adapters/executor.js')
 const { ensureWorktree } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
 const { Session } = await import('../../../../lib/core/session.js')
@@ -43,6 +47,21 @@ after(() => {
 
 /** 等一个事件循环：`start` 只入队，真正的派工在 microtask 里。 */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/**
+ * 等一个条件成立，最多等 `timeout` 毫秒。
+ *
+ * 为什么不用固定 `sleep`：准备命令要真起一个子进程，机器忙的时候几十毫秒不够，
+ * 空闲的时候又白等。条件式等待两边都不吃亏。
+ */
+async function waitFor(condition, timeout = 5000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeout) {
+    if (condition()) return true
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  return condition()
+}
 
 /** 32 位十六进制，与 `core/ids.ts` 的 `key()` 同形，能被 `sessionsDir` 的校验接受。 */
 function ticketId(seed) {
@@ -149,6 +168,7 @@ function setup(label, options = {}) {
     log: options.log ?? (() => {}),
     readTriggerText: () => '把错误提示改成中文',
     ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
+    ...(options.prepare === undefined ? {} : { prepare: options.prepare }),
   })
 
   const cleanup = () => {
@@ -356,6 +376,73 @@ test('非临时故障立刻判 failed，不进重试', async () => {
     agent.deps.emit({ type: 'error', message: '没有配置仓库路径（设置 → Super Agent → repoPath）' })
     assert.equal(s.events.reports.length, 1, '配置错误要立刻报，不能白等退避')
     assert.equal(s.events.reports[0].report.state, 'failed')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('准备命令：成功返回输出，非零退出抛错', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'superagent-prepare-'))
+  roots.push(dir)
+  try {
+    const out = await runPrepare('echo prepared-ok', dir, 5000)
+    assert.match(out, /prepared-ok/, '应返回命令输出')
+
+    await assert.rejects(() => runPrepare('exit 3', dir, 5000), /准备命令退出码 3/, '非零退出要抛错')
+    await assert.rejects(
+      () => runPrepare('definitely-not-a-command-xyz', dir, 5000),
+      /准备命令退出码/,
+      '命令不存在也要抛错，不能当成成功',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('准备命令在工作树里跑；失败判 failed 且不建会话', async () => {
+  const ok = setup('prepare-ok', { prepare: 'echo marker > prepared.txt' })
+  try {
+    const { ticket, assignment } = makeTicket('1234abcd', '先装依赖')
+    ok.executor.start(ticket, assignment)
+    // launch 现在要等准备命令跑完，条件式等它起 worker。
+    await waitFor(() => ok.agents.length === 1)
+
+    const dir = join(ok.root, 'worktrees', worktreeNameOf(ticket))
+    assert.ok(existsSync(join(dir, 'prepared.txt')), '准备命令应在工作树目录里执行')
+    assert.equal(ok.agents.length, 1, '准备成功后应起 worker')
+    assert.equal(ok.events.reports.length, 0, '准备成功不该报 failed')
+  } finally {
+    ok.cleanup()
+  }
+
+  const bad = setup('prepare-bad', { prepare: 'exit 7' })
+  try {
+    const { ticket, assignment } = makeTicket('5678cdef', '装不上依赖')
+    bad.executor.start(ticket, assignment)
+    await waitFor(() => bad.events.reports.length === 1)
+
+    assert.equal(bad.agents.length, 0, '准备失败不该起 worker')
+    assert.equal(bad.events.reports.length, 1, '准备失败要报一条 failed')
+    assert.equal(bad.events.reports[0].report.state, 'failed')
+    assert.match(bad.events.reports[0].report.summary, /准备命令退出码 7/, '摘要要说清是准备命令挂了')
+  } finally {
+    bad.cleanup()
+  }
+})
+
+test('准备阶段收到停止：准备结束后不再派工', async () => {
+  // 一条跑 300ms 的命令，给我们时间在 await 中间调 stop。
+  const s = setup('prepare-stop', { prepare: 'node -e "setTimeout(() => {}, 300)"' })
+  try {
+    const { ticket, assignment } = makeTicket('9abcdef0', '准备到一半被停')
+    s.executor.start(ticket, assignment)
+    await tick()
+    s.executor.stop(ticket, assignment, '用户停止')
+
+    // 等准备命令跑完（300ms）+ 一点余量，确认没有 worker 起来。
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    assert.equal(s.agents.length, 0, '停止之后准备结束也不该起 worker')
+    assert.equal(s.events.reports.length, 0, '停止是正常收口，不该报 failed')
   } finally {
     s.cleanup()
   }

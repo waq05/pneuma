@@ -89,6 +89,15 @@ const REPO_PATH_KEY = 'repoPath'
 const MAX_WORKERS_KEY = 'maxWorkers'
 const TIMEOUT_KEY = 'ticketTimeoutSeconds'
 
+/**
+ * 工作区准备命令：建好工作树之后、worker 开跑之前执行的一条 shell 命令。
+ *
+ * 对应上游 `executor.prepare`（`core/policy.ts` 的 `ExecutorConfigSchema`）。典型用法是
+ * `pnpm install`：worker 的第一步往往就是跑测试，依赖没装就得它自己装，装不完还会撞超时。
+ * 空串 = 不跑。
+ */
+const PREPARE_COMMAND_KEY = 'prepareCommand'
+
 /** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
 const GITHUB_REPOSITORY_KEY = 'githubRepository'
 const GITHUB_LOGIN_KEY = 'githubLogin'
@@ -170,6 +179,13 @@ export interface SuperagentConfig {
   maxWorkers: number
   /** 单工单超时秒数；0 = 不限。 */
   ticketTimeoutSeconds: number
+  /**
+   * 工作区准备命令；空 = 不跑。
+   *
+   * 在**工作树目录里**跑（上游在工单目录的父目录跑，因为上游的目录是 prepare 负责建的；
+   * 当前目录由 `git worktree` 建好，prepare 的用途变成「在这棵树里装依赖」）。
+   */
+  prepareCommand: string
   /** GitHub 仓库 `owner/name`；空 = 没接这个来源。 */
   githubRepository: string
   /** 机器人自己的 GitHub 登录名；用它跳过自己发的评论。 */
@@ -210,6 +226,9 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     repoPath: typeof raw[REPO_PATH_KEY] === 'string' ? raw[REPO_PATH_KEY].trim() : '',
     maxWorkers: clampInt(raw[MAX_WORKERS_KEY], LIMITS.maxWorkers.min, LIMITS.maxWorkers.max, DEFAULTS.maxWorkers),
     ticketTimeoutSeconds: clampInt(raw[TIMEOUT_KEY], 0, TIMEOUT_MAX_SECONDS, DEFAULTS.ticketTimeoutSeconds),
+    // 长度上限与上游 schema 的 `LIMITS.prepareCommand` 对齐；超出部分截断而不是报错——
+    // 这是启动路径，不能因为一条设置让整个插件起不来。
+    prepareCommand: textOf(raw[PREPARE_COMMAND_KEY]).slice(0, LIMITS.prepareCommand),
     githubRepository: textOf(raw[GITHUB_REPOSITORY_KEY]),
     githubLogin: textOf(raw[GITHUB_LOGIN_KEY]),
     // 名单用逗号分隔：设置面只有 text 字段（`contract/settings.ts` 没有多行/标签类控件）。
@@ -271,6 +290,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           placeholder: '/path/to/repo',
           mono: true,
           help: t('field.repoPath.help'),
+        },
+        {
+          type: 'text',
+          key: PREPARE_COMMAND_KEY,
+          label: t('field.prepareCommand.label'),
+          placeholder: 'pnpm install',
+          mono: true,
+          help: t('field.prepareCommand.help'),
         },
         {
           type: 'number',
@@ -367,6 +394,7 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [REPO_PATH_KEY]: config.repoPath,
         [MAX_WORKERS_KEY]: config.maxWorkers,
         [TIMEOUT_KEY]: config.ticketTimeoutSeconds,
+        [PREPARE_COMMAND_KEY]: config.prepareCommand,
         [GITHUB_REPOSITORY_KEY]: config.githubRepository,
         [GITHUB_LOGIN_KEY]: config.githubLogin,
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
@@ -406,6 +434,13 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           writePluginConfig(CONFIG_KEY, {
             [TIMEOUT_KEY]: clampInt(number, 0, TIMEOUT_MAX_SECONDS, DEFAULTS.ticketTimeoutSeconds),
           })
+          return
+        }
+        case PREPARE_COMMAND_KEY: {
+          // 空串 = 删掉这个键（回到「不跑准备命令」）。
+          const text = String(value).trim()
+          if (text.length > LIMITS.prepareCommand) return t('save.prepareCommandTooLong')
+          saveText(PREPARE_COMMAND_KEY, text)
           return
         }
         case GITHUB_REPOSITORY_KEY: {
@@ -791,7 +826,7 @@ export function apply(ctx: Context, passed?: unknown): void {
       const opened = new SuperagentRuntime(store, {
         log: (line) => { console.warn(line) },
         ctx,
-        worker: { repo: () => config().repoPath, maxWorkers: config().maxWorkers, model: null },
+        worker: { repo: () => config().repoPath, maxWorkers: config().maxWorkers, prepare: () => config().prepareCommand, model: null },
         timeoutSeconds: () => config().ticketTimeoutSeconds,
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
         settings: () => defaultSettings(githubAccount()),

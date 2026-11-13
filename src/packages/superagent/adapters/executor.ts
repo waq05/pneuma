@@ -8,10 +8,12 @@
  *
  * 1. `ensureWorktree` 建（或复用）独立工作树，目录与分支都带工单 id 后缀——全中文标题
  *    经 `slugOf` 只会折成 `ticket`，不补唯一后缀时两张中文工单会撞同一棵树；
- * 2. `Session.create(cwd, 显式文件)`：**不走 `ctx.session.open`**，那会把用户正在看的
+ * 2. `runPrepare` 在工作树里跑设置里的准备命令（如 `pnpm install`），空串跳过；
+ *    失败直接判 failed、不自动重试——重试只会把半成品当已准备好（上游 `PrepareFailed` 同一取舍）；
+ * 3. `Session.create(cwd, 显式文件)`：**不走 `ctx.session.open`**，那会把用户正在看的
  *    会话切走（设计文档 §6.2.2）。worker 会话落在 `<DSC_HOME>/superagent/sessions/<工单 id>/`；
- * 3. `new MiniAgent(deps, session)`：`deps` 的六个必填项见 {@link WorkerExecutor.depsFor}；
- * 4. `followup(工单文本)` 开跑；回调 `assignmentStarted`。
+ * 4. `new MiniAgent(deps, session)`：`deps` 的六个必填项见 {@link WorkerExecutor.depsFor}；
+ * 5. `followup(工单文本)` 开跑；回调 `assignmentStarted`。
  *
  * ## 为什么 `start` 只排队、不在这里动手
  *
@@ -42,6 +44,7 @@
  *
  * @module dsc/packages/superagent/adapters/executor
  */
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -103,6 +106,12 @@ export interface WorkerExecutorOptions {
   host?: WorkerHost
   /** 仓库根（设置里的 `repoPath`）；可传 getter，设置页改了下一次派工就用新值。 */
   repo?: string | (() => string)
+  /**
+   * 工作区准备命令；可传 getter。空串 = 不跑。
+   *
+   * 建好工作树之后、建会话之前跑，失败即判 failed（不自动重试）。
+   */
+  prepare?: string | (() => string)
   /** 同时干活的 worker 上限（设置项），默认 2，范围 1–16。 */
   maxWorkers?: number
   /** 工作树的起点 ref；缺省 HEAD。 */
@@ -243,12 +252,68 @@ export function transient(error: unknown): boolean {
 export const TRANSIENT_TRIES = 3
 
 /**
+ * 在 `cwd` 里跑一条准备命令。
+ *
+ * 与上游 `prepareDirectory`（`executor/dsh.ts:247-262`）的差别只有两处：
+ * 1. 上游跑在工单目录的**父目录**（目录由 prepare 建）；当前目录已经由 `git worktree` 建好，
+ *    所以跑在树里——worker 的 cwd 就是那里，装依赖要装到它看得见的地方。
+ * 2. 上游失败后 `rmdir` 空目录；当前不删树（那是 git 管的，删了要 `worktree remove`），
+ *    靠「失败即判 failed、不自动重试」达到同一个效果：半成品不会被当成已准备好。
+ *
+ * 用 `shell: true` 而不是 `sh -c`：Windows 上没有 `sh`，上游那条路径在 DSC 的主要平台上跑不了。
+ * 命令来自设置页（用户自己写的），本来就是给它执行用的，不存在工单标题那种注入面。
+ *
+ * @param command - 要跑的命令
+ * @param cwd - 在哪跑
+ * @param timeoutMs - 超时就杀掉
+ * @returns 命令的输出（只留尾部）
+ * @throws 起不来、超时、非零退出
+ */
+export function runPrepare(command: string, cwd: string, timeoutMs: number = PREPARE_TIMEOUT_MS): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { cwd, shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    let output = ''
+    let timedOut = false
+    const collect = (chunk: Buffer): void => {
+      output = (output + chunk.toString()).slice(-PREPARE_OUTPUT_LIMIT)
+    }
+    child.stdout?.on('data', collect)
+    child.stderr?.on('data', collect)
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, timeoutMs)
+    child.on('error', (error: Error) => {
+      clearTimeout(timer)
+      reject(new Error(`准备命令起不来：${error.message}`))
+    })
+    child.on('close', (code: number | null) => {
+      clearTimeout(timer)
+      if (timedOut) reject(new Error(`准备命令超过 ${String(Math.round(timeoutMs / 60_000))} 分钟，已杀掉`))
+      else if (code !== 0) reject(new Error(`准备命令退出码 ${String(code)}：${output.trim().slice(-800)}`))
+      else resolve(output)
+    })
+  })
+}
+
+/**
  * 首次退避 15 秒，之后每次翻倍：15 / 30 / 60 秒。
  *
  * 与上游 `TRANSIENT_BACKOFF_MS` 一致。三次合计一分四十五秒：抖一两分钟能自己好的，
  * 这一段时间够它好；抖一小时的（令牌过期、服务停用）本来就不是「临时故障」。
  */
 const TRANSIENT_BACKOFF_MS = 15_000
+
+/**
+ * 工作区准备命令的超时：10 分钟。
+ *
+ * 与上游 `PREPARE_TIMEOUT_MS` 一致。超时的典型场景是命令卡在凭证提示上：不设上限，
+ * 它会一直攥着一个并发名额，工单既不动也不报错。
+ */
+const PREPARE_TIMEOUT_MS = 10 * 60_000
+
+/** 准备命令只留尾部这么多字符：装依赖会刷几千行，全留着没有信息量。 */
+const PREPARE_OUTPUT_LIMIT = 4000
 
 /**
  * worker 的报告映射：`turn/end` 的三种收尾原因 → 引擎要的 {@link WorkerReport}。
@@ -380,6 +445,18 @@ export class WorkerExecutor implements Executor {
   private readonly hostProblem: string[]
   /** 仓库根的 getter：设置页改了路径，下一张工单不用重启就能用新值。 */
   private readonly repoOf: () => string
+  /** 工作区准备命令的 getter；空串 = 不跑。 */
+  private readonly prepareOf: () => string
+  /** 正在准备中的派工数（建树 / 跑准备命令 / 建会话），它们也占并发名额。 */
+  private launching = 0
+  /**
+   * 准备阶段就被停掉的分配 id。
+   *
+   * 为什么需要它：`stop` 只能停「已经有 worker」的工单；而准备命令是异步的，这期间
+   * `workers` 里还没有这个 worker，停不下来。记下 id，准备结束后据此放弃派工——
+   * 否则用户点了停止，worker 过一分钟还是起来了。
+   */
+  private readonly cancelled = new Set<string>()
   private readonly maxWorkers: number
   private readonly base: string | undefined
   private readonly root: string | undefined
@@ -431,6 +508,8 @@ export class WorkerExecutor implements Executor {
     this.hostProblem = resolved.missing
     const repo = options.repo ?? ''
     this.repoOf = typeof repo === 'function' ? repo : () => repo
+    const prepare = options.prepare ?? ''
+    this.prepareOf = typeof prepare === 'function' ? prepare : () => prepare
     this.maxWorkers = Math.min(
       LIMITS.maxWorkers.max,
       Math.max(LIMITS.maxWorkers.min, Math.floor(options.maxWorkers ?? DEFAULT_MAX_WORKERS)),
@@ -542,7 +621,14 @@ export class WorkerExecutor implements Executor {
    */
   stop(ticket: Ticket, assignment: Assignment, reason: string): void {
     const worker = this.workers.get(ticket.id)
-    if (worker === undefined || worker.assignmentId !== assignment.id) return
+    if (worker === undefined) {
+      // 还在准备阶段（建树 / 跑准备命令）：没有 worker 可停，记下来让准备结束后放弃派工。
+      // 不记的话用户点了停止，一分钟准备命令跑完，worker 照样起来。
+      this.cancelled.add(assignment.id)
+      this.log(`[superagent] 工单 ${ticket.id} 在准备阶段收到停止，准备结束后不再派工`)
+      return
+    }
+    if (worker.assignmentId !== assignment.id) return
     this.terminate(worker, reason)
   }
 
@@ -551,6 +637,8 @@ export class WorkerExecutor implements Executor {
     if (this.disposed) return
     this.disposed = true
     this.queue.length = 0
+    // 准备阶段被停的记录一并清掉：插件都要卸了，没有「准备结束」这一刻了。
+    this.cancelled.clear()
     // 退避中的重试全部作废：插件都要卸了，回调里那一句「继续」没有接收方。
     for (const timer of this.retryTimers) clearTimeout(timer)
     this.retryTimers.clear()
@@ -616,11 +704,16 @@ export class WorkerExecutor implements Executor {
   /** 有空位就从队首派工；`launch` 自己接住所有异常，不会把队列卡死。 */
   private pump(): void {
     if (this.disposed) return
-    // 名额按「活着的 agent」算：收尾中的 worker 还开着会话，不能算已经让位。
-    while (this.workers.size + this.retiring.size < this.maxWorkers && this.queue.length > 0) {
+    // 名额按「占着坑的」算：准备中的、干活的、收尾中的都算。准备命令最长跑十分钟，
+    // 只按 `workers.size` 算会让准备中的那几张一起挤进来，并发上限形同虚设。
+    while (this.workers.size + this.retiring.size + this.launching < this.maxWorkers && this.queue.length > 0) {
       const item = this.queue.shift()
       if (item === undefined) break
-      this.launch(item)
+      this.launching += 1
+      void this.launch(item).finally(() => {
+        this.launching -= 1
+        this.schedule()
+      })
     }
   }
 
@@ -630,7 +723,7 @@ export class WorkerExecutor implements Executor {
    * 这里跑在事务之外（见文件头）。任何一步失败都落成一张 `failed` 报告，且把已经建出来的
    * 会话关掉；错误不往外抛——`start` 的调用方在事务里，外抛会回滚工单本身。
    */
-  private launch(item: QueuedLaunch): void {
+  private async launch(item: QueuedLaunch): Promise<void> {
     const { ticket, assignment } = item
     let session: Session | null = null
     let worker: Worker | null = null
@@ -640,6 +733,21 @@ export class WorkerExecutor implements Executor {
       if (this.engineOf === undefined) throw new Error('执行器没有引擎回调，报告没有出口')
       const name = worktreeNameOf(ticket)
       const handle = this.worktree.ensure({ repo, name, base: this.base, root: this.root })
+      // 准备命令：建树之后、建会话之前。失败直接抛，由下面的 catch 判 failed——
+      // 不自动重试（与上游 `PrepareFailed` 同一条取舍：重试只会把半成品当已准备好）。
+      const prepare = this.prepareOf().trim()
+      if (prepare !== '') {
+        this.log(`[superagent] 工单 ${ticket.id} 跑准备命令：${prepare}`)
+        const startedAt = Date.now()
+        await runPrepare(prepare, handle.path)
+        this.log(`[superagent] 工单 ${ticket.id} 准备命令完成（${String(Date.now() - startedAt)}ms）`)
+      }
+      // 准备期间被停掉 / 插件被卸：不再往下走（见 `cancelled`）。
+      if (this.cancelled.delete(assignment.id)) {
+        this.log(`[superagent] 工单 ${ticket.id} 在准备阶段被停，放弃派工`)
+        return
+      }
+      if (this.disposed) return
       const file = join(sessionsDir(ticket.id), `${randomUUID()}.jsonl`)
       session = this.createSession(handle.path, file)
       // 权限在 worker 开工前钉死（§7.3）：沙箱永远 workspace-write，不跟随用户当前会话；
@@ -675,6 +783,7 @@ export class WorkerExecutor implements Executor {
       this.engineOf?.()?.assignmentStarted(ticket.id, assignment.id)
       this.log(`[superagent] 工单 ${ticket.id} 已在 ${handle.path} 开工（分支 ${handle.branch}，${handle.created ? '新建' : '复用'}）`)
     } catch (error) {
+      this.cancelled.delete(assignment.id)
       this.log(`[superagent] 工单 ${ticket.id} 派工失败：${describe(error)}`)
       if (worker !== null) {
         // 走同一条退场路径：可能已经开了一轮，先取消，回合收尾后才关会话。

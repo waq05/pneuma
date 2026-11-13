@@ -3,6 +3,8 @@
   "section.subtitle": "把一句话需求派给独占工作区的智能体，结果回到工单里",
   "field.repoPath.label": "默认仓库路径",
   "field.repoPath.help": "执行器在这个仓库里建工作树。改完保存，下一张工单就用新路径。",
+  "field.prepareCommand.label": "工作区准备命令",
+  "field.prepareCommand.help": "建好工作树之后、worker 开跑之前执行的一条命令，比如 pnpm install。留空表示不跑。命令失败这张工单直接判失败，不会自动重试；最多跑 10 分钟。",
   "field.maxWorkers.label": "同时最多几个工单在跑",
   "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
   "field.ticketTimeoutSeconds.label": "单工单超时（秒）",
@@ -27,6 +29,7 @@
   "field.assessorModel.help": "写成 provider/model。留空表示不调模型，只接「明确对智能体说」的请求；填了之后，拿不准的请求也交给模型判一次。改完要重开宿主。",
   "save.maxWorkersBad": "并发上限要填数字（1–16）",
   "save.timeoutBad": "超时秒数要填数字（0 表示不限）",
+  "save.prepareCommandTooLong": "准备命令太长了（最多 4000 字）",
   "save.githubRepositoryBad": "仓库要写成 owner/name 的样子",
   "save.unknownKey": "未知设置项「{key}」"
 }

@@ -3,6 +3,8 @@
   "section.subtitle": "Hand a one-line request to an agent that owns its own worktree; the result comes back as a ticket",
   "field.repoPath.label": "Default repository path",
   "field.repoPath.help": "The executor creates worktrees in this repository. Save it and the next ticket uses the new path.",
+  "field.prepareCommand.label": "Workspace prepare command",
+  "field.prepareCommand.help": "A command run in the worktree after it is created and before the worker starts, such as pnpm install. Leave it empty to skip. A failure fails the ticket at once with no automatic retry; it runs for at most 10 minutes.",
   "field.maxWorkers.label": "Maximum tickets running at once",
   "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
   "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",
@@ -27,6 +29,7 @@
   "field.assessorModel.help": "Write it as provider/model. Empty means no model: only requests addressed to the agent are accepted. Once set, requests it is unsure about are judged by the model. Restart the host after changing it.",
   "save.maxWorkersBad": "The concurrency limit must be a number (1-16)",
   "save.timeoutBad": "The timeout must be a number of seconds (0 means no limit)",
+  "save.prepareCommandTooLong": "The prepare command is too long (4000 characters at most)",
   "save.githubRepositoryBad": "The repository must look like owner/name",
   "save.unknownKey": "Unknown setting \"{key}\""
 }

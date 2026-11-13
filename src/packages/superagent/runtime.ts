@@ -98,6 +98,12 @@ export interface WorkerRuntimeOptions {
   repo?: () => string
   /** 并发上限，缺省 2。 */
   maxWorkers?: number
+  /**
+   * 工作区准备命令的 getter；空串 = 不跑。
+   *
+   * 走 getter 而不是值：设置页改完，下一张工单就用新命令，不必重开宿主。
+   */
+  prepare?: () => string
   /** worker 的模型路由；缺省跟随当前选路。 */
   model?: WorkerModel | null
   /** 无人值守审批档，缺省 `deny`。 */
@@ -277,6 +283,7 @@ export class SuperagentRuntime {
     this.executor = options.executor ?? new WorkerExecutor(options.ctx ?? null, {
       repo: this.repoOf,
       maxWorkers: worker?.maxWorkers,
+      prepare: worker?.prepare,
       model: worker?.model ?? null,
       unattended: worker?.unattended,
       base: worker?.base,
