@@ -1091,3 +1091,78 @@ node scripts/plugin-inventory-check.mjs # exit 0，78 插件 / 26 分区 / 22 �
 ---
 
 *本文档随实现更新。写完代码那一节，回来改「实际做法」。*
+
+## 16. P2 实施记录（进行中）
+
+### 16.1 GitHub 来源（已完成，离线用例 15 条 + 全链路 4 条）
+
+从上游 `sources/github*.ts`（901 行）移植到 `adapters/github/` 八个文件、约 1450 行。
+
+| 文件 | 职责 |
+| --- | --- |
+| `api.ts` | fetch 封装：路径锁在 `repos/<repository>/`、Bearer、Link 翻页、`GithubError.code` 带 HTTP 状态 |
+| `state.ts` | 直接读写 `kv` 表存游标，键名照上游 `kv.ts:46-50` |
+| `trigger.ts` | 纯函数：issue / PR / 评论 / review / CI → `Trigger`，含 `githubAddress` |
+| `read.ts` | CI 快照（check-runs 跨页 + statuses 取最新）与对话读法 |
+| `pull.ts` | 读 PR、结束报 `threadClosed`、`agentPull` / `ticketBranch` |
+| `channel.ts` | 发评论、回 review 讨论、marker 去重、410 与 403+locked → `gone` |
+| `poll.ts` | 5 秒回退、14 天视野取整点、ETag 复用条件 |
+| `source.ts` | `createGithubSource(...) → { tick, status }`，另导出 `pollPullChecks` |
+
+**换掉的只有「谁发请求」**：上游走 `gh` 子进程（`infra/commands.ts:68-98`），DSC 走内置 fetch。
+三条边界原样保留，且都有用例钉住：路径不能越出本仓库（否则令牌能把别的仓库数据带出来）、
+翻页只认 `api.github.com`（伪造的 `Link` 会把 `Authorization` 头带去别人的服务器）、
+410 永久删除 / 404 可重试 / 304 静默 / 403+locked 永久不可回复。
+
+**与上游一致的语义**（改一个字符就静默漏事件，所以逐字段做了快照断言）：`Trigger.id` 公式、
+`meta` 形状、`human` / `addressed`、游标回退 5 秒与 14 天视野。
+
+**没搬的三处**，原因都写在对应文件头：
+
+- `githubThreadContext`：DSC 没有 `ThreadContext` 端口，评估侧要用 `read.ts` 的 thread 读法补；
+- `claimPull` 与 PR 自动绑定：要 `tickets.open()` / `triggers.get()`，搬进来会让工单规则复制成两套；
+- `pollTicketPulls` / `pollThreads`：需要「工单清单」与「订阅了哪些线程」两个出口，本适配器没有。
+
+### 16.2 接线（已完成）
+
+- `runtime.sourceBridge()` 只露三个动作（`receive` / `bindThread` / `threadClosed`）。把运行期
+  整个交出去，来源就能绕过准入闸自己建单。
+- `threadClosed(thread, outcome, at)` 的 `at` 原样透传：适配器带着 PR 的 `merged_at` 来报，
+  丢掉这个时刻会把工单结束时间记成「现在」。
+- 来源在泵上每 30 秒一拍、上一拍没回来就跳过。配额打满的症状是「突然一条评论都收不到」。
+- 令牌只从环境变量读（默认 `GITHUB_TOKEN`），`plugins.json` 里只存变量名。
+
+### 16.3 一处自己写错的防线（已拆）
+
+第一次接线时我在 `scope.ts` 里读 `meta.repository` 做「仓库不符就拒」。但 `Trigger.meta` 与
+上游逐字段一致，**里面没有仓库这个键**——读到的永远是空串，那道闸一次也没生效。
+
+空的防线比没有防线更糟：它让人以为有保护。已删，并把仓库边界归到真正守它的地方：轮询器只
+轮询一个仓库，`api.ts` 把路径限制在 `repos/<repository>/` 下。
+
+### 16.4 模型版编排器（已完成，用例 10 条）
+
+上游把候选卡片投给主会话、由主会话调工具判定（`app/assessment.ts:104`）。DSC 没有常驻主会话，
+换成一次性问答：提示词进、JSON 出，判定结果仍经 `Engine.decide` 落库。
+
+三个实现决定：
+
+1. **先 `candidateDelivered` 再等模型**。这条是查实的隐患：核心的 Eval 截止时间只在候选
+   「已投递」后才开始算（`core/evals.ts:43`），而 `ManualAssessor` 从不调它——今天不出事是因为
+   泵每 2 秒把队列抽空，模型版一旦慢或挂住就永远不会过期（`core/evals.ts:60` 的重排与
+   「判定器不可用」全靠这个截止时间）。
+2. **判定整份交给核心校验**（`assessmentOutcome`，`core/policy.ts:52`），不自己写第二套。
+   方向必须是对象（`core/policy.ts:30-35`），不是 `inbound` / `outbound` 这种词。
+3. **模型输出不可信**：带围栏、少判一条规则、整个不是 JSON，都落成「这一条判不了」。
+
+降级：`eval.model` 是 `nullable().default(null)`，不配模型时一次模型请求都不发，行为与 P0 逐字一致。
+配了模型但宿主没接 `llm` 时退回同步规则，不抛错。
+
+### 16.5 还没做的
+
+| 项 | 缺什么 | 谁决定 |
+| --- | --- | --- |
+| 飞书来源/通知 | 上游两条腿都是 `lark-cli` 子进程（`feishu-loops.ts:71`、`feishu-channel.ts:23`），代码里没有一处自己发 HTTP。轮询能替代「配置点名的群」，替代不了「新群/私聊自动发现」与秒级延迟 | 要不要把 `lark-cli` 变成运行时依赖 |
+| PR 的 CI 轮询 | `pollPullChecks(options, number)` 已导出，但「哪些 PR 该看」要工单清单，接线层还没做 | 我 |
+| PR 自动绑定 | 同上，要 `tickets.open()`；`agentPull` / `ticketBranch` 已备好 | 我 |
+| 真账号验收 | 需要仓库 + `GITHUB_TOKEN`，`@` 一次要真的产出 PR | 用户 |
