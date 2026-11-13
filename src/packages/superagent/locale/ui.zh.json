@@ -5,6 +5,8 @@
   "field.repoPath.help": "执行器在这个仓库里建工作树。改完保存，下一张工单就用新路径。",
   "field.prepareCommand.label": "工作区准备命令",
   "field.prepareCommand.help": "建好工作树之后、worker 开跑之前执行的一条命令，比如 pnpm install。留空表示不跑。命令失败这张工单直接判失败，不会自动重试；最多跑 10 分钟。",
+  "field.confirmInferred.label": "推断候选先等我确认",
+  "field.confirmInferred.help": "打开后，智能体从群里或 PR 里推断出来的候选不会直接开工：先列在「待确认」里，你点「接单」才建工单。明确请求不受影响。只在判定模式是「自动接单」时看得出区别。",
   "field.maxWorkers.label": "同时最多几个工单在跑",
   "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
   "field.ticketTimeoutSeconds.label": "单工单超时（秒）",

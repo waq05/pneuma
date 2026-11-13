@@ -14,7 +14,7 @@
 import type { Engine, Assessor } from '../core/index.js'
 import type { RoleModel, Settings } from '../core/policy.js'
 import { ManualAssessor } from './assessor.js'
-import { ModelAssessor, type AssessorComplete, type AssessorContext } from './assessor-model.js'
+import { ModelAssessor, type AssessorComplete, type AssessorContext, type HeldCandidate } from './assessor-model.js'
 
 /** 本包用的判定器：核心端口 + 泵每拍要的两件事。 */
 export interface SuperagentAssessor extends Assessor {
@@ -40,6 +40,8 @@ export interface AssessorSelection {
   context?: AssessorContext
   onError?: (error: unknown, evalId: string) => void
   log?: (line: string) => void
+  /** 推断候选的落点（backlog G1）；不给 = 判定即接单的老行为。 */
+  holdCandidate?: (hold: HeldCandidate) => void
 }
 
 /**
@@ -56,6 +58,7 @@ export function selectAssessor(selection: AssessorSelection): SuperagentAssessor
       ...(selection.context === undefined ? {} : { context: selection.context }),
       ...(selection.onError === undefined ? {} : { onError: selection.onError }),
       ...(selection.log === undefined ? {} : { log: selection.log }),
+      ...(selection.holdCandidate === undefined ? {} : { holdCandidate: selection.holdCandidate }),
     })
   }
   return new ManualAssessor(selection.onError)

@@ -46,7 +46,26 @@ function trigger(overrides = {}) {
 
 /** 一条候选（`Candidate` 只需要这几项就能判定）。 */
 function candidate(overrides = {}) {
-  return { evalId: 'eval-1', strength: 'explicit', triggers: [trigger()], ...overrides }
+  return {
+    evalId: 'eval-1',
+    strength: 'explicit',
+    triggers: [trigger()],
+    // 候选收件箱要按线程分组（G1 的 `HeldCandidate.threadKey`），判定本身不读它。
+    thread: { key: 'manual:trg-1', ref: { source: 'manual', id: 'manual:trg-1' } },
+    ...overrides,
+  }
+}
+
+/**
+ * 自动接单模式的设置。
+ *
+ * 为什么推断候选的用例要用它：`assessmentOutcome` 在 `mode !== 'auto'` 时把推断强度的
+ * accept 降成 `ignore`（带 `would_accept`，`core/policy.ts` 的 `observed` 那一支），
+ * 根本到不了收件箱。默认设置是 `observe`。
+ */
+function autoSettings() {
+  const settings = defaultSettings()
+  return { ...settings, eval: { ...settings.eval, mode: 'auto' } }
 }
 
 /**
@@ -240,6 +259,62 @@ test('模型版：在飞时再投递同一 Eval 不会重复问', async () => {
 })
 
 // ── 5. 提示词本身 ───────────────────────────────────────────────────────────
+
+// ── G1：推断候选挂起等人点头 ──────────────────────────────────────────────
+//
+// 开了「先等我确认」时，推断强度的 accept 不直接建工单：先交给收件箱，并把 Eval
+// 结束掉（记一条 ignore）——不结束它会挂到超时、重排、再判一次、再进一次收件箱。
+test('模型版：开了先确认，推断候选挂起而不建工单', async () => {
+  const held = []
+  const { assessor, errors } = modelAssessor(acceptReply(), {
+    settings: () => autoSettings(),
+    holdCandidate: (hold) => held.push(hold),
+  })
+  const inferred = candidate({ strength: 'inferred' })
+  const { engine, calls } = fakeEngine(inferred)
+  assessor.request(inferred)
+  await assessor.drainAsync(engine)
+
+  assert.equal(errors.length, 0, JSON.stringify(errors.map((item) => String(item.error))))
+  assert.equal(held.length, 1, '候选要交给收件箱')
+  assert.equal(held[0].evalId, 'eval-1')
+  assert.equal(held[0].triggerId, 'trg-1')
+  assert.equal(held[0].title, '改错别字')
+  assert.equal(held[0].source, 'manual')
+  assert.equal(held[0].outcome.kind, 'accept', '交出去的是原样的 accept 结论')
+  assert.equal(calls.decisions.length, 1, 'Eval 要结束，否则会挂到超时重排')
+  assert.equal(calls.decisions[0].outcome.kind, 'ignore', '记一条 ignore 表示这次判定没有接单')
+})
+
+// 明确请求不走收件箱：那是人自己敲的，不需要再问一次。
+test('模型版：开了先确认，明确请求照旧直接接单', async () => {
+  const held = []
+  const { assessor, errors } = modelAssessor(acceptReply(), {
+    settings: () => autoSettings(),
+    holdCandidate: (hold) => held.push(hold),
+  })
+  const { engine, calls } = fakeEngine(candidate())
+  assessor.request(candidate())
+  await assessor.drainAsync(engine)
+
+  assert.equal(errors.length, 0, JSON.stringify(errors.map((item) => String(item.error))))
+  assert.deepEqual(held, [], '明确请求不该进收件箱')
+  assert.equal(calls.decisions.length, 1)
+  assert.equal(calls.decisions[0].outcome.kind, 'accept', '照旧直接接单')
+})
+
+// 没开「先等我确认」时，推断候选也照旧判定即接单（与上游一致）。
+test('模型版：没开先确认，推断候选判定即接单', async () => {
+  const { assessor, errors } = modelAssessor(acceptReply(), { settings: () => autoSettings() })
+  const inferred = candidate({ strength: 'inferred' })
+  const { engine, calls } = fakeEngine(inferred)
+  assessor.request(inferred)
+  await assessor.drainAsync(engine)
+
+  assert.equal(errors.length, 0, JSON.stringify(errors.map((item) => String(item.error))))
+  assert.equal(calls.decisions.length, 1)
+  assert.equal(calls.decisions[0].outcome.kind, 'accept')
+})
 
 test('提示词：把每条启用规则的原文与请求正文都写进去', () => {
   const settings = defaultSettings()

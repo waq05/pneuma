@@ -16,6 +16,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
+  SuperagentCandidateView,
   SuperagentSurface,
   SuperagentTicketView,
   TranscriptEntry,
@@ -23,6 +24,7 @@ import type {
 import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
 import { Session } from '@pneuma/runtime/core/session.js'
 import { sessionsDir } from './paths.js'
+import type { CandidateRecord } from './adapters/store.js'
 import type { SuperagentRuntime, TicketView } from './runtime.js'
 
 /** 一张工单的命令层视图 → 界面视图（只换字段名，不在这里算业务）。 */
@@ -34,6 +36,18 @@ function toTicketView(ticket: TicketView): SuperagentTicketView {
     // 契约里叫 `at`（与 recent 同一口径），命令层叫 createdAt：同一个值。
     at: ticket.createdAt,
     ...(ticket.summary === undefined ? {} : { summary: ticket.summary }),
+  }
+}
+
+/** 一条候选记录 → 界面视图（只换字段名，判定结果不往外给）。 */
+function toCandidateView(record: CandidateRecord): SuperagentCandidateView {
+  return {
+    id: record.id,
+    title: record.value.title,
+    reason: record.value.reason,
+    scope: record.value.scope,
+    source: record.value.source,
+    at: record.at,
   }
 }
 
@@ -55,7 +69,12 @@ export function buildSurface(runtime: SuperagentRuntime): SuperagentSurface {
     else if (ticket.stage.stage === 'ended') counts.done += 1
     else counts.running += 1
   }
-  return { ready: true, counts, tickets, recent: runtime.recent() }
+  return {
+    ready: true, counts, tickets, recent: runtime.recent(),
+    // 「先等我确认」关着时不给这一格：`undefined` 表示这个功能没开，空数组表示
+    // 「开了但没人等」——界面按前者整块不画，按后者画一句「暂时没有待确认」。
+    ...(runtime.confirmingInferred() ? { candidates: runtime.candidates().map(toCandidateView) } : {}),
+  }
 }
 
 /**

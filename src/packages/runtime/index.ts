@@ -40,6 +40,26 @@ function superagentTicketId(input: unknown): string {
   throw new Error('要给一个工单 id（`{ id }` 或裸字符串）')
 }
 
+/**
+ * 候选收件箱两个动作的入参：`{ id, title?, reason? }` 或裸 id 字符串。
+ *
+ * 为什么允许裸字符串：命令行与界面半的写法不必统一（与工单那几个同一个口径）。
+ */
+function candidateRefOf(input: unknown): { id: string; title?: string; reason?: string } {
+  if (typeof input === 'string') return { id: input }
+  if (input !== null && typeof input === 'object') {
+    const { id, title, reason } = input as { id?: unknown; title?: unknown; reason?: unknown }
+    if (typeof id === 'string') {
+      return {
+        id,
+        ...(typeof title === 'string' ? { title } : {}),
+        ...(typeof reason === 'string' ? { reason } : {}),
+      }
+    }
+  }
+  throw new Error('要给一个候选 id（`{ id }` 或裸字符串）')
+}
+
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
   inject: [
@@ -352,6 +372,21 @@ export const runtimePlugin: Plugin.Object = {
         const superagent = ctx.get('superagent')
         if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，看不到执行会话'))
         return superagent.peekSession(superagentTicketId(input))
+      },
+
+      // 候选收件箱（backlog G1）：两个写动作，与 publish 同一档。
+      superagentAcceptCandidate(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有候选可接'))
+        const { id, title } = candidateRefOf(input)
+        return superagent.acceptCandidate(id, title)
+      },
+
+      superagentIgnoreCandidate(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有候选可忽略'))
+        const { id, reason } = candidateRefOf(input)
+        return superagent.ignoreCandidate(id, reason)
       },
 
       setPolicy(policy) {

@@ -98,7 +98,13 @@ const TIMEOUT_KEY = 'ticketTimeoutSeconds'
  * 空串 = 不跑。
  */
 const PREPARE_COMMAND_KEY = 'prepareCommand'
-
+/**
+ * 推断候选先等人点头（backlog G1）。
+ *
+ * 布尔字段：`raw[...] === true` 才算开，字符串 `'true'` 不算——设置面写回来的是真布尔，
+ * 手改配置文件时写错类型不该悄悄打开一个会让人等确认的开关。
+ */
+const CONFIRM_INFERRED_KEY = 'confirmInferred'
 /** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
 const GITHUB_REPOSITORY_KEY = 'githubRepository'
 const GITHUB_LOGIN_KEY = 'githubLogin'
@@ -264,6 +270,14 @@ export interface SuperagentConfig {
   feishuDirect: boolean
   /** 判定用模型（`provider/model`）；空 = 不调模型。 */
   assessorModel: string
+  /**
+   * 推断候选要不要先等人点头（backlog G1）；默认关。
+   *
+   * 开着时判定器判成可以接的推断候选不直接建工单，先落进候选收件箱，人在界面上
+   * 点「接单」才建；关着时判定即接单（与上游一致）。只在 `eval.mode = 'auto'` 时
+   * 看得出区别（`observe` 模式下引擎本来就不让推断候选接单）。
+   */
+  confirmInferred: boolean
 }
 
 /** 把一个配置值读成去空白的字符串；类型不对或没给都算空。 */
@@ -289,6 +303,7 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     // 长度上限与上游 schema 的 `LIMITS.prepareCommand` 对齐；超出部分截断而不是报错——
     // 这是启动路径，不能因为一条设置让整个插件起不来。
     prepareCommand: textOf(raw[PREPARE_COMMAND_KEY]).slice(0, LIMITS.prepareCommand),
+    confirmInferred: raw[CONFIRM_INFERRED_KEY] === true,
     githubRepository: textOf(raw[GITHUB_REPOSITORY_KEY]),
     githubLogin: textOf(raw[GITHUB_LOGIN_KEY]),
     // 名单用逗号分隔：设置面只有 text 字段（`contract/settings.ts` 没有多行/标签类控件）。
@@ -381,6 +396,12 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           help: t('field.ticketTimeoutSeconds.help'),
         },
         {
+          type: 'switch',
+          key: CONFIRM_INFERRED_KEY,
+          label: t('field.confirmInferred.label'),
+          help: t('field.confirmInferred.help'),
+        },
+        {
           type: 'text',
           key: GITHUB_REPOSITORY_KEY,
           label: t('field.githubRepository.label'),
@@ -466,6 +487,7 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [MAX_WORKERS_KEY]: config.maxWorkers,
         [TIMEOUT_KEY]: config.ticketTimeoutSeconds,
         [PREPARE_COMMAND_KEY]: config.prepareCommand,
+        [CONFIRM_INFERRED_KEY]: config.confirmInferred,
         [GITHUB_REPOSITORY_KEY]: config.githubRepository,
         [GITHUB_LOGIN_KEY]: config.githubLogin,
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
@@ -514,6 +536,11 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           const text = String(value).trim()
           if (text.length > LIMITS.prepareCommand) return t('save.prepareCommandTooLong')
           saveText(PREPARE_COMMAND_KEY, text)
+          return
+        }
+        case CONFIRM_INFERRED_KEY: {
+          // 与飞书那两个开关同一种写法：写 `false` 而不是删键，磁盘上分得清「关过」与「没配过」。
+          writePluginConfig(CONFIG_KEY, { [CONFIRM_INFERRED_KEY]: value === true })
           return
         }
         case GITHUB_REPOSITORY_KEY: {
@@ -965,6 +992,8 @@ export function apply(ctx: Context, passed?: unknown): void {
         scope: superagentScope(githubAccount, feishuAccount),
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),
+        // 推断候选先等人点头（backlog G1）：现读，设置页打开之后下一条候选就进收件箱。
+        confirmInferred: config().confirmInferred,
         ...(complete === undefined ? {} : { assessorComplete: complete }),
         // 发送方现读：两个来源在本函数返回之后才起来（`startGithub` / `startFeishu`）。
         senders: outboxSenders,

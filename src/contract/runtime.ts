@@ -302,6 +302,27 @@ export interface SuperagentSourceView {
  * 不要拿缺字段当错误（与 `scheduled?` 同一约定）。开着但库还没打开时是
  * `ready: false` + 一句 `problem`，界面据此说清卡在哪。
  */
+/**
+ * 一条等人拍板的推断候选（backlog G1）。
+ *
+ * 只放界面画卡片要的几项：判定结果本身（`AssessmentOutcome`）留在库里，人点「接单」
+ * 时由宿主原样交给引擎，不经界面转手——那是最容易改坏的形状。
+ */
+export interface SuperagentCandidateView {
+  /** 候选 id（接单 / 忽略时回传它）。 */
+  id: string
+  /** 卡片标题（模型给的工单标题）。 */
+  title: string
+  /** 模型给的理由：为什么它被判成可以接。 */
+  reason: string
+  /** 工单范围。 */
+  scope: string
+  /** 来源（`github` / `feishu` / `manual`）。 */
+  source: string
+  /** 判定出来的时间（ISO）。 */
+  at: string
+}
+
 export interface SuperagentSurface {
   /** 运行期是否可用：false = 还没启动（懒建）或建库失败，看 `problem`。 */
   ready: boolean
@@ -322,6 +343,14 @@ export interface SuperagentSurface {
    * 「配了但令牌过期 / CLI 挂了」，而这两种情况要做的操作完全不同。
    */
   sources?: SuperagentSourceView[]
+  /**
+   * 等人拍板的推断候选，新的在前。
+   *
+   * **可选**：「推断候选先等我确认」关着时这一格缺席（判定即接单，没有待确认的东西）。
+   * 「没有这一格」与「有但为空」是两件事——界面按 `undefined` 整块不画，按空数组画一句
+   * 「暂时没有待确认的候选」。
+   */
+  candidates?: SuperagentCandidateView[]
 }
 
 /** 发布一张工单的入参（`superagentPublish` 的唯一实参）。 */
@@ -357,6 +386,14 @@ export interface SuperagentService {
   clean(id: string): Promise<void>
   /** 只读读一张工单的执行会话转录（不落盘、不拿写租约）。 */
   peekSession(id: string): Promise<TranscriptEntry[]>
+  /**
+   * 接一条等人拍板的推断候选（backlog G1），返回建出来的工单 id。
+   *
+   * `title` 可选：界面允许人在接单时改个更清楚的名字；不给就用判定时那个。
+   */
+  acceptCandidate(id: string, title?: string): Promise<string>
+  /** 忽略一条等人拍板的推断候选（它就此结束，不再进工单）。 */
+  ignoreCandidate(id: string, reason?: string): Promise<void>
   /** 当前快照面（`ctx.surfaces.register('superagent', …)` 读它）。 */
   surface(): SuperagentSurface
 }
@@ -434,6 +471,14 @@ declare module './snapshot.js' {
     superagentCleanWorktree(input: SuperagentTicketRef | string): Promise<void>
     /** 只读读一张工单的执行会话转录。 */
     superagentPeekSession(input: SuperagentTicketRef | string): Promise<TranscriptEntry[]>
+    /**
+     * 接一条等人拍板的推断候选，返回建出来的工单 id。
+     *
+     * `title` 可选：界面允许人在接单时改个更清楚的名字；不给就用判定时那个。
+     */
+    superagentAcceptCandidate(input: { id: string; title?: string } | string): Promise<string>
+    /** 忽略一条等人拍板的推断候选（它就此结束，不再进工单）。 */
+    superagentIgnoreCandidate(input: { id: string; reason?: string } | string): Promise<void>
   }
 }
 

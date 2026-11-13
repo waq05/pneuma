@@ -142,6 +142,25 @@ export class SuperagentService implements SuperagentServicePort {
   }
 
   /**
+   * 接一条等人拍板的推断候选，返回建出来的工单 id。
+   *
+   * 判定结果整份从库里取、原样交给引擎（`runtime.acceptCandidate`）：界面只给 id
+   * 与可选的标题覆盖，不转手那份 JSON——少一个 `rules` 就会被引擎按「推断候选没有
+   * 命中规则」拒掉（`core/evals.ts:152`）。
+   */
+  async acceptCandidate(id: string, title?: string): Promise<string> {
+    const ticketId = this.require().acceptCandidate(this.idOf(id), title)
+    this.notify()
+    return ticketId
+  }
+
+  /** 忽略一条候选：它就此结束，不再进工单。 */
+  async ignoreCandidate(id: string, reason?: string): Promise<void> {
+    this.require().ignoreCandidate(this.idOf(id), reason)
+    this.notify()
+  }
+
+  /**
    * 泵的一拍：驱动运行期，可见面变样时推一次快照。
    *
    * 为什么不每拍都推：2 秒一次的全量快照重算 + 界面重画是纯浪费；只有工单阶段真的

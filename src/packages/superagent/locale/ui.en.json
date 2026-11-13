@@ -5,6 +5,8 @@
   "field.repoPath.help": "The executor creates worktrees in this repository. Save it and the next ticket uses the new path.",
   "field.prepareCommand.label": "Workspace prepare command",
   "field.prepareCommand.help": "A command run in the worktree after it is created and before the worker starts, such as pnpm install. Leave it empty to skip. A failure fails the ticket at once with no automatic retry; it runs for at most 10 minutes.",
+  "field.confirmInferred.label": "Wait for my confirmation on inferred candidates",
+  "field.confirmInferred.help": "When on, a candidate the agent inferred from a chat or a pull request does not start work: it is listed under Pending until you accept it. Explicit requests are unaffected. It only makes a difference in the automatic accept mode.",
   "field.maxWorkers.label": "Maximum tickets running at once",
   "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
   "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",

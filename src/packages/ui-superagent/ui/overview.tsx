@@ -23,11 +23,11 @@
  *
  * @module dsc-ui-shell/superagent/overview
  */
-import type { ReactNode } from 'react'
-import { IconBolt, createT } from '@dsc/ui'
+import { useState, type ReactNode } from 'react'
+import { IconBolt, createT, humanErrorText, useHostChannel } from '@dsc/ui'
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
-import { formatAt, setSuperagentTab, type SuperagentSource, type SuperagentView } from './state'
+import { formatAt, setSuperagentTab, type SuperagentCandidate, type SuperagentSource, type SuperagentView } from './state'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
@@ -88,6 +88,7 @@ export function OverviewPage({ surface }: { surface: SuperagentView }): ReactNod
         <CountCard label={t('superagent.overview.counts.running')} value={surface.counts.running} />
         <CountCard label={t('superagent.overview.counts.done')} value={surface.counts.done} />
       </div>
+      {surface.candidates === undefined ? null : <CandidatesBlock candidates={surface.candidates} />}
       {surface.tickets.length === 0 ? <EmptyState /> : <RecentList recent={recent} />}
       {sources === undefined ? null : <SourcesBlock sources={sources} />}
     </div>
@@ -123,6 +124,82 @@ function EmptyState(): ReactNode {
           {t('superagent.overview.emptyAction')}
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 「待确认」区块（backlog G1）：推断候选等人点头。
+ *
+ * 为什么放在计数下面、工单列表上面：这是整页唯一需要人**立刻**做决定的地方，
+ * 放页底等于藏起来——用户不翻到最后就以为没有事要做。
+ *
+ * 每行三个信息：标题、模型给的理由 + 范围、判定时刻；两个按钮：接单 / 忽略。
+ * 按钮只回传 id，判定结果本身留在宿主库里（界面转手那份 JSON 最容易改坏）。
+ *
+ * 已知限制：处理完不会立刻从这里消失，要等宿主推下一次快照（`service.tick` 的指纹
+ * 现在只算工单与最近动态，候选进出一拍之内能反映，但按钮本身不乐观更新）。
+ */
+function CandidatesBlock({ candidates }: { candidates: readonly SuperagentCandidate[] }): ReactNode {
+  const channel = useHostChannel()
+  /** 正在处理的那一条：两个按钮都置灰，防连点（第二次会被宿主按「已经处理过」拒掉）。 */
+  const [busy, setBusy] = useState<string | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const settle = (id: string, method: 'superagentAcceptCandidate' | 'superagentIgnoreCandidate'): void => {
+    setBusy(id)
+    setFailure(null)
+    channel
+      .invoke(method, [{ id }])
+      .then(() => {
+        setBusy(null)
+      })
+      .catch((error: unknown) => {
+        setBusy(null)
+        setFailure(humanErrorText(error))
+      })
+  }
+  return (
+    <div className="plugin-detail-config">
+      <div className="settings-group-title">{t('superagent.overview.candidates')}</div>
+      {candidates.length === 0 ? (
+        <div className="settings-empty">{t('superagent.overview.candidatesEmpty')}</div>
+      ) : (
+        candidates.map((candidate) => (
+          <div className="setting-row" key={candidate.id}>
+            <div className="setting-text">
+              <div className="setting-label">{candidate.title}</div>
+              <div className="setting-help">
+                {candidate.reason}
+                {candidate.scope === '' ? '' : ` · ${candidate.scope}`}
+                {candidate.at === '' ? '' : ` · ${formatAt(candidate.at)}`}
+              </div>
+            </div>
+            <div className="setting-control">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy === candidate.id}
+                onClick={() => {
+                  settle(candidate.id, 'superagentAcceptCandidate')
+                }}
+              >
+                {t('superagent.overview.accept')}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy === candidate.id}
+                onClick={() => {
+                  settle(candidate.id, 'superagentIgnoreCandidate')
+                }}
+              >
+                {t('superagent.overview.ignore')}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+      {failure === null ? null : <div className="settings-empty">{failure}</div>}
     </div>
   )
 }

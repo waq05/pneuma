@@ -123,6 +123,10 @@ export const UI_METHODS = [
   'superagentRetryTicket',
   'superagentCleanWorktree',
   'superagentPeekSession',
+  // 推断候选收件箱（backlog G1）：人在界面上给一条候选定结论。两个都是写类，
+  // 与 publish 同一档；远程壳不放行（见 packages/remote/types.ts）。
+  'superagentAcceptCandidate',
+  'superagentIgnoreCandidate',
   // 模型与档位
   'setModel',
   'listModels',
@@ -452,6 +456,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   superagentRetryTicket: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   superagentCleanWorktree: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   superagentPeekSession: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  // 候选收件箱的两个动作：一个候选 id，外加（接单时）可选的标题覆盖。
+  // 形状与工单那几个同一个口径：json 对象，具体字段由服务层校验。
+  superagentAcceptCandidate: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  superagentIgnoreCandidate: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
 }
 
 /** 校验结果：过了一条新实参数组（尾部空值已去掉），没过给一句能读的错。 */

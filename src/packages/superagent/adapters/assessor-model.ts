@@ -54,6 +54,41 @@ const ModelOutputSchema = z.object({
 export type AssessorComplete = (prompt: string) => Promise<string>
 
 /**
+ * 一条被挂起的推断候选（backlog G1）。
+ *
+ * 为什么把整份 outcome 交出去而不是在这里 decide：决定「接不接」是人的事，判定器
+ * 只负责「这条按规则能不能接」。交出去之后，落库、界面显示、人点确认都发生在适配层，
+ * 判定器不碰存储也不碰界面。
+ */
+export interface HeldCandidate {
+  /** Eval 的 id（收件箱里那条的 id）。 */
+  evalId: string
+  /** 触发它的消息。 */
+  triggerId: string
+  /** 主线程 key（界面上按线程分组）。 */
+  threadKey: string
+  /** 判定结果：人点接单时原样交给引擎。 */
+  outcome: AssessmentOutcome
+  /** 卡片标题。 */
+  title: string
+  /** 模型给的理由。 */
+  reason: string
+  /** 工单范围。 */
+  scope: string
+  /** 来源（`github` / `feishu`）。 */
+  source: string
+}
+
+/**
+ * 挂起时写进 `decision` 表的理由。
+ *
+ * 为什么还要记一条 `ignore`：Eval 必须结束，否则它会挂到超时、重排、再判一次、
+ * 再进一次收件箱——同一个候选在界面上出现两遍。记成 ignore 是「这次判定没有接单」，
+ * 真实结论在候选收件箱里，等人给。
+ */
+export const AWAITING_PERSON = 'awaiting-person'
+
+/**
  * 取一条 Trigger 的线程上下文（可读文本；没有就 `undefined`）。
  *
  * 为什么由外面注入而不是这里自己读 GitHub：判定器不认识来源，也不该认识。读窗口要令牌、
@@ -75,6 +110,13 @@ export interface ModelAssessorOptions {
   context?: AssessorContext
   onError?: (error: unknown, evalId: string) => void
   log?: (line: string) => void
+  /**
+   * 推断候选的落点（backlog G1）。
+   *
+   * 给了它，`inferred` 强度的 accept 就不直接建工单，而是交给它等人点头；不给 = 老行为
+   * （判定即接单）。明确请求永远直接接单，不走这条路——那是人自己敲的，不需要再问一次。
+   */
+  holdCandidate?: (hold: HeldCandidate) => void
 }
 
 /** 从模型回复里抠出 JSON：允许 ```json 围栏与前后闲话，抠不出就返回 undefined。 */
@@ -220,6 +262,26 @@ export class ModelAssessor implements Assessor {
           continue
         }
         const outcome: AssessmentOutcome = assessmentOutcome(parsed.data as Assessment, settings, candidate.strength)
+        // 推断候选：交给候选收件箱等人点头（backlog G1）。明确请求照旧直接接单——
+        // 那是人自己敲的，不需要再问一次。
+        //
+        // 为什么这里要顺手把 Eval 结束掉：不结束它会挂到超时、重排、再判一次、
+        // 再进一次收件箱，同一个候选在界面上出现两遍。记成 ignore 是「这次判定没有接单」，
+        // 真实结论在收件箱里等人给。
+        if (outcome.kind === 'accept' && candidate.strength !== 'explicit' && this.options.holdCandidate !== undefined) {
+          this.options.holdCandidate({
+            evalId: item.evalId,
+            triggerId: item.triggerId,
+            threadKey: candidate.thread.key,
+            outcome,
+            title: outcome.title,
+            reason: typeof outcome.reason === 'string' ? outcome.reason : '',
+            scope: outcome.scope,
+            source: trigger.source,
+          })
+          engine.decide(item.triggerId, { kind: 'ignore', reason: AWAITING_PERSON, evalId: item.evalId })
+          continue
+        }
         const decision = engine.decide(item.triggerId, { ...outcome, evalId: item.evalId })
         if (decision.ticketId !== undefined) created.push(decision.ticketId)
       } catch (error) {

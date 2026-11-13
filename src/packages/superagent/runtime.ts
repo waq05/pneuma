@@ -15,12 +15,12 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@pneuma/runtime/core/session.js'
-import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
-  type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage, type Trigger,
-  type WorkerReport } from './core/index.js'
+import { Engine, latestAssignment, latestReport, ticketStage, type AssessmentOutcome, type ChannelRef, type DomainEvent,
+  type Executor, type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage,
+  type Trigger, type WorkerReport } from './core/index.js'
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
-import type { AssessorComplete } from './adapters/assessor-model.js'
+import type { AssessorComplete, HeldCandidate } from './adapters/assessor-model.js'
 import type { GithubApi } from './adapters/github/api.js'
 import { readThreadWindow, type ThreadWindow } from './adapters/github/read.js'
 import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
@@ -33,7 +33,7 @@ import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
 import { StoreOutbox } from './adapters/outbox.js'
 import { StoreRepositories } from './adapters/repositories.js'
 import { defaultSettings, GITHUB_SOURCE } from './adapters/settings.js'
-import type { DscStore } from './adapters/store.js'
+import type { DscStore, CandidateRecord } from './adapters/store.js'
 import { removeWorktree, slugOf } from './adapters/worktree.js'
 import { sessionsDir, worktreesDir } from './paths.js'
 
@@ -173,6 +173,17 @@ export interface RuntimeOptions {
   assessorModel?: RoleModel | null
   /** 一次问答；不给 = 就算配了模型也退回同步规则（见 `adapters/assessor-select.ts`）。 */
   assessorComplete?: AssessorComplete
+  /**
+   * 推断候选要不要先等人点头（backlog G1）。
+   *
+   * true = 判定器判成可以接的推断候选先落进候选收件箱，人在界面上点「接单」才建工单；
+   * false（缺省）= 判定即接单，与上游一致。
+   *
+   * 只在 `eval.mode = 'auto'` 时看得出区别：`observe` 模式下引擎本来就不让推断候选
+   * 接单（`core/policy.ts` 的 `admitsInferred` 要求 auto 且命中规则），那种候选连
+   * 收件箱都进不去，判定器会按「模式不允许」记一条失败。
+   */
+  confirmInferred?: boolean
   /**
    * 出站消息的发送方，按 `channel.source` 查（`feishu` / `github`）。
    *
@@ -338,6 +349,13 @@ export class SuperagentRuntime {
   /** 单工单超时（秒）的 getter；每拍现读，设置页改完下一拍就按新上限判。 */
   private readonly timeoutOf: () => number
   /**
+   * 推断候选要不要先等人点头（backlog G1）。
+   *
+   * 装配时读一次：它是「判定器要不要挂起」的开关，判定器在构造时就定了形状。
+   * 改它要重开宿主——与判定模型同一条取舍。
+   */
+  private readonly confirmInferred: boolean
+  /**
    * 出站队列。恢复通知也从这里入队（`recover()`），与核心的回复共用同一个幂等口径：
    * 同一个 id 第二次 `send` 不会再写一行。
    */
@@ -367,9 +385,26 @@ export class SuperagentRuntime {
       ...(options.assessorComplete === undefined ? {} : { complete: options.assessorComplete }),
       onError: (error, evalId) => this.log(`[superagent] 判定 ${evalId} 失败：${describe(error)}`),
       log: (line) => this.log(line),
+      // 推断候选的落点（backlog G1）：开了「先确认」就落进候选收件箱等人点头，
+      // 否则判定即接单（与上游一致）。明确请求永远不走这条路。
+      ...(options.confirmInferred === true
+        ? {
+            holdCandidate: (hold: HeldCandidate) => {
+              this.store.saveCandidate(hold.evalId, hold.triggerId, hold.threadKey, {
+                outcome: hold.outcome,
+                title: hold.title,
+                reason: hold.reason,
+                scope: hold.scope,
+                source: hold.source,
+              })
+              this.log(`[superagent] 候选 ${hold.evalId}（${hold.source}）等人确认：${hold.title}`)
+            },
+          }
+        : {}),
     })
     this.notify = new StoreNotifier(store)
     this.timeoutOf = options.timeoutSeconds ?? (() => 0)
+    this.confirmInferred = options.confirmInferred === true
     this.outbox = new StoreOutbox(store)
     // 发送泵：一拍取一批、逐条发、失败的原样写回队列（规则见 `adapters/dispatch.ts`）。
     // `senders` 是 getter：两个来源都在运行期之后才建好，构造时算死会漏掉「起来之前排队的回复」。
@@ -667,6 +702,65 @@ export class SuperagentRuntime {
         ...(report === undefined ? {} : { summary: report.summary }),
       }
     })
+  }
+
+  /**
+   * 等人拍板的推断候选（backlog G1），新的在前。
+   *
+   * 返回存储层的原始记录：界面要的字段在 `value` 里，怎么渲染是 `surface.ts` 的事。
+   * 「先等我确认」关着时库里本来就是空的（判定完就接单了），不必特判。
+   */
+  candidates(): CandidateRecord[] {
+    return this.store.listCandidates()
+  }
+
+  /** 推断候选要不要先等人点头（backlog G1）；界面据此决定画不画「待确认」那一块。 */
+  confirmingInferred(): boolean {
+    return this.confirmInferred
+  }
+
+  /**
+   * 接一条候选：把库里那份判定结果原样交给引擎，建出工单。
+   *
+   * 为什么判定结果从库里取、不由界面传：界面转手那份 JSON 是最容易改坏的形状——
+   * 少一个 `rules` 就会被引擎按「推断候选没有命中规则」拒掉（`core/evals.ts:152`）。
+   *
+   * 为什么走 `engine.decide` 而不直接建工单：准入、规则、强度、决策历史都归核心，
+   * 从这里绕过去等于把领域逻辑抄第二份。
+   *
+   * @param id - 候选 id
+   * @param title - 覆盖判定时那个标题；不给就用原来的
+   * @returns 建出来的工单 id
+   * @throws 没有这条候选、已经处理过、或引擎拒绝
+   */
+  acceptCandidate(id: string, title?: string): string {
+    const record = this.store.getCandidate(id)
+    if (record === undefined) throw new Error(`没有这条候选：${id}`)
+    if (record.state !== 'pending') throw new Error(`这条候选已经处理过了（${record.state}）`)
+    const outcome = record.value.outcome as AssessmentOutcome
+    if (outcome.kind !== 'accept') throw new Error(`这条候选不是「接单」结论（${outcome.kind}），不该从这里接`)
+    const wanted = title?.trim() ?? ''
+    const decision = this.engine.decide(record.triggerId, {
+      ...outcome,
+      ...(wanted === '' ? {} : { title: wanted }),
+    })
+    if (decision.ticketId === undefined) throw new Error(`引擎没有建出工单（${decision.kind}）`)
+    this.store.settleCandidate(id, 'accepted')
+    return decision.ticketId
+  }
+
+  /**
+   * 忽略一条候选：它就此结束，不再进工单。
+   *
+   * 决策历史里补一条 `ignore`：判定时记的那条 `awaiting-person` 是「在等人」，
+   * 这条是「人说了不要」——两件事，分开记才看得出发生了什么。
+   */
+  ignoreCandidate(id: string, reason?: string): void {
+    const record = this.store.getCandidate(id)
+    if (record === undefined) throw new Error(`没有这条候选：${id}`)
+    if (record.state !== 'pending') throw new Error(`这条候选已经处理过了（${record.state}）`)
+    this.store.settleCandidate(id, 'ignored')
+    this.engine.decide(record.triggerId, { kind: 'ignore', reason: reason?.trim() || '人在界面上忽略了这个候选' })
   }
 
   /**

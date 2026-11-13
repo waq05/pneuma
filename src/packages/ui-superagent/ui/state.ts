@@ -72,9 +72,29 @@ export interface SuperagentSource {
   lastError?: string
 }
 
+/**
+ * 一条等人拍板的推断候选（契约 `SuperagentCandidateView` 的形状检查版）。
+ *
+ * 只有画卡片要的几项：判定结果本身在宿主库里，界面不转手那份 JSON——点「接单」时
+ * 只回传 id（与可选的标题覆盖）。
+ */
+export interface SuperagentCandidate {
+  /** 候选 id（接单 / 忽略时回传它）。 */
+  id: string
+  /** 卡片标题。 */
+  title: string
+  /** 模型给的理由。 */
+  reason: string
+  /** 工单范围。 */
+  scope: string
+  /** 来源（`github` / `feishu` / `manual`）。 */
+  source: string
+  /** 判定时刻（ISO 8601）；认不出时是空串。 */
+  at: string
+}
+
 /** 面板要的一份视图（契约 `SuperagentSurface` 的形状检查版）。 */
-export interface SuperagentView {
-  ready: boolean
+export interface SuperagentView {  ready: boolean
   problem: { code: string; detail: string } | null
   counts: SuperagentCounts
   tickets: readonly SuperagentTicket[]
@@ -87,12 +107,20 @@ export interface SuperagentView {
    * 「宿主没给这一格」和「给了但一条来源都没有」不是一回事，后者才该画一个空区块。
    */
   sources?: readonly SuperagentSource[]
+  /**
+   * 等人拍板的推断候选，新的在前。
+   *
+   * **可选**：「推断候选先等我确认」关着时这一格缺席（判定即接单，没有待确认的东西）。
+   * `undefined` 与空数组是两件事：前者整块不画，后者画一句「暂时没有待确认」。
+   */
+  candidates?: readonly SuperagentCandidate[]
 }
 
 /** 空清单常量：字段缺席时共用一份，相等判断与重渲染判据都靠它（照 `readGit` 的常量兜底）。 */
 const EMPTY_TICKETS: readonly SuperagentTicket[] = Object.freeze([])
 const EMPTY_RECENT: readonly { at: string; text: string }[] = Object.freeze([])
 const EMPTY_SOURCES: readonly SuperagentSource[] = Object.freeze([])
+const EMPTY_CANDIDATES: readonly SuperagentCandidate[] = Object.freeze([])
 
 /** 阶段能进哪一组：左侧栏徽标只认 `needsYou`，列表按这三组分。 */
 export type SuperagentTicketGroup = 'person' | 'working' | 'ended'
@@ -254,8 +282,38 @@ function sourcesOf(value: unknown): readonly SuperagentSource[] | undefined {
 }
 
 /**
- * 从快照里取 Super Agent 那一格。
+ * 一条候选：`id` 读不到就不收（界面拿它当 key，也拿它调两个写方法）。
  *
+ * 其余字段缺了给空串而不是丢掉整条：一条候选的标题可能没写，但人还是该看见
+ * 「有这么一条、来自哪儿」，然后决定接不接。
+ */
+function candidateOf(value: unknown): SuperagentCandidate | null {
+  const record = recordOf(value)
+  if (record === null) return null
+  const id = typeof record['id'] === 'string' ? record['id'] : ''
+  if (id === '') return null
+  const text = (key: string): string => (typeof record[key] === 'string' ? record[key] : '')
+  return { id, title: text('title'), reason: text('reason'), scope: text('scope'), source: text('source'), at: text('at') }
+}
+
+/**
+ * 候选清单。
+ *
+ * **整格缺席返回 `undefined`**（宿主没开「先等我确认」，概览页整块不画），有但一条也没
+ * 解析出来返回空数组（画一句「暂时没有待确认」）——两种「空」在界面上是两件事。
+ */
+function candidatesOf(value: unknown): readonly SuperagentCandidate[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: SuperagentCandidate[] = []
+  for (const item of value) {
+    const candidate = candidateOf(item)
+    if (candidate !== null) out.push(candidate)
+  }
+  return out.length === 0 ? EMPTY_CANDIDATES : out
+}
+
+/**
+ * 从快照里取 Super Agent 那一格。 *
  * @param snapshot - `useHostSnapshot()` 的快照（可能还没来第一帧）
  * @returns 面板视图；`null` = 这一格整个缺席（宿主插件没开），界面按「未启动」画
  */
@@ -284,6 +342,7 @@ export function readSuperagent(snapshot: HostSnapshot | null): SuperagentView | 
   const code = typeof rawProblem?.['code'] === 'string' ? rawProblem['code'] : ''
   const detail = typeof rawProblem?.['detail'] === 'string' ? rawProblem['detail'] : ''
   const sources = sourcesOf(surface['sources'])
+  const candidates = candidatesOf(surface['candidates'])
   return {
     ready: surface['ready'] === true,
     problem: code === '' && detail === '' ? null : { code, detail },
@@ -292,6 +351,7 @@ export function readSuperagent(snapshot: HostSnapshot | null): SuperagentView | 
     recent: recentOf(surface['recent']),
     // 只有读到了才带上这一项：`undefined` 是「旧快照没有这一格」，概览页据此整块不画。
     ...(sources === undefined ? {} : { sources }),
+    ...(candidates === undefined ? {} : { candidates }),
   }
 }
 
@@ -327,6 +387,17 @@ function sourcesFingerprint(sources: readonly SuperagentSource[] | undefined): s
 }
 
 /**
+ * 候选清单的指纹：一条 `id / title / at` 拼起来。
+ *
+ * 只比这三项：`reason` 与 `scope` 是判定时定下的，同一条候选不会中途变；`id` 与 `at`
+ * 变了就是换了候选。缺席与空数组给不同前缀（与来源清单同一条理由）。
+ */
+function candidatesFingerprint(candidates: readonly SuperagentCandidate[] | undefined): string {
+  if (candidates === undefined) return '\u0002absent'
+  return candidates.map((item) => `${item.id}\u0000${item.title}\u0000${item.at}`).join('\u0001')
+}
+
+/**
  * 面板视图的相等判断：内容没变就不重渲染。
  *
  * 快照每帧都会换引用，不给比较函数的话这一页会跟着整棵快照逐帧重画。
@@ -342,6 +413,8 @@ export function sameSuperagent(left: SuperagentView | null, right: SuperagentVie
   if ((left.problem?.detail ?? '') !== (right.problem?.detail ?? '')) return false
   // 来源错误变了必须重画：工单一张没动时，这是页面上唯一会变的那一行。
   if (sourcesFingerprint(left.sources) !== sourcesFingerprint(right.sources)) return false
+  // 候选进出一条，页面上多/少一行卡片，同样要重画。
+  if (candidatesFingerprint(left.candidates) !== candidatesFingerprint(right.candidates)) return false
   if (
     left.counts.needsYou !== right.counts.needsYou ||
     left.counts.running !== right.counts.running ||
