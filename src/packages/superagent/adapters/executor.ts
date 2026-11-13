@@ -35,6 +35,10 @@
  *   它落在摘要里；工单会按 `ready` 收尾。要补这张语义表，需要解析模型输出，P0 不做。
  * - **没有 `rewrite` / 上下文注入**：worker 的环境事实（仓库、目录、分支）直接写进系统提示，
  *   不走主会话的 env-facts 投影，因此也没有「上下文注入」卡。压缩照常接（`compact`）。
+ * - **临时故障重试三次**：`error` 事件命中 {@link transient} 时不立刻判失败，退避
+ *   15 / 30 / 60 秒后用**同一条会话**再投一句「继续」。与上游 `resumeAfter` 同一套规则；
+ *   差别只在「等 idle」那一步——`MiniAgent` 没有可等待的 idle 事件，用 `retryPending`
+ *   标记让故障回合的 `turn/end` 先不报，等重试那一回合自己收尾。
  *
  * @module dsc/packages/superagent/adapters/executor
  */
@@ -123,6 +127,12 @@ export interface WorkerExecutorOptions {
   createSession?: (cwd: string, file: string) => Session
   /** 造 worker；测试换成假 agent（缺省 `new MiniAgent`）。 */
   createAgent?: (deps: AgentDeps, session: Session) => WorkerAgent
+  /**
+   * 临时故障的首次退避（毫秒），默认 {@link TRANSIENT_BACKOFF_MS}（15 秒）。
+   *
+   * 只给测试用：真实重试要等 15 / 30 / 60 秒，用例不能真等一分钟。
+   */
+  retryDelayMs?: number
 }
 
 /** worker 的最小面：真身是 `MiniAgent`（`session-core/loop.ts:143`）。 */
@@ -171,6 +181,16 @@ interface Worker {
   lastError?: string
   /** 失败报告已发过：`error` 事件与随后的 `turn/end(error)` 只报一次。 */
   failedReported: boolean
+  /**
+   * 已用掉的临时故障重试次数（跨回合累计）。
+   *
+   * 上游把它存在执行器的一张 `Map` 里（`transient.get(assignment.id)`），这里挂在 worker 上：
+   * 当前一个工单同一时刻只有一个 worker，挂在这里少一张要维护的映射。
+   * 清零时机与上游一致：回合正常收尾、或 worker 被停。
+   */
+  transientTries: number
+  /** 正在等退避重试：`turn/end(error)` 不报 failed，等重试那一回合重新收尾。 */
+  retryPending: boolean
 }
 
 /** 六件套：worker 只拿这些工具（设计文档 §6.2 的表格）。 */
@@ -218,6 +238,17 @@ export function transient(error: unknown): boolean {
     : String(error)
   return TRANSIENT_PATTERN.test(text)
 }
+
+/** 临时故障最多重试几次（含第一次）。与上游 `TRANSIENT_TRIES` 一致。 */
+export const TRANSIENT_TRIES = 3
+
+/**
+ * 首次退避 15 秒，之后每次翻倍：15 / 30 / 60 秒。
+ *
+ * 与上游 `TRANSIENT_BACKOFF_MS` 一致。三次合计一分四十五秒：抖一两分钟能自己好的，
+ * 这一段时间够它好；抖一小时的（令牌过期、服务停用）本来就不是「临时故障」。
+ */
+const TRANSIENT_BACKOFF_MS = 15_000
 
 /**
  * worker 的报告映射：`turn/end` 的三种收尾原因 → 引擎要的 {@link WorkerReport}。
@@ -378,6 +409,10 @@ export class WorkerExecutor implements Executor {
   /** 「缺工具」只提醒一次：`tools()` 每轮请求都调，重复刷屏没有信息量。 */
   private missingToolsWarned = false
   private disposed = false
+  /** 临时故障重试的退避定时器；`dispose` 时全部清掉，不留一个在宿主卸载后还回调。 */
+  private readonly retryTimers = new Set<NodeJS.Timeout>()
+  /** 临时故障的首次退避（毫秒）；测试注入 0，免等。 */
+  private readonly retryDelayMs: number
 
   /**
    * @param ctx - cordis 上下文；`options.host` 给了就优先用后者（测试）。允许 `null`：
@@ -410,6 +445,7 @@ export class WorkerExecutor implements Executor {
     this.worktree = options.worktree ?? { ensure: ensureWorktree }
     this.createSession = options.createSession ?? ((cwd, file) => Session.create(cwd, file))
     this.createAgent = options.createAgent ?? ((deps, session) => new MiniAgent(deps, session))
+    this.retryDelayMs = options.retryDelayMs ?? TRANSIENT_BACKOFF_MS
     if (this.host === null) {
       this.log(
         `[superagent] 执行器未接宿主（缺 ${this.hostProblem.join('、') || '未知服务'}）：` +
@@ -515,6 +551,9 @@ export class WorkerExecutor implements Executor {
     if (this.disposed) return
     this.disposed = true
     this.queue.length = 0
+    // 退避中的重试全部作废：插件都要卸了，回调里那一句「继续」没有接收方。
+    for (const timer of this.retryTimers) clearTimeout(timer)
+    this.retryTimers.clear()
     for (const worker of [...this.workers.values()]) this.terminate(worker, '执行器关闭')
     // 收尾中的 worker 已经不在 `workers` 里（见 `terminate`），但会话还开着；
     // 插件都要卸了，不再等它的 `onIdle`。
@@ -623,6 +662,8 @@ export class WorkerExecutor implements Executor {
         closed: false,
         lastText: '',
         failedReported: false,
+        transientTries: 0,
+        retryPending: false,
       }
       const active = worker
       const agent = this.createAgent(this.depsFor(active, ticket), session)
@@ -789,6 +830,9 @@ export class WorkerExecutor implements Executor {
     if (event.type === 'error') {
       worker.lastError = event.message
       if (worker.stopping) return
+      // 临时故障先安排重试：这一步**不**报 failed，等重试那一回合的收尾再判。
+      // 与上游 `executor/dsh.ts:509` 的 `if (this.retries(...)) { this.resumeAfter(...); return }` 同一顺序。
+      if (this.retryTransient(worker, event.message)) return
       worker.failedReported = true
       this.report(worker, errorReport(event.message))
       return
@@ -796,6 +840,16 @@ export class WorkerExecutor implements Executor {
     if (event.type === 'turn/end') {
       this.turnEnded(worker)
       if (worker.stopping) return
+      // 正在等退避重试：这一回合的收尾不算数。重试那一回合会重新走一遍 turn/end，
+      // 那时 `retryPending` 已清，按正常收尾判。
+      if (worker.retryPending) {
+        worker.retryPending = false
+        return
+      }
+      // 回合正常收尾 → 临时故障计数清零。上游在 `workerIdle` 里做同一件事
+      // （`executor/dsh.ts:606`：`this.transient.delete(idle.id)`），理由是一回合干净跑完
+      // 就说明「上次那个故障过去了」，下一次该重新给三次机会。
+      if (event.reason === 'completed') worker.transientTries = 0
       const report = event.reason === 'error' && worker.failedReported
         ? null
         : turnEndReport(event.reason, worker.lastText, worker.lastError)
@@ -815,6 +869,50 @@ export class WorkerExecutor implements Executor {
     } catch (error) {
       this.log(`[superagent] 工单 ${worker.ticketId} 的 ${report.state} 报告未记入：${describe(error)}`)
     }
+  }
+
+  /**
+   * 临时故障：安排一次「继续」重试。
+   *
+   * 与上游 `resumeAfter`（`executor/dsh.ts:554-576`）同一套规则：
+   * 1. 只对 `transient()` 认的错误重试；配置类错误一次都不重试（否则白等三次退避）。
+   * 2. 最多 {@link TRANSIENT_TRIES} 次，退避 `15s × 2^(n−1)`：15 / 30 / 60 秒。
+   * 3. 重试用**同一条会话**再投一句「继续」，不新建会话——工作树、分支、上下文都还在；
+   *    新建会话等于让 worker 从零开始，前面干了一半的活它看不见。
+   *
+   * 与上游的一处差异：上游把「继续」投进会话后还等 `whenIdle` 再判收尾；这里的
+   * `MiniAgent` 没有可等待的 idle 事件，所以靠 `retryPending` 标记让 `turn/end(error)`
+   * 先不报 failed，等重试那一回合自己收尾。语义一样：故障回合不算交付。
+   *
+   * @param worker - 出错的 worker
+   * @param message - `error` 事件带的原文
+   * @returns true = 已安排重试，调用方不要再报 failed
+   */
+  private retryTransient(worker: Worker, message: string): boolean {
+    if (!transient(message)) return false
+    if (worker.transientTries >= TRANSIENT_TRIES) {
+      this.log(`[superagent] 工单 ${worker.ticketId} 临时故障已达 ${String(TRANSIENT_TRIES)} 次上限，不再重试`)
+      return false
+    }
+    worker.transientTries += 1
+    worker.retryPending = true
+    const delay = this.retryDelayMs * 2 ** (worker.transientTries - 1)
+    this.log(
+      `[superagent] 工单 ${worker.ticketId} 临时故障，${String(delay)}ms 后第 ${String(worker.transientTries)} 次重试：` +
+        message.slice(0, 120),
+    )
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(timer)
+      // 等退避的这一段时间里，工单可能已被停、宿主可能已卸、worker 可能已换：都不该再投消息。
+      if (this.disposed || worker.stopping) return
+      if (this.workers.get(worker.ticketId) !== worker) return
+      worker.agent?.followup(
+        `你的上一回合因为临时故障失败（${message.slice(0, 200)}）。请从中断处继续这个工单，不要从头再来。`,
+      )
+    }, delay)
+    timer.unref?.()
+    this.retryTimers.add(timer)
+    return true
   }
 
   /** 「这一回合结束了」：只更新分配的闲置时间，不改工单状态。 */
@@ -837,6 +935,9 @@ export class WorkerExecutor implements Executor {
   private terminate(worker: Worker, reason: string): void {
     if (worker.stopping) return
     worker.stopping = true
+    // 停掉的 worker 不再重试；计数一并清掉，与上游 `stop()` 里的 `transient.delete(assignment.id)` 同义。
+    worker.transientTries = 0
+    worker.retryPending = false
     const agent = worker.agent
     this.workers.delete(worker.ticketId)
     try {

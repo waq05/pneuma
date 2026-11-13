@@ -1,12 +1,16 @@
 /**
  * @pneuma/superagent 第 5 步的包级测试：执行器（工作树 + 会话 + worker + 并发）。
  *
- * 五条用例，每条只钉一件会「悄悄坏掉」的事：
+ * 九条用例，每条只钉一件会「悄悄坏掉」的事：
  *   1. `start` 真建了工作树、真按显式路径建了会话，并把工单文本投给 worker；
  *   2. 并发上限生效：同时发 3 个，只起 2 个，第 3 个排队，有人让位才开工；
  *   3. `stop` 调的是「中断回合」而不是杀进程，且重复调不炸；
  *   4. 报告映射：`turn/end` 正常收尾 → `ready`，`error` → `failed`（纯函数直测，不起模型）；
- *   5. 两张全中文标题的工单不会撞同一棵工作树（slug 只留 ASCII，标题会折成 `ticket`）。
+ *   5. 两张全中文标题的工单不会撞同一棵工作树（slug 只留 ASCII，标题会折成 `ticket`）；
+ *   6. 临时故障判据：状态码优先、文本兜底、配置错误不能误判；
+ *   7. 临时故障退避后用同一会话继续，故障回合不算交付；
+ *   8. 临时故障超过 3 次才判 failed；
+ *   9. 非临时故障一次都不重试。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -144,6 +148,7 @@ function setup(label, options = {}) {
     engine: () => engine,
     log: options.log ?? (() => {}),
     readTriggerText: () => '把错误提示改成中文',
+    ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
   })
 
   const cleanup = () => {
@@ -274,6 +279,86 @@ test('临时故障判据：状态码优先，文本兜底', () => {
   assert.equal(transient(Object.assign(new Error('connection failed'), { code: 'ETIMEDOUT' })), true)
   // 非 Error 的裸对象不带 code：与上游一致，只 String() 一下，不特判。
   assert.equal(transient({ code: 'ETIMEDOUT' }), false, '非 Error 值只按文本判')
+})
+
+test('临时故障：不立刻判失败，退避后用同一会话继续', async () => {
+  const logs = []
+  const s = setup('transient-retry', { retryDelayMs: 5, log: (line) => logs.push(line) })
+  try {
+    const { ticket, assignment } = makeTicket('aa11bb22', '端点抖一下')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    assert.equal(agent.followups.length, 1, '先投一次工单文本')
+
+    // 一回合跑到一半，模型端点报 503。
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'error', message: 'upstream returned 503' })
+    // 故障回合的收尾：不该把工单判死。
+    agent.deps.emit({ type: 'turn/end', reason: 'error' })
+
+    assert.equal(s.events.reports.length, 0, '临时故障不该立刻报 failed')
+    assert.match(logs.join('\n'), /临时故障.*5ms 后第 1 次重试/)
+
+    // 退避到点：同一会话再投一句「继续」。
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(agent.followups.length, 2, '应投一次「继续」')
+    assert.match(agent.followups[1], /临时故障.*从中断处继续/)
+    assert.equal(s.agents.length, 1, '不该新建会话')
+
+    // 重试那一回合干净跑完 → ready。
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'message', text: '改完了，测试通过' })
+    agent.deps.emit({ type: 'turn/end', reason: 'completed' })
+    assert.equal(s.events.reports.length, 1, '重试成功后应只有一条报告')
+    assert.equal(s.events.reports[0].report.state, 'ready')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('临时故障超过 3 次：判 failed；非临时故障一次都不重试', async () => {
+  const s = setup('transient-exhaust', { retryDelayMs: 1 })
+  try {
+    const { ticket, assignment } = makeTicket('cc33dd44', '一直抖')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+
+    // 前三次：都安排重试，一条 failed 都不报。
+    for (let round = 1; round <= 3; round += 1) {
+      agent.deps.emit({ type: 'turn/start' })
+      agent.deps.emit({ type: 'error', message: 'read ECONNRESET' })
+      agent.deps.emit({ type: 'turn/end', reason: 'error' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      assert.equal(s.events.reports.length, 0, `第 ${round} 次临时故障不该报 failed`)
+    }
+
+    // 第四次：超过上限，判 failed。
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'error', message: 'read ECONNRESET' })
+    agent.deps.emit({ type: 'turn/end', reason: 'error' })
+    assert.equal(s.events.reports.length, 1, '超过上限应报一条 failed')
+    assert.equal(s.events.reports[0].report.state, 'failed')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('非临时故障立刻判 failed，不进重试', async () => {
+  const s = setup('transient-not')
+  try {
+    const { ticket, assignment } = makeTicket('ee55ff66', '配置错了')
+    s.executor.start(ticket, assignment)
+    await tick()
+    const agent = s.agents[0]
+    agent.deps.emit({ type: 'turn/start' })
+    agent.deps.emit({ type: 'error', message: '没有配置仓库路径（设置 → Super Agent → repoPath）' })
+    assert.equal(s.events.reports.length, 1, '配置错误要立刻报，不能白等退避')
+    assert.equal(s.events.reports[0].report.state, 'failed')
+  } finally {
+    s.cleanup()
+  }
 })
 
 test('没有宿主上下文时 start 只记缺项日志，不假装成功', () => {
