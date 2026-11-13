@@ -52,13 +52,14 @@
 ## 2 依赖与版本
 
 ```jsonc
-// package.json → devDependencies（新增）
-"vitest": "^4.1.0",
-"@vitest/coverage-v8": "^4.1.0",
-"vite": "^7.0.0",
-"vite-tsconfig-paths": "^5.1.0",
-"jsdom": "^26.0.0",
-"@vitejs/plugin-react": "^5.0.0",
+// package.json → devDependencies（2026-11-13 实装，版本即实际解析结果）
+"vitest": "^4.1.12",
+"@vitest/coverage-v8": "^4.1.12",
+"vite": "^7.3.8",
+"vite-tsconfig-paths": "^5.1.4",
+"jsdom": "^26.1.0",
+"@vitejs/plugin-react": "^5.2.0",
+"react-dom": "^19.2.0",          // 见下方「为什么根项目也要一份」
 "fast-check": "^3.23.0"          // P7 属性测试才用，可后装
 ```
 
@@ -71,6 +72,11 @@
 | `@vitejs/plugin-react ^5` | 对齐 ui-shell，处理 `.tsx` 的 JSX 转换 |
 | `jsdom ^26` | `ui` project 的环境 |
 | `vite-tsconfig-paths ^5` | 解析 `@pneuma/*` 与 `@pneuma/runtime/*` |
+| `react-dom ^19.2` | 界面半 spec 的 import 链会走到 `ui-primitives` 的 `createPortal`；根只声明了 `@types/react-dom`（pnpm 提升的），没有本体，运行期解析不到 |
+
+**版本为什么不跟最新**：跑这件事时 registry 上已经是 `vitest 5.1.0` + `vite 8.3.8`，
+但 `@vitejs/plugin-react` 的 6.x 对 vite 8 额外要求 `oxc-transform-react` 与
+`@rolldown/plugin-babel` 两个原生依赖。**先跟上 DSH 那一档**，等这套体系站稳再单开一次升级。
 
 **不装**：`jest`、`c8`、`nyc`、`ts-jest`、`@testing-library/react`（前四个与 Vitest 冲突或重复；最后一个等 ui 组件测试稳定后再议）。
 
@@ -98,25 +104,32 @@ const uiAliases = Object.fromEntries(
 )
 
 export default defineConfig({
-  plugins: [tsconfigPaths({ projects: ['./tsconfig.json'] }), jsToTsFallback()],
-  resolve: { alias: uiAliases },
+  // 两份 tsconfig 都要交给它，见 §4.4「importer 必须落在 include 内」
+  plugins: [tsconfigPaths({ projects: ['./tsconfig.json', './tsconfig.spec.json'] }), jsToTsFallback()],
+  resolve: { alias: { ...uiAliases, '@pneuma/runtime': `${root}src` } },
   test: {
     projects: [
-      { /* unit */ },
-      { /* integration */ },
-      { /* ui */ },
-      { /* snapshot */ },
+      { extends: true /* unit */ },
+      { extends: true /* integration */ },
+      { extends: true /* ui */ },
+      { extends: true /* snapshot */ },
     ],
   },
 })
 ```
+
+**`extends: true` 是必需的，不是保险丝**：Vitest 3.2 起，`test.projects` 里的内联 project
+只拿自己写的字段，根配置的 `plugins` 与 `resolve.alias` 不会自动继承。少了它，解析插件与
+`@dsc/*` 别名对四个 project 全部失效，第一次 import `src/**` 就报 `Failed to resolve import`；
+而 `--passWithNoTests` 因为一条测试都没跑，照样绿。实装时做过对照实验：去掉 `extends`，
+同一个冒烟用例立刻失败。
 
 ### 3.2 四个常驻 project 的字段值与理由
 
 | 字段 | `unit` | `integration` | `ui` | `snapshot` |
 | --- | --- | --- | --- | --- |
 | `include` | `['src/**/*.spec.ts']` | `['src/**/*.int.spec.ts']` | `['src/packages/*/ui/**/*.spec.{ts,tsx}']` | `['tests/snapshots/**/*.snapshot.ts']` |
-| `exclude` | `['src/packages/*/ui/**', '**/node_modules/**']` | `['src/packages/*/ui/**']` | `['**/node_modules/**']` | `[]` |
+| `exclude` | `['src/packages/*/ui/**', 'src/**/*.int.spec.ts', '**/node_modules/**']` | `['src/packages/*/ui/**']` | `['**/node_modules/**']` | 不写（沿用默认） |
 | `environment` | `'node'` | `'node'` | `'jsdom'` | `'node'` |
 | `testTimeout` | `5_000` | `60_000` | `10_000` | `60_000` |
 | `hookTimeout` | `5_000` | `30_000` | `10_000` | `30_000` |
@@ -128,6 +141,12 @@ export default defineConfig({
 
 理由：
 
+- **`unit` 必须显式排掉 `*.int.spec.ts`**：`*.spec.ts` 的星号不跨目录但跨点，
+  `session.int.spec.ts` 同样以 `.spec.ts` 结尾，不排就会被 unit 层再跑一遍——5 秒超时
+  加线程池，起真内核的用例必红，而且红得看不出原因。
+- **`snapshot` 的 `exclude` 留空不写**：Vitest 的 `exclude` 一旦写值就整体替换默认列表，
+  写 `[]` 会把 `**/node_modules/**` 一起丢掉。它的 `include` 已经限定在 `tests/snapshots/**`，
+  两者行为等价，而不写不会误伤。
 - **`unit` 用 threads**：纯函数无进程级状态，线程池启动快。DSH 全线用 forks 是因为它有大量进程相关测试；dsc 的 unit 层不需要。
 - **`integration` 用 forks + `retry: 1`**：要起真内核与 HTTP 服务，线程之间共享端口与全局状态会互相踩。`retry: 1` 只在网络/时序抖动时给一次机会，**不掩盖真失败**（连续两次红仍然是红）。
 - **`integration` 用 `sequence.concurrent: false`**：同一文件内串行跑，避免测试之间争用同名临时目录。
@@ -212,7 +231,9 @@ export function jsToTsFallback(): Plugin {
       if (!importer) return null
       const cleaned = source.replace(/\?.*$/, '')
       if (!cleaned.endsWith('.js') && !cleaned.endsWith('.mjs')) return null
-      if (!cleaned.startsWith('.') && !cleaned.startsWith('/')) return null
+      // Windows 的绝对路径是 D:\… 或 D:/…，不是以 / 开头，必须用 isAbsolute 判，
+      // 否则 alias 展开出来的绝对路径会被漏掉
+      if (!cleaned.startsWith('.') && !isAbsolute(cleaned)) return null
 
       const absolute = resolvePath(dirname(importer), cleaned)
       if (existsSync(absolute)) return null            // 真 .js，交回默认解析
@@ -227,22 +248,34 @@ export function jsToTsFallback(): Plugin {
 }
 ```
 
-### 4.4 两个已知难点（POC 必须验证）
+### 4.4 两个难点：一个按方案 A 解决了，一个是真限制
 
 **难点一：`@pneuma/runtime/core/x.js` 是裸说明符。** 它经 tsconfig paths 映射到 `src/core/x.js`，但此时已经不是相对路径，上面的插件不会处理。
 
-两套方案，二选一：
+两套方案：
 
-| 方案 | 做法 | 代价 |
+| 方案 | 做法 | 结论 |
 | --- | --- | --- |
-| **A（首选）** | 依赖 `vite-tsconfig-paths` 完成映射，另加一条 `resolve.alias`：`'@pneuma/runtime': fileURLToPath(new URL('./src', import.meta.url))`，让映射结果变成绝对路径，再被本插件的绝对路径分支接住 | 要验证 alias 与 paths 的先后顺序 |
-| **B（兜底）** | 弃用 `vite-tsconfig-paths`，在插件里完整实现：`@pneuma/runtime/*` → `src/*`；`@pneuma/<id>` → `src/packages/<id>/index.ts` 或 `src/packages/<id>/<子路径>` | 多约 40 行代码，但行为完全可控 |
+| **A（已采用）** | 加一条 `resolve.alias`：`'@pneuma/runtime': <绝对路径>/src`，让说明符先变成绝对路径，再被本插件的绝对路径分支接住 | **POC-2 走的就是它**：`import { Session } from '@pneuma/runtime/core/session.js'` 一次通过，方案 B 没有启用 |
+| **B（兜底，未用）** | 弃用 `vite-tsconfig-paths`，在插件里完整实现两条映射 | 多约 40 行代码，本次没走到这一步 |
 
-**判定标准**：POC-2 能 `import '@pneuma/runtime/core/session.js'` 跑通就用 A；报 `Cannot find module` 就切 B。**每次切换只改配置，不改测试代码。**
+**难点二（真限制，已解决）：`vite-tsconfig-paths` 按 include/exclude 过滤的是 importer，不是被导入的文件。**
 
-**难点二：`@pneuma/<id>` 的数组候选。** [tsconfig.json](../tsconfig.json) 第 19 行是 `["src/packages/*", "src/packages/*/index.ts"]`。第一个候选指向目录，NodeNext 下目录不能当模块入口，所以真正生效的是第二个。
+这条比数组候选更容易踩，而且现象会误导人。规则是：导入方文件不在某份 tsconfig 的
+`include` 里，裸说明符就原样交给 Vite，于是报 `Cannot find package`。
+根 `tsconfig.json` 只 `include ["src"]`，所以：
 
-`vite-tsconfig-paths` 底层是 `tsconfig-paths` 库，它支持数组候选，但**不一定**支持「带固定后缀的第二个候选」。这条也要 POC-2 验证：写一行 `import '@pneuma/todo'` 看能否解析到 `src/packages/todo/index.ts`。
+| 导入方位置 | `import '@pneuma/todo'` |
+| --- | --- |
+| `src/**` | 解析到 `src/packages/todo/index.ts`（数组候选的第二个，正常工作） |
+| `tests/**` | **报 `Cannot find package`**，与数组候选无关 |
+
+解法不是改测试，是把 `tsconfig.spec.json` 一并交给插件：
+`tsconfigPaths({ projects: ['./tsconfig.json', './tsconfig.spec.json'] })`。
+两份合起来覆盖全部导入方。实装时验证过：同一行 `import '@pneuma/todo'`，
+加之前报 `Cannot find package`，加之后通过。
+
+`@pneuma/runtime/*` 不受这条约束——它走 alias，与 importer 无关。
 
 ### 4.5 `@dsc/ui` 与 `@dsc/ui-core` 的差别（容易踩）
 
@@ -270,7 +303,7 @@ export function jsToTsFallback(): Plugin {
 
 漏掉后三条的后果：`pnpm build` 会把测试编进 `lib/`，并随包发布（`files` 只含 `bin`、`lib`、`package.json`）。
 
-### 5.2 `tsconfig.spec.json`（新建）
+### 5.2 `tsconfig.spec.json`（新建，管 node 侧）
 
 测试代码自己也要过类型检查，但不能混进主构建。
 
@@ -279,22 +312,67 @@ export function jsToTsFallback(): Plugin {
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node", "vitest/globals"]
+    "rootDir": ".",          // 根配置是 src，而这份要查 tests/**，不覆盖报 TS6059
+    "types": ["node"]        // 不开 globals，测试里显式 import vitest
   },
   "include": [
+    "vitest.config.ts",
     "src/**/*.spec.ts", "src/**/*.int.spec.ts", "src/**/*.e2e.ts",
-    "src/packages/*/ui/**/*.spec.ts", "src/packages/*/ui/**/*.spec.tsx",
     "tests/**/*.ts"
   ],
-  "exclude": ["node_modules", "lib"]
+  "exclude": ["node_modules", "lib", "tests/setup/dom.ts", "src/packages/*/ui/**"]
 }
 ```
 
-配一条 script：`"typecheck:spec": "tsc -p tsconfig.spec.json --noEmit"`，进 P1a 门禁。
+三条排除项各有原因，都不是凑数：
+
+| 排除项 | 不排会怎样 |
+| --- | --- |
+| `src/packages/*/ui/**` | `src/**/*.spec.ts` 会把界面半 spec 一并收进来，在本配置下报 `@dsc/ui` 解析不到、JSON 缺 import attribute、`document` 不存在 |
+| `tests/setup/dom.ts` | 它给 jsdom 打桩（`matchMedia` 之类），必然写 DOM API，归 §5.4 那份查 |
+| `lib` | 构建产物里若有残留的 `.spec.js`，会被当源码再查一遍 |
+
+**`vitest.config.ts` 必须进 include**：它不在主构建里（主构建只编 `src`），不列进来就是
+「配置本身写错类型也没人管」。
 
 ### 5.3 `ui-shell/tsconfig.json`
 
-`exclude` 追加 `"../src/packages/*/ui/**/*.spec.ts"`、`"../src/packages/*/ui/**/*.spec.tsx"`。（路径按该文件实际的 include 根来写，实施时以现场为准。）
+`exclude` 追加 `"../src/packages/*/ui/**/*.spec.ts"`、`"../src/packages/*/ui/**/*.spec.tsx"`。
+这份只做类型检查、不带测试运行时的类型，界面半 spec 混进来会逼着壳也装一遍 vitest 依赖。
+
+### 5.4 `ui-shell/tsconfig.spec.json`（新建，管界面半）
+
+界面半 spec 不能塞进 §5.2：那份是 node 环境，没有 DOM 库、`module` 是 NodeNext、
+paths 只有 `@pneuma/*`。反过来把 DOM 库加进 §5.2 更糟——内核测试跑在 node 环境，
+配上 DOM 库等于允许它们写 `document`，写了真跑就是 `undefined`，类型检查反而给出假绿。
+
+```jsonc
+{
+  "extends": "./tsconfig.json",   // 界面壳那份：DOM 库、bundler 解析、全套 @dsc/* paths
+  "include": [
+    "../src/packages/*/ui/**/*.spec.ts",
+    "../src/packages/*/ui/**/*.spec.tsx",
+    "../src/packages/*/ui/**/*.d.ts",   // 见下：漏了报 TS2307
+    "../tests/setup/dom.ts"
+  ],
+  "exclude": ["node_modules", "../node_modules"]   // 必须重写，父配置把 spec 排掉了
+}
+```
+
+两处非写不可的细节：
+
+- **`exclude` 必须重写**。父配置（§5.3）把界面半 spec 排除在外，不覆盖的话子配置的
+  `include` 白写。
+- **环境声明 `.d.ts` 必须带上**。`ui-primitives/ui/vite-env.d.ts` 里
+  `declare module '*?url'` 是 `pdf-view.tsx` 那类 Vite 专有导入能过类型检查的唯一依据；
+  父配置靠 include 整片 `../src/packages/*/ui` 收进来，这份只收 spec，漏了就报
+  `Cannot find module 'pdfjs-dist/build/pdf.worker.min.mjs?url'`。
+
+配两条 script，串起来跑：
+
+```jsonc
+"typecheck:spec": "tsc -p tsconfig.spec.json --noEmit && tsc -p ui-shell/tsconfig.spec.json --noEmit"
+```
 
 ---
 
@@ -825,7 +903,7 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 | `llm-timeout-test.mjs` | integration | `src/core/llm-timeout.int.spec.ts` | 需假服务器 |
 | `session-lease-test.mjs` | integration | `src/core/session/lease.int.spec.ts` | 需临时 HOME |
 | `sandbox-win-token-test.mjs` | integration | `src/packages/sandbox/sandbox-win.int.spec.ts` | 平台门控 |
-| `ui-status-panel-test.mjs` | ui | `src/packages/ui-status-panel/ui/model.spec.ts` | 纯模型 |
+| `ui-status-panel-test.mjs` | ui | `src/packages/ui-status/ui/status-model.spec.ts` | 纯模型 |
 | `ui-tool-views-test.mjs` | ui | `src/packages/ui-tool-views/ui/*.spec.tsx` | 文本断言要重写成渲染断言 |
 | `tui-features-test.mjs` | snapshot | `tests/snapshots/golden/tui-features.txt` | 帧快照 |
 | `statusbar-test.mjs` | unit | `src/packages/tui/statusbar.spec.ts` | 纯投影 |
@@ -887,22 +965,34 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 
 ## 16 实施顺序（文件级）
 
+P0 已按这张表做完（2026-11-13），表中的「验收」列写的是当时真跑出来的判据。
+
 | 步 | 做什么 | 产出 | 验收 |
 | --- | --- | --- | --- |
 | 1 | 装依赖 | `package.json` | `pnpm install` 退出码 0 |
 | 2 | 写解析插件 | `tests/plugins/js-to-ts.ts` | 单测不了，靠第 6 步验证 |
-| 3 | 写主配置 | `vitest.config.ts` | `vitest run --project unit` 报「0 文件」而不是配置错误 |
-| 4 | 改 tsconfig | 两个 exclude + `tsconfig.spec.json` | `pnpm build` 后 `lib` 无 spec |
-| 5 | 迁 POC-1 | `src/core/todo-reminder.spec.ts` | 该条绿 |
-| 6 | 迁 POC-2 | `src/core/session/session.int.spec.ts` | 该条绿（解析层难度在此暴露） |
-| 7 | 迁 POC-3 | `src/packages/ui-status-panel/ui/model.spec.ts` | 该条绿 |
-| 8 | 接门禁 | `verify.yml` + scripts | PR 能看到 `pnpm test` |
-| 9 | **把 `check:plugin` 接进 PR 门禁** | `verify.yml` | 119 条包级测试第一次在 CI 里跑 |
-| 10 | 迁包级测试（P1b） | `src/packages/*/tests/*.spec.ts` | 每迁一个包，`package-tests.mjs --list` 少一条 |
+| 3 | 写主配置 | `vitest.config.ts` | `vitest run --project unit --passWithNoTests` 退出码 0 |
+| 4 | 改 tsconfig | 三处 exclude + `tsconfig.spec.json` + `ui-shell/tsconfig.spec.json` | `pnpm build` 后 `lib` 下 `*.spec.*` 为 0；`typecheck:spec` 退出码 0 |
+| 5 | **建两个 setup** | `tests/setup/temp-home.ts`、`tests/setup/dom.ts` | 第 6、7 步的前置，缺了直接报 `Cannot find module`（不是可跳过的装饰） |
+| 6 | 迁 POC-1 | `src/core/todo-reminder.spec.ts` | 19 条绿 |
+| 7 | 迁 POC-2 | `src/core/session/session.int.spec.ts` | 15 条绿（解析层难度在此暴露） |
+| 8 | 迁 POC-3 | `src/packages/ui-status/ui/status-model.spec.ts` | 44 条绿 |
+| 9 | 接门禁 | `verify.yml` + scripts | PR 能看到 `pnpm test` |
+| 10 | **把 `check:plugin` 接进 PR 门禁** | `verify.yml` | 119 条包级测试第一次在 CI 里跑 |
+| 11 | 迁包级测试（P1b） | `src/packages/*/tests/*.spec.ts` | 每迁一个包，`package-tests.mjs --list` 少一条 |
 
-第 6 步是全套设计的分水岭：它绿了，后面的迁移就是重复劳动；它红着，先解决解析层，别往下铺。
+第 5 步容易被跳过：`vitest.config.ts` 的 `setupFiles` 指向这两个文件，没有它们，
+integration 与 ui 层的第一条用例直接报 `Cannot find module`，而不是「测试失败」。
+两者都要有，`dom.ts` 就算是空的也得留着——先查再决定是否加桩，不预埋。
 
-第 9 步是**最便宜的一刀**：不写一行测试，只是把已经存在的 119 条接进 CI。先做它，再谈迁移。
+第 7 步是全套设计的分水岭：它绿了，后面的迁移就是重复劳动；它红着，先解决解析层，别往下铺。
+实装结果是一把过：`@pneuma/runtime` 的 alias 方案 A 就够，方案 B 没启用。
+
+第 10 步是**最便宜的一刀**：不写一行测试，只是把已经存在的 119 条接进 CI。
+
+**反向验证不是可选项**：POC-3 落地时把源码的 `Math.round` 改成 `Math.floor`，44 条里
+43 条照绿——用例输入全是整秒，两种实现给同一个字符串。补一条 `1_500ms → 2秒` 之后，
+同样的破坏才会变红。这一步只能靠「故意改坏」发现，读测试代码看不出来。
 
 ---
 

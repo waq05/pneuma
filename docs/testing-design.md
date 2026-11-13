@@ -233,8 +233,8 @@ src/core/session/session.ts
 src/core/session/session.spec.ts          ← unit
 src/core/session/session.int.spec.ts      ← integration
 
-src/packages/ui-status-panel/ui/model.ts
-src/packages/ui-status-panel/ui/model.spec.tsx   ← ui
+src/packages/ui-status/ui/status-model.ts
+src/packages/ui-status/ui/status-model.spec.ts   ← ui
 ```
 
 ### 5.2 集中（层 5-8）
@@ -419,7 +419,7 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 | --- | --- | --- | --- |
 | 1 | `src/core/todo-reminder.spec.ts` | `todo-reminder-test.mjs` 的纯函数部分 | 相对路径 `.js→.ts`；unit |
 | 2 | `src/core/session/session.int.spec.ts` | `session-dedupe-test.mjs` 的三层去重 | `@pneuma/runtime/*`；临时 HOME；integration |
-| 3 | `src/packages/ui-status-panel/ui/model.spec.ts` | `ui-status-panel-test.mjs` 的纯模型 | `@dsc/ui` + JSON；ui |
+| 3 | `src/packages/ui-status/ui/status-model.spec.ts` | `ui-status-panel-test.mjs` 的纯模型 | `@dsc/ui` + JSON；ui |
 
 ### P1a 地基加固 + 把已有的门接进 CI
 
