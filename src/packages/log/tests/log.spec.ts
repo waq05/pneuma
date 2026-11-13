@@ -299,24 +299,28 @@ test('readLogConfig 每次现读 plugins.json，不是挂载时的快照', async
   writePluginConfig('log', { level: null, maxFileBytes: null })
 })
 
-test('设置页改级别/目录/上限，运行中立刻生效（不用重启宿主）', () => {
+test('设置页改级别/目录/上限，运行中立刻生效（不用重启宿主）', async () => {
   const dir = tempDir('dsc-log-live-')
   const { captured, dispose } = mount({ dir, level: 'info' })
   const section = captured.sections.get('log')
   expect(section).toBeDefined()
+  const save = section?.save
+  expect(typeof save).toBe('function')
+  /** 设置页每次打开都现算字段值；这里把它的丢弃 Promise 的签名收成同步取一次。 */
+  const values = (): Record<string, unknown> => section?.values() as Record<string, unknown>
   const service = logServiceOf(captured)
   expect(service.level()).toBe('info')
-  expect(section?.values().maxFileMB).toBe(8)
+  expect(values()['maxFileMB']).toBe(8)
 
   // 设置页点「保存」走的就是 section.save：写 plugins.json，下一次取值立刻按新值算
-  section?.save('level', 'debug')
+  await save?.('level', 'debug')
   expect(service.level()).toBe('debug')
 
-  section?.save('maxFileMB', '16')
-  expect(section?.values().maxFileMB).toBe(16)
+  await save?.('maxFileMB', '16')
+  expect(values()['maxFileMB']).toBe(16)
 
   const moved = tempDir('dsc-log-live-dir-')
-  section?.save('dir', moved)
+  await save?.('dir', moved)
   expect(service.dir()).toBe(moved)
   expect(service.file().startsWith(moved)).toBe(true)
 
@@ -375,7 +379,7 @@ test('配置有缓存：手改盘上的 plugins.json，TTL 内还是旧值，过
   dispose()
 })
 
-test('保存路径不等 TTL：设置分区 save() 之后立刻是新值', () => {
+test('保存路径不等 TTL：设置分区 save() 之后立刻是新值', async () => {
   const dir = tempDir('dsc-log-save-')
   writeLogConfigOnDisk({ level: 'info' })
   const { captured, dispose } = mount({ dir, level: 'info' })
@@ -383,7 +387,7 @@ test('保存路径不等 TTL：设置分区 save() 之后立刻是新值', () =>
   const service = logServiceOf(captured)
   expect(service.level()).toBe('info')
 
-  captured.sections.get('log')?.save('level', 'debug')
+  await captured.sections.get('log')?.save?.('level', 'debug')
   // 若保存路径没有打掉缓存，这里在 TTL 内仍是 info 而红
   expect(service.level()).toBe('debug')
   dispose()
