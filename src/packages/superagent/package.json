@@ -1,0 +1,46 @@
+{
+  "name": "@pneuma/superagent",
+  "version": "0.9.1",
+  "description": "把一句话需求派给独占工作区的智能体去改代码，结果回到工单里",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "paths.js",
+    "paths.d.ts",
+    "adapters/**",
+    "core/**",
+    "cordis.patch.yml",
+    "locale/**",
+    "README.md"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3800,
+    "resolution": "overridable",
+    "title": "Super Agent",
+    "description": "把一句话需求派给独占工作区的智能体去改代码，结果回到工单里",
+    "settingsSection": "superagent",
+    "toggleable": true
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}

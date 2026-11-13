@@ -1,0 +1,5 @@
+# Super Agent：把一句话需求派给独占工作区的智能体（P0 骨架，还没有发布与工单）
+- insert:
+    - id: superagent
+      name: '@pneuma/superagent'
+      disabled: true

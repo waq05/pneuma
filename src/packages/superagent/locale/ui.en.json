@@ -1,0 +1,13 @@
+{
+  "section.title": "Super Agent",
+  "section.subtitle": "Hand a one-line request to an agent that owns its own worktree; the result comes back as a ticket",
+  "field.repoPath.label": "Default repository path",
+  "field.repoPath.help": "The executor creates worktrees in this repository. Save it and the next ticket uses the new path.",
+  "field.maxWorkers.label": "Maximum tickets running at once",
+  "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
+  "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",
+  "field.ticketTimeoutSeconds.help": "A ticket still unfinished this many seconds after it was created has its worker stopped and is marked failed; 0 means no limit. Default 1800 (30 minutes).",
+  "save.maxWorkersBad": "The concurrency limit must be a number (1-16)",
+  "save.timeoutBad": "The timeout must be a number of seconds (0 means no limit)",
+  "save.unknownKey": "Unknown setting \"{key}\""
+}

@@ -1,0 +1,13 @@
+{
+  "section.title": "Super Agent",
+  "section.subtitle": "把一句话需求派给独占工作区的智能体，结果回到工单里",
+  "field.repoPath.label": "默认仓库路径",
+  "field.repoPath.help": "执行器在这个仓库里建工作树。改完保存，下一张工单就用新路径。",
+  "field.maxWorkers.label": "同时最多几个工单在跑",
+  "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
+  "field.ticketTimeoutSeconds.label": "单工单超时（秒）",
+  "field.ticketTimeoutSeconds.help": "工单从建单起超过这个秒数还没结束，就停掉 worker 并标为失败；0 表示不限。默认 1800（30 分钟）。",
+  "save.maxWorkersBad": "并发上限要填数字（1–16）",
+  "save.timeoutBad": "超时秒数要填数字（0 表示不限）",
+  "save.unknownKey": "未知设置项「{key}」"
+}
