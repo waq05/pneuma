@@ -119,6 +119,10 @@ export const REMOTE_SHELL_METHODS = [
   // 切模式（预设）：换的是这一条会话的提示词与工具白名单，不碰凭据与安全闸门本身，
   // 与输入区那颗「模式」chip 同一件事——不开的话手机上那颗 chip 点下去必报错。
   'usePreset',
+  // Super Agent 的执行会话转录：只读投影（读的是 <DSC_HOME>/superagent/sessions/<id>/*.jsonl，
+  // 只读重放、不拿写租约），与 peekTranscript 同一档。发布 / 停 / 重试 / 清理是写类，
+  // 留在电脑上——手机上能看「它干了什么」就够了。
+  'superagentPeekSession',
 ] as const satisfies readonly (typeof INVOKABLE_METHODS)[number][]
 
 /** 壳方法表里有没有界面白名单不认识的方法（拼错/被删）：有就编不过。 */

@@ -82,6 +82,7 @@ import type {
   SettingsValues,
   SkillInfoView,
   SkillLoadResult,
+  SuperagentService,
   ToolPresentationView,
 } from '../contract.js'
 
@@ -1618,6 +1619,8 @@ declare module '@deepseek-ai/cordis' {
     hooks: HookService
     /** 长期记忆（跨会话留下的事实，写在 `~/.dsc/memory/`）。 */
     memory: MemoryService
+    /** Super Agent 工单（superagent 插件提供；插件默认关着，读它要用 `ctx.get('superagent')`）。 */
+    superagent: SuperagentService
     /** MCP 客户端（mcp 插件提供；插件没开时不存在，读它要用 `ctx.get('mcp')`）。 */
     mcp?: McpService
     /** 跨会话全文检索（session-search 插件提供；插件没开时不存在，读它要用 `ctx.get('sessionSearch')`）。 */

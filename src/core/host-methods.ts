@@ -50,6 +50,13 @@ export const INVOKABLE_METHODS = [
   // 状态面板「终端」区的输出面：只读读一次输出快照（归属校验与 stop 同口径）
   'readBackground',
   'peekTranscript',
+  // Super Agent 工单（superagent 插件默认关着；界面通道里只放这五条，见 core/ui-methods.ts）。
+  // 停 / 重试 / 清理是写类，留在电脑上；看执行会话是只读，远程壳也放行（remote/types.ts）。
+  'superagentPublish',
+  'superagentStopTicket',
+  'superagentRetryTicket',
+  'superagentCleanWorktree',
+  'superagentPeekSession',
   'runCommand',
   // 壳的 `/` 命令菜单：只读那份 `shell: true` 的元数据 + 只派发同一批（清单与挑选
   // 尺子在 packages/commands-core/commands-completion.ts；界面通道（core/ui-methods.ts）再按同一批放行）

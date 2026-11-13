@@ -9,7 +9,7 @@
 import type { ApprovalRequestView } from './approval.js'
 import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, EffortLevel, SandboxMode } from './mode.js'
 import type { AskUserView, BackgroundWorkView, GoalView, PlanEntryView, PlanView, ScheduledTaskView, TodoView } from './task.js'
-import type { ContextSegmentsView } from './transcript.js'
+import type { ContextSegmentsView, TranscriptEntry } from './transcript.js'
 import type { TokenUsageView } from './usage.js'
 
 /**
@@ -236,6 +236,98 @@ export interface GitSurface {
 }
 
 /**
+ * 一张工单在界面上的阶段（与 superagent 包 `core/stage.ts` 的 `TicketStage` 同构）。
+ *
+ * 为什么在契约里另写一份而不用 declare module 增强：契约层不得 import `packages/**`
+ * （依赖方向只能 packages → contract），所以照形状抄一份。两边一旦漂了，插件侧给
+ * `SuperagentTicketView` 赋值那行会编译报错，不会静静错位。
+ */
+export type SuperagentStage =
+  | { stage: 'person'; action: 'delivery' | 'answer' | 'review' | 'blocked' | 'failed' }
+  | { stage: 'working'; action?: 'queued' }
+  | { stage: 'idle' }
+  | { stage: 'ended' }
+
+/** 一张工单的界面投影（Super Agent 工单列表与详情页的数据源）。 */
+export interface SuperagentTicketView {
+  /** 工单 id（32 位十六进制）；界面的停 / 重试 / 清理 / 看会话都拿它当入参。 */
+  id: string
+  title: string
+  /** 当前阶段；界面按它分「需要你 / 进行中 / 已完成」三组（见 `SuperagentSurface.counts`）。 */
+  stage: SuperagentStage
+  /**
+   * 建单时刻（ISO 8601）。
+   *
+   * 名字与命令层 `TicketView.createdAt` 不同是有意的：界面契约统一叫 `at`
+   * （`recent` 里的每一条也叫 `at`），插件侧映射时填同一个值。
+   */
+  at: string
+  /** 工作树分支名（执行器建树时记的 `agent/<slug>`）；还没建树时没有这一项。 */
+  branch?: string
+  /** 改动的文件路径；P0 领域层还没记这份清单，先留字段不填。 */
+  changedFiles?: string[]
+  /** 最近一份 worker 报告的摘要（它说干了什么）；一次都没报过时没有这一项。 */
+  summary?: string
+}
+
+/**
+ * Super Agent 的快照面（§8.2）。
+ *
+ * 宿主插件 `@pneuma/superagent` 默认关着：关着时这一格整个缺席，界面按「未启动」画，
+ * 不要拿缺字段当错误（与 `scheduled?` 同一约定）。开着但库还没打开时是
+ * `ready: false` + 一句 `problem`，界面据此说清卡在哪。
+ */
+export interface SuperagentSurface {
+  /** 运行期是否可用：false = 还没启动（懒建）或建库失败，看 `problem`。 */
+  ready: boolean
+  /** 不可用的原因；`ready: true` 时没有这一项。 */
+  problem?: { code: string; detail: string }
+  /** 三组计数（侧栏徽标与列表分组头）；三组之和等于 `tickets.length`。 */
+  counts: { needsYou: number; running: number; done: number }
+  /** 工单清单，新的在前。 */
+  tickets: SuperagentTicketView[]
+  /** 面板「最近动态」：工单结束那类通知，最旧在前（上限 20 条，由适配层截）。 */
+  recent: { at: string; text: string }[]
+}
+
+/** 发布一张工单的入参（`superagentPublish` 的唯一实参）。 */
+export interface SuperagentPublishInput {
+  /** 标题（界面上的工单名）。 */
+  title: string
+  /** 正文 = 派给 worker 的需求原文。 */
+  body: string
+  /** 工作树起点 ref；省略 = HEAD。 */
+  base?: string
+}
+
+/** 按工单 id 操作（停 / 重试 / 清理 / 看执行会话）的入参。 */
+export interface SuperagentTicketRef {
+  id: string
+}
+
+/**
+ * superagent 插件提供的服务（`ctx.superagent`）。
+ *
+ * 为什么这五个动作要有服务：内核的 runtime 包不能 import 插件的类，界面通道只能经
+ * `ctx.get('superagent')` 转发。契约声明在这里（而不是 `services/types.ts`），是因为
+ * `DscRuntime` 的签名与快照面同属这一个域文件，界面侧只认这一个来源。
+ */
+export interface SuperagentService {
+  /** 发布一条需求，返回工单 id。 */
+  publish(input: SuperagentPublishInput): Promise<string>
+  /** 停止一张工单（先让领域收尾，再停 worker）。 */
+  stop(id: string): Promise<void>
+  /** 重试一张失败 / 卡住的工单。 */
+  retry(id: string): Promise<void>
+  /** 清理一张**已结束**工单的工作树。 */
+  clean(id: string): Promise<void>
+  /** 只读读一张工单的执行会话转录（不落盘、不拿写租约）。 */
+  peekSession(id: string): Promise<TranscriptEntry[]>
+  /** 当前快照面（`ctx.surfaces.register('superagent', …)` 读它）。 */
+  surface(): SuperagentSurface
+}
+
+/**
  * 快照里由各功能点贡献的界面片段。
  *
  * 内置那几项由对应插件自己登记（`ctx.surfaces.register`），组装快照的那一层不认识任何具体功能。
@@ -276,5 +368,38 @@ export interface RuntimeSurfaces {
    * 关着时这份投影整个缺席（界面按空处理，与「未登记的键缺席」同一约定）。
    */
   scheduled?: ScheduledTaskView[]
+  /**
+   * Super Agent 工单（superagent 贡献）。**非可选**是因为界面侧按 §8.2 的契约直接读
+   * `snapshot.surfaces.superagent`；但宿主插件默认关着——关着时这一格缺席，
+   * 界面读到 `undefined` 按「未启动」画（与 `scheduled` 的缺席约定一致）。
+   */
+  superagent: SuperagentSurface
+}
+
+/**
+ * `DscRuntime` 上的 Super Agent 通道（五个可调方法）。
+ *
+ * 为什么写在这里而不是 `snapshot.ts`：`DscRuntime` 的本体在 `snapshot.ts:115`，而这份
+ * 契约的改动面按分工只开 `runtime.ts`。模块增强（`declare module './snapshot.js'`）
+ * 与写在原文件里对类型系统等价——`INVOKABLE_METHODS` / `bridge` 那些按 `keyof DscRuntime`
+ * 推导的清单照样看得到这五条，漏一条编译就红。
+ *
+ * 参数为什么是对象而不是裸字符串：界面通道的实参规格用 `json`（个数 1 / 可序列化 /
+ * 长度上限），对象与裸字符串都能过校验；实现层两种形状都收（见 `packages/runtime`），
+ * 这样并行在做的界面半用哪种写法都不会在运行期被拒。
+ */
+declare module './snapshot.js' {
+  interface DscRuntime {
+    /** 发布一张工单，返回工单 id。 */
+    superagentPublish(input: SuperagentPublishInput): Promise<string>
+    /** 停止一张工单。 */
+    superagentStopTicket(input: SuperagentTicketRef | string): Promise<void>
+    /** 重试一张失败 / 卡住的工单。 */
+    superagentRetryTicket(input: SuperagentTicketRef | string): Promise<void>
+    /** 清理一张已结束工单的工作树。 */
+    superagentCleanWorktree(input: SuperagentTicketRef | string): Promise<void>
+    /** 只读读一张工单的执行会话转录。 */
+    superagentPeekSession(input: SuperagentTicketRef | string): Promise<TranscriptEntry[]>
+  }
 }
 

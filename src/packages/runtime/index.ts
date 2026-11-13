@@ -25,6 +25,21 @@ import { shellCommandRejection, shellCommands } from '@pneuma/commands-core/comm
 import type { DscRuntime, SettingsMutation } from '@pneuma/runtime/contract.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 
+/**
+ * Super Agent 通道的工单 id。
+ *
+ * 契约形状是 `{ id }`，但界面半也可能直接传裸字符串（界面通道的实参规格是 json，
+ * 两种都过形校验）。这里只认这两种，其它形状当场给一句能读的话——不做字符串化糊弄。
+ */
+function superagentTicketId(input: unknown): string {
+  if (typeof input === 'string') return input
+  if (input !== null && typeof input === 'object') {
+    const id = (input as { id?: unknown }).id
+    if (typeof id === 'string') return id
+  }
+  throw new Error('要给一个工单 id（`{ id }` 或裸字符串）')
+}
+
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
   inject: [
@@ -304,6 +319,39 @@ export const runtimePlugin: Plugin.Object = {
         const team = ctx.get('team')
         if (team === undefined) return Promise.reject(new Error('子智能体插件没开，看不到队友的运行记录'))
         return team.peek(file)
+      },
+
+      // ── Super Agent 工单 ───────────────────────────────────────────────────
+      // 宿主插件默认关着，所以只能 ctx.get（不写进 inject：关着时不该把整条运行期拖挂）。
+      // 这五条只做转发，业务与装配都在 @pneuma/superagent（service.ts / surface.ts）。
+      superagentPublish(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，发不了工单'))
+        return superagent.publish(input)
+      },
+
+      superagentStopTicket(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有工单可停'))
+        return superagent.stop(superagentTicketId(input))
+      },
+
+      superagentRetryTicket(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有工单可重试'))
+        return superagent.retry(superagentTicketId(input))
+      },
+
+      superagentCleanWorktree(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有工作树可清理'))
+        return superagent.clean(superagentTicketId(input))
+      },
+
+      superagentPeekSession(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，看不到执行会话'))
+        return superagent.peekSession(superagentTicketId(input))
       },
 
       setPolicy(policy) {

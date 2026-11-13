@@ -26,6 +26,9 @@
  *     / `setDefaultPreset`
  *   - 设置页：`getSettingsSections` / `getSectionValues` / `setSettingValue` / `runSettingAction`
  *   - 队友：`listTeammates` / `stopTeammate` / `messageTeammate` / `removeTeammate`
+ *   - 工单：`superagentPublish` / `superagentStopTicket` / `superagentRetryTicket`
+ *     / `superagentCleanWorktree` / `superagentPeekSession`（superagent 插件默认关着；
+ *     五个方法都只是转发宿主插件提供的服务，插件没开时调用会得到一句「没开」）
  *   - 任务与目标：`clearTodos` / `goalAction`
  *   - 壳的 `/` 命令菜单：`listUiCommands`（只读元数据）+ `runUiCommand`——**只认
  *     `shell: true` 那批命令**（清单与挑选尺子在 `packages/commands-core/commands-completion.ts`：
@@ -113,6 +116,13 @@ export const UI_METHODS = [
   'sideAsk',
   'sideAskCancel',
   'peekTranscript',
+  // Super Agent 工单：发布 + 停 / 重试 / 清理 + 看执行会话。写类只对电脑上的界面开放；
+  // 远程壳只放行只读的 superagentPeekSession（见 packages/remote/types.ts）。
+  'superagentPublish',
+  'superagentStopTicket',
+  'superagentRetryTicket',
+  'superagentCleanWorktree',
+  'superagentPeekSession',
   // 模型与档位
   'setModel',
   'listModels',
@@ -271,6 +281,18 @@ const MAX_PATHS = 500
 const MAX_PREF_JSON = 32000
 /** 取消票据（旁问 requestId）的长度上限：它是壳自己发的 uuid，不需要更长。 */
 const MAX_TICKET = 64
+/**
+ * 工单 id 的长度上限：正常是 32 位十六进制，`/sa` 命令还允许前缀。
+ * 200 与 `MAX_NAME` 同档，够宽松也不至于让一次调用塞进一整段文本。
+ */
+const MAX_TICKET_ID = 200
+/** 工单 id 的 JSON 实参（`{ id }`）上限：裸字符串也过同一道闸，留出对象壳的余量。 */
+const MAX_TICKET_JSON = MAX_TICKET_ID + 256
+/**
+ * 发布入参（`{ title, body, base? }`）的 JSON 上限：三样各自的字符串上限之和，
+ * 另留对象键名的开销。超过它就不是一条需求了，是往宿主里灌数据。
+ */
+const MAX_PUBLISH_JSON = MAX_TEXT + MAX_NAME + MAX_PATH
 
 /** 枚举取值直接绑到契约的类型上：契约改了而这里没跟上，编译期就报错。 */
 const EFFORT_LEVELS = ['default', 'off', 'low', 'high', 'max'] as const satisfies readonly EffortLevel[]
@@ -417,6 +439,19 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
     { shape: { kind: 'enum', values: DOCK_UI_OPS } },
     { shape: { kind: 'json', maxBytes: MAX_PREF_JSON }, optional: true },
   ],
+  // ── Super Agent 工单 ──────────────────────────────────────────────────────
+  // 发布：一个对象实参（title / body / base?）。用 json 而不是拆成三个位置实参，
+  // 是为了让「base 可省」在「省略只能从尾部开始」这条规矩下照样表达得出来；
+  // 三样字符串的长度上限由 MAX_PUBLISH_JSON 兜住，具体字段在服务里再校验
+  // （标题非空、正文缺省取标题——与 /sa new 同一条规则）。
+  superagentPublish: [{ shape: { kind: 'json', maxBytes: MAX_PUBLISH_JSON } }],
+  // 停 / 重试 / 清理 / 看会话：一个工单 id。契约形状是 `{ id }`，实现层也收裸字符串
+  // （界面半与命令行的写法不必统一），两种形状都过 json 这道形校验；id 长度由
+  // MAX_TICKET_JSON 兜住，能不能当目录名由宿主那边的 sessionsDir 再判一次。
+  superagentStopTicket: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  superagentRetryTicket: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  superagentCleanWorktree: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  superagentPeekSession: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
 }
 
 /** 校验结果：过了一条新实参数组（尾部空值已去掉），没过给一句能读的错。 */
