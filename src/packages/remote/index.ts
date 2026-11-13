@@ -72,7 +72,7 @@ import { validateUiArgs, type UiMethod } from '@pneuma/runtime/core/ui-methods.j
 import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import { readCookie } from '@pneuma/runtime/core/web-http.js'
 import type { UiBootGraph } from '@pneuma/runtime/core/ui-manifest.js'
-import type { RuntimeSnapshot, SettingsField, StatusView } from '@pneuma/runtime/contract.js'
+import type { RuntimeSnapshot, SettingsField, SettingsMutationOk, StatusView } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, TurnSignal } from '@pneuma/runtime/services/types.js'
 import { bearerToken, hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './http.js'
 import { createRequestHandler } from './routes.js'
@@ -487,6 +487,67 @@ export const remotePlugin: Plugin.Object = {
       const port = server?.port ?? prefs.port
       const ip = prefs.lan ? lanAddress() : null
       return `http://${ip ?? '127.0.0.1'}:${String(port)}/`
+    }
+
+    /**
+     * 等端口真的在听（`server` 已经有值且 `ready` 有结果），最多等 `timeoutMs`。
+     *
+     * 为什么要等：`pair-code-lan` 先把开关写进偏好，`watchPrefs` 回调再起服务——写盘那一刻
+     * `server` 可能还是 null。这时候立刻出码，码里的端口号碰巧对（同一个 port），但服务还没
+     * 在听，用户扫第一下就会失败，看着像「修了还是打不开」。
+     */
+    const waitServerReady = async (timeoutMs = 1500): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs
+      for (;;) {
+        const instance = server
+        if (instance !== null) {
+          try {
+            await instance.ready
+            return true
+          } catch {
+            // 端口被占、权限不足之类：调用方按「没起来」处理（reach='down'）
+            return false
+          }
+        }
+        if (Date.now() >= deadline) return false
+        await new Promise<void>((resolveWait) => {
+          setTimeout(resolveWait, 25)
+        })
+      }
+    }
+
+    /**
+     * 出一张配对码，并**如实**报告它对手机通不通（{@link PairShareData.reach}）。
+     *
+     * 2026-11-12 报障：局域网开关关着时，这里给的地址是 `http://127.0.0.1:<端口>/`，
+     * 手机扫完浏览器只会报「网页暂时无法打开」，而弹窗写着「扫这个码即可连接」。
+     * 地址怎么算没错（服务确实只听回环），错在界面拿不到「手机连不上」这个事实——
+     * 所以现在把三态一起给出去，由界面决定画码还是画引导。
+     *
+     * 码只从这里出去（桌面的「连接手机」弹窗）：绝不写进 transcript，会话 jsonl 是会被翻出来的。
+     * 所以 notice 只说「生成了、半小时内有效」，码本体与可扫地址放 data，由界面画在弹窗里。
+     */
+    const issuePairCode = (): string | SettingsMutationOk => {
+      const prefs = ctx.settings.prefs().remote
+      const issued = pairing.issueCode({ replace: true })
+      // 理论到不了这里（replace 一定发得出来），留着当兜底
+      if (issued === null) return t('action.codeFailed')
+      // 与 addressText() 同一套算法，但把「算出的是哪个地址」留下来判断可达性：
+      // 服务没在跑先说这件事（端口没人听，比只听本机更严重）；开着局域网却挑不出
+      // 局域网地址（这台机器没有非回环 IPv4）时，地址仍是 127.0.0.1，手机一样扫不开。
+      const port = server?.port ?? prefs.port
+      const ip = prefs.lan ? lanAddress() : null
+      const reach: 'lan' | 'local' | 'down' = server === null ? 'down' : ip === null ? 'local' : 'lan'
+      return {
+        notice: t('action.codeIssued'),
+        data: {
+          kind: 'pair-code',
+          code: issued.code,
+          url: `http://${ip ?? '127.0.0.1'}:${String(port)}/?code=${issued.code}`,
+          expiresAt: issued.expiresAt,
+          reach,
+        },
+      }
     }
 
     /** 派发：审批答案带来源；其余方法照 host-stdio 的反射惯例展开实参。 */
@@ -1058,23 +1119,20 @@ export const remotePlugin: Plugin.Object = {
           // replace：每次点「连接手机」（以及弹窗里的「重新生成」）都换一张新码，旧码当场作废。
           // 为什么要作废而不是复用：明文码不落盘，旧码的明文只在上一张弹窗上，宿主重画不出来；
           // 而这张弹窗本来就该「一直看得见一张有效码」，所以只能换新的（界面上的 help 写明了这点）。
-          const issued = pairing.issueCode({ replace: true })
-          if (issued === null) {
-            // 理论到不了这里（replace 一定发得出来），留着当兜底
-            return t('action.codeFailed')
+          return issuePairCode()
+        }
+        if (name === 'pair-code-lan') {
+          // 弹窗里那颗「打开局域网访问并生成二维码」：把 lan（必要时连同 enabled）打开，
+          // 等端口真的在听再出码。为什么不干脆在出码时偷偷改开关：把一个能执行命令的端口
+          // 暴露到整个网段，得由用户自己按那颗按钮授权（弹窗上同时写了风险与回收方式）。
+          const prefs = ctx.settings.prefs().remote
+          if (!prefs.enabled || !prefs.lan || yielded) {
+            // 与 save('enabled') 同一条：明确要连手机 = 「退出主控」那道抑制解除
+            yielded = false
+            ctx.settings.setPrefs({ remote: { ...prefs, enabled: true, lan: true } })
+            await waitServerReady()
           }
-          // 码只从这里出去（桌面的「连接手机」弹窗）：绝不写进 transcript，会话 jsonl 是会被翻出来的。
-          // 所以 notice 只说「生成了、半小时内有效」，码本体与可扫地址放 data，由界面画在弹窗里。
-          // addressText() 已经给的是带协议的完整地址（末尾一个斜杠），直接接查询串即可。
-          return {
-            notice: t('action.codeIssued'),
-            data: {
-              kind: 'pair-code',
-              code: issued.code,
-              url: `${addressText()}?code=${issued.code}`,
-              expiresAt: issued.expiresAt,
-            },
-          }
+          return issuePairCode()
         }
         if (name === 'revoke-all') {
           const count = pairing.revokeAll()
