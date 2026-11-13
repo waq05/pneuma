@@ -489,6 +489,11 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 每迁完一条，从 `scripts/` 删掉对应 `.mjs`，`check-core` 的自动发现列表随之缩短。
 判据与 P1b 相同：**反向验证**（改坏源码必须变红）+ 用例数只增不减。
 
+**进度（2026-11-13）**：122 → 93。已完成 A1（会话正确性 4）、A2（会话交互 7）、
+B（transcript 6）、C（llm/context/injection 12）。已判定**不归这一层**的探针见
+[testing-deviations.md](testing-deviations.md) 的 D26：`session-picker-mouse`、
+`session-title-live`、7 条 `tui-*`、`injection-card-tip`。
+
 ### P3 ui 层 + e2e + 覆盖率开关
 
 1. 79 条 `ui-*` 拆两类：纯模型（约 40 条）→ `*.spec.ts`；组件渲染（约 39 条）→ `*.spec.tsx`，现有源码文本断言逐步换成真渲染断言。
