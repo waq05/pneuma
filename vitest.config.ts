@@ -87,7 +87,13 @@ export default defineConfig({
           include: ['src/**/*.spec.ts', 'tests/**/*.spec.ts'],
           // `*.int.spec.ts` 的结尾同样是 `.spec.ts`，不显式排掉会被 unit 连跑一遍：
           // 5 秒超时 + 线程池，起真内核的用例在那套设置下必红，而且红得莫名其妙。
-          exclude: ['src/packages/*/ui/**', 'src/**/*.int.spec.ts', '**/node_modules/**'],
+          // src 与 tests 两处都要排——tests/ 下的 harness 集成用例同样以 `.spec.ts` 结尾。
+          exclude: [
+            'src/packages/*/ui/**',
+            'src/**/*.int.spec.ts',
+            'tests/**/*.int.spec.ts',
+            '**/node_modules/**',
+          ],
           environment: 'node',
           testTimeout: 5_000,
           hookTimeout: 5_000,
@@ -98,7 +104,9 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'integration',
-          include: ['src/**/*.int.spec.ts'],
+          // tests/ 下也会有集成用例（tests/harness.int.spec.ts 这类起真内核/真 CLI 的），
+          // 两处都收，语义一致：`*.int.spec.ts` 就是集成层。
+          include: ['src/**/*.int.spec.ts', 'tests/**/*.int.spec.ts'],
           exclude: ['src/packages/*/ui/**'],
           environment: 'node',
           testTimeout: 60_000,
