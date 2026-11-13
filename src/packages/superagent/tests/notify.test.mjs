@@ -2,13 +2,15 @@
  * @pneuma/superagent 第 6 步的包级测试：结果通知 + 停止 / 重试 / 清理三条命令的后端。
  *
  * 六条用例，每条只钉一件会「悄悄坏掉」的事：
- *   1. 工单结束真往 `outbox` 里放了一条 `notice`，`drain()` 读得到它，且读走即删；
- *   2. `drain()` 的内存窗口只留 20 条，第 21 条挤掉最旧的；
- *   3. `stop` 之后工单已结束，而且 worker 是在「工单已结束」之后才被停的（顺序不能反）；
- *   4. `retry` 之后工单回到待派工，新分配真的交给了执行器；
- *   5. `clean` 对未结束的工单抛错，对已结束的真的把工作树目录删掉（临时 git 仓库，真跑 git）；
- *   6. 通知那句话：完成说清改了什么，失败说清卡在哪一步；
- *   7. 命令层的 id 前缀匹配：唯一命中就动手，歧义就喊「贴长一点」，找不到就说没有。
+ *   1. 工单结束真往 `outbox` 里放了一条 `notice`，那句能读的话与它指回的工单都在库里；
+ *   2. `stop` 之后工单已结束，而且 worker 是在「工单已结束」之后才被停的（顺序不能反）；
+ *   3. `retry` 之后工单回到待派工，新分配真的交给了执行器；
+ *   4. `clean` 对未结束的工单抛错，对已结束的真的把工作树目录删掉（临时 git 仓库，真跑 git）；
+ *   5. 通知那句话：完成说清改了什么，失败说清卡在哪一步；
+ *   6. 命令层的 id 前缀匹配：唯一命中就动手，歧义就喊「贴长一点」，找不到就说没有。
+ *
+ * 「出站队列 → 最近动态」那一半（发出去、失败退避、窗口容量）在 `dispatch.test.mjs` 里，
+ * 因为它现在的读者是发送泵，不是通知这个类。
  *
  * 全程 `tmpdir()` 下的临时目录，每个用例一份：绝不碰用户真实的 `~/.dsc`。
  * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
@@ -25,7 +27,7 @@ import { after, test } from 'node:test'
 
 const { openStore } = await import('../../../../lib/packages/superagent/adapters/store.js')
 const { StoreRepositories } = await import('../../../../lib/packages/superagent/adapters/repositories.js')
-const { StoreNotifier, noticeText, RECENT_CAP } = await import('../../../../lib/packages/superagent/adapters/notify.js')
+const { noticeText } = await import('../../../../lib/packages/superagent/adapters/notify.js')
 const { ensureWorktree, slugOf } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
 const { SuperagentRuntime } = await import('../../../../lib/packages/superagent/runtime.js')
 const { parseSaCommand, resolveTicket } = await import('../../../../lib/packages/superagent/commands.js')
@@ -116,8 +118,8 @@ function makeRepo() {
   return dir
 }
 
-test('1. 工单结束入队一条 notice，drain 读到那句话，outbox 清空', () => {
-  withRuntime('notice', ({ runtime, store, root }) => {
+test('1. 工单结束入队一条 notice，内容在库里自解释', () => {
+  withRuntime('notice', ({ runtime, root }) => {
     const id = runtime.publish({ title: '改登录页文案', body: '把提示改成中文' })
     runtime.stop(id)
 
@@ -127,43 +129,12 @@ test('1. 工单结束入队一条 notice，drain 读到那句话，outbox 清空
     assert.equal(stored.kind, 'notice')
     assert.equal(stored.payload.message.ticketId, id, '通知要指回工单')
     assert.match(stored.payload.message.text, /工单「改登录页文案」/, '那句话要带上标题，人能认出是哪张')
-
-    // 新起一个 notifier 读同一条库：通知是「落在 outbox 里的」，不是只活在某个对象里。
-    const notifier = new StoreNotifier(store, { now: () => AT })
-    const recent = notifier.drain()
-    assert.equal(recent.length, 1)
-    assert.match(recent[0].text, /已停止/)
-    assert.equal(recent[0].at, AT, '入队时刻要一起读回来')
-    assert.equal(readDb(root, (db) => db.prepare('SELECT COUNT(*) AS n FROM outbox').get().n), 0, 'drain 之后 outbox 应清空')
+    assert.equal(stored.payload.at, AT, '入队时刻要一起写进 payload：行一旦入队就与内存无关了')
     passed += 1
   })
 })
 
-test('2. drain 最多留 20 条，第 21 条挤掉最旧的', () => {
-  withRuntime('cap', ({ store, root }) => {
-    const notifier = new StoreNotifier(store, { now: () => AT })
-    // 直接造 21 张「已结束」的工单：这条用例只测窗口容量，不必真跑 21 次接单。
-    for (let index = 1; index <= RECENT_CAP + 1; index += 1) {
-      const label = String(index).padStart(2, '0')
-      notifier.ended({
-        id: `${label}${'0'.repeat(30)}`,
-        title: `通知 ${label}`,
-        ended: { at: AT, by: 'human', outcome: 'stopped' },
-        assignments: [],
-      })
-    }
-    assert.equal(readDb(root, (db) => db.prepare('SELECT COUNT(*) AS n FROM outbox').get().n), RECENT_CAP + 1)
-
-    const recent = notifier.drain()
-    assert.equal(recent.length, RECENT_CAP, `窗口只留 ${RECENT_CAP} 条`)
-    assert.ok(!recent.some((item) => item.text.includes('通知 01')), '最旧的那条应被挤掉')
-    assert.match(recent.at(-1).text, /通知 21/, '最新的在末尾')
-    assert.equal(readDb(root, (db) => db.prepare('SELECT COUNT(*) AS n FROM outbox').get().n), 0)
-    passed += 1
-  })
-})
-
-test('3. stop：工单已结束，且 worker 在「工单已结束」之后才被停', () => {
+test('2. stop：工单已结束，且 worker 在「工单已结束」之后才被停', () => {
   const calls = []
   let runtime = null
   /** 假执行器：只记调用，不建树、不起 worker。 */
@@ -193,7 +164,7 @@ test('3. stop：工单已结束，且 worker 在「工单已结束」之后才�
   }, { executor: fake })
 })
 
-test('4. retry：失败报告后重试，工单回到待派工并重新交给执行器', () => {
+test('3. retry：失败报告后重试，工单回到待派工并重新交给执行器', () => {
   const starts = []
   const stops = []
   const fake = {
@@ -229,7 +200,7 @@ test('4. retry：失败报告后重试，工单回到待派工并重新交给执
   }, { executor: fake })
 })
 
-test('5. clean：未结束抛错，已结束真的删掉工作树目录', () => {
+test('4. clean：未结束抛错，已结束真的删掉工作树目录', () => {
   let repoPath = ''
   withRuntime('clean', ({ runtime, root }) => {
     const repo = makeRepo()
@@ -251,7 +222,7 @@ test('5. clean：未结束抛错，已结束真的删掉工作树目录', () => 
   }, { worker: { repo: () => repoPath } })
 })
 
-test('6. 通知文案：完成说清改了什么，失败说清卡在哪一步', () => {
+test('5. 通知文案：完成说清改了什么，失败说清卡在哪一步', () => {
   const done = noticeText({
     id: 'a'.repeat(32),
     title: '改登录页文案',
@@ -277,7 +248,7 @@ test('6. 通知文案：完成说清改了什么，失败说清卡在哪一步',
   passed += 1
 })
 
-test('7. 命令层：id 前缀唯一命中就干，歧义喊「贴长一点」，找不到说没有', () => {
+test('6. 命令层：id 前缀唯一命中就干，歧义喊「贴长一点」，找不到说没有', () => {
   const view = (id, title) => ({ id, title, stage: { stage: 'ended' }, createdAt: AT })
   const tickets = [
     view(`${'abcdef01'}${'0'.repeat(24)}`, '甲'),

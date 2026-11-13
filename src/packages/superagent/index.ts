@@ -42,14 +42,18 @@ import { clampInt } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { openStore, type DscStore } from './adapters/store.js'
+import { type MessageSender } from './adapters/dispatch.js'
 import { createGithubApi } from './adapters/github/api.js'
+import { sendGithub } from './adapters/github/channel.js'
 import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
 import { bindAgentPulls, pollTicketChecks, type OpenPull } from './adapters/github/bind.js'
-import { resolveFeishuCli, readFeishuBot } from './adapters/feishu/cli-run.js'
+import { sendFeishu } from './adapters/feishu/channel.js'
+import { resolveFeishuCli, readFeishuBot, type FeishuCli } from './adapters/feishu/cli-run.js'
 import { createFeishuSource, type FeishuSource } from './adapters/feishu/loops.js'
+import { SOURCE as FEISHU_SOURCE } from './adapters/feishu/trigger.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
-import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
+import { defaultSettings, GITHUB_SOURCE, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
 import { createFeishuHealth, createSuperagentHealth } from './health.js'
@@ -523,15 +527,23 @@ export function apply(ctx: Context, passed?: unknown): void {
    * `busy` 是「上一拍还没回来」：轮询是网络活，慢的时候会比间隔长，不设这道闸就会在
    * 同一个账号上越堆越多请求——配额打满之后症状是「突然一条评论都收不到了」。
    */
-  let github: { source: ReturnType<typeof createGithubSource>; api: ReturnType<typeof createGithubApi>; lastAt: number; busy: boolean } | null = null
+  let github: {
+    source: ReturnType<typeof createGithubSource>
+    api: ReturnType<typeof createGithubApi>
+    /** 机器人自己的登录名：回评论时要用它认「这条标记是我发的」。 */
+    login: string
+    lastAt: number
+    busy: boolean
+  } | null = null
 
   /**
    * 建好的飞书来源；`null` = 没开、没配群、CLI 找不到，或建失败。
    *
    * `busy` 与 GitHub 那格同一个意思：上一拍还没回来就不重复 tick。`lastAt` 记的是「上一次
    * 交给来源的时刻」，不是「来源自己记的 lastPollAt」——两件事差着一次网络往返。
+   * `run` 留着给发送泵用：回一条飞书消息要走同一个 CLI 执行器。
    */
-  let feishu: { source: FeishuSource; lastAt: number; busy: boolean } | null = null
+  let feishu: { source: FeishuSource; run: FeishuCli['run']; lastAt: number; busy: boolean } | null = null
 
   /**
    * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
@@ -561,6 +573,7 @@ export function apply(ctx: Context, passed?: unknown): void {
           now: () => new Date().toISOString(),
           log: (line) => { console.warn(line) },
         }),
+        login: account.login,
         lastAt: 0,
         busy: false,
       }
@@ -584,6 +597,29 @@ export function apply(ctx: Context, passed?: unknown): void {
       .then(() => bindPulls())
       .then(() => { pollPullCi() })
       .finally(() => { if (github !== null) github.busy = false })
+  }
+
+  /**
+   * 出站消息的发送方：来源起来了才有对应的那一条。
+   *
+   * 为什么是 getter：`ensure()` 建运行期时两个来源都还没起（先有运行期，来源要拿它的
+   * `sourceBridge()`）。写成现成的表，就是「插件启动那一刻排队的回复永远发不出去」。
+   *
+   * 没起来的来源不出现在表里，发送泵按「来源还没起来」退避重试（`dispatch.ts` 的
+   * `defer`），所以「飞书晚两秒起来」不会把那条回复弄丢，而「飞书没配」会在试满几次之后
+   * 丢弃并记一行——不会在库里堆一批永远发不出去的行。
+   */
+  function outboxSenders(): Partial<Record<string, MessageSender>> {
+    const senders: Partial<Record<string, MessageSender>> = {}
+    if (github !== null) {
+      const current = github
+      senders[GITHUB_SOURCE] = (message) => sendGithub(current.api, message, current.login)
+    }
+    if (feishu !== null) {
+      const current = feishu
+      senders[FEISHU_SOURCE] = (message) => sendFeishu(current.run, message)
+    }
+    return senders
   }
 
   /**
@@ -638,7 +674,7 @@ export function apply(ctx: Context, passed?: unknown): void {
             backfillEveryMs: FEISHU_INTERNAL_BACKFILL_MS,
           })
           source.start()
-          feishu = { source, lastAt: Date.now(), busy: false }
+          feishu = { source, run: resolved.run, lastAt: Date.now(), busy: false }
           console.warn(
             `[superagent] 飞书来源已启动：${String(current.feishuChats.length)} 个群，`
               + `每 ${String(FEISHU_POLL_INTERVAL_MS / 1000)} 秒补收一轮`,
@@ -761,6 +797,8 @@ export function apply(ctx: Context, passed?: unknown): void {
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),
         ...(complete === undefined ? {} : { assessorComplete: complete }),
+        // 发送方现读：两个来源在本函数返回之后才起来（`startGithub` / `startFeishu`）。
+        senders: outboxSenders,
       })
       runtime = opened
       warned = false

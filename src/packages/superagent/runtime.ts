@@ -19,6 +19,7 @@ import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, t
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
+import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
 import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
 import { manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
 import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
@@ -149,6 +150,14 @@ export interface RuntimeOptions {
   assessorModel?: RoleModel | null
   /** 一次问答；不给 = 就算配了模型也退回同步规则（见 `adapters/assessor-select.ts`）。 */
   assessorComplete?: AssessorComplete
+  /**
+   * 出站消息的发送方，按 `channel.source` 查（`feishu` / `github`）。
+   *
+   * 是 getter 而不是一张现成的表：两个来源都在运行期建好之后才起来，构造时算死等于
+   * 「来源起来之前排队的那条回复永远发不出去」。不给 = 一条都不发，只进最近动态
+   * （P0 的行为，也是没配飞书 / 没令牌时的行为）。
+   */
+  senders?: () => Partial<Record<string, MessageSender>>
 }
 
 /**
@@ -204,6 +213,8 @@ export class SuperagentRuntime {
   private readonly executor: Executor
   /** 结果通知：工单结束时入队一句话，并留一份内存里的最近动态。 */
   private readonly notify: StoreNotifier
+  /** 发送泵：把出站队列里的消息真正送到飞书 / GitHub。 */
+  private readonly dispatch: OutboxDispatcher
   /** 仓库根的 getter，与执行器同一个来源；`clean` 要拿它算工作树在哪个仓库下。 */
   private readonly repoOf: () => string
   /** 工作树根（设置里给过就用它），`clean` 要按它重算目录。 */
@@ -243,9 +254,18 @@ export class SuperagentRuntime {
       onError: (error, evalId) => this.log(`[superagent] 判定 ${evalId} 失败：${describe(error)}`),
       log: (line) => this.log(line),
     })
-    this.notify = new StoreNotifier(store, { now })
+    this.notify = new StoreNotifier(store)
     this.timeoutOf = options.timeoutSeconds ?? (() => 0)
     this.outbox = new StoreOutbox(store)
+    // 发送泵：一拍取一批、逐条发、失败的原样写回队列（规则见 `adapters/dispatch.ts`）。
+    // `senders` 是 getter：两个来源都在运行期之后才建好，构造时算死会漏掉「起来之前排队的回复」。
+    this.dispatch = new OutboxDispatcher({
+      store,
+      senders: options.senders ?? (() => ({})),
+      remember: (fresh) => { this.notify.remember(fresh) },
+      now,
+      log: (line) => { this.log(line) },
+    })
     // 执行器的入口：宿主上下文（模型 / 工具 / 守卫 / 沙箱 / 压缩）+ 设置。
     // 没给 `ctx` 时执行器停在「未接宿主」模式（`start` 只记一条缺项日志、工单留待派工）。
     // `engine` 用 getter 晚绑定：引擎的构造需要执行器，执行器的报告又要引擎。
@@ -378,7 +398,7 @@ export class SuperagentRuntime {
    * 面板「最近动态」：通知适配层内存窗口里的那几条（最旧在前）。
    *
    * 读的是内存窗口，不碰库——快照每次装配都会问它，不能顺带做一次出站队列的 drain。
-   * 窗口靠 {@link pump} 每拍 `drain()` 补货（第 6 步就定好 `drain` 是给第 7 步的快照面用的）。
+   * 窗口靠发送泵补货：`flushOutbox()` 每取出一批消息，就把「说了什么」记进窗口。
    */
   recent(): RecentNotice[] {
     return this.notify.recent()
@@ -521,10 +541,14 @@ export class SuperagentRuntime {
 
   /**
    * 2 秒泵的一拍：先按超时收掉跑太久的工单，再把到期的 Eval 处理掉、判定排队中的候选，
-   * 最后收一次通知。
+   * 最后把出站消息发出去。
    *
-   * 前三件是 P0 的驱动；第四件（`notify.drain`）是把工单结束那类通知从出站队列取进
-   * 内存窗口，供面板「最近动态」读——第 6 步就写明 `drain()` 是给第 7 步快照面用的。
+   * 前三件是 P0 的驱动；第四件是 P1 的发送泵（{@link flushOutbox}），它同时负责把「说了什么」
+   * 记进面板的「最近动态」。
+   *
+   * 发送不 `await`：一次网络往返可能几秒，等它会把整拍拖住（超时判定、Eval 都会跟着晚）。
+   * 发送泵自己有一道 `busy` 闸（`dispatch.ts`），所以提前放出去不会把同一行发两遍。
+   *
    * 抛错由调用方（`index.ts` 的定时器）捕获后记日志，不中断下一拍。
    */
   pump(): void {
@@ -532,11 +556,24 @@ export class SuperagentRuntime {
     this.expireOverdue()
     this.engine.evaluateDue()
     this.assessor.drain(this.engine)
+    void this.flushOutbox()
+  }
+
+  /**
+   * 发一轮出站消息。
+   *
+   * 公开是为了让测试能 `await` 它——泵里是发出去就走，等不到结果。正常路径上不会抛：
+   * 一条消息发不出去只影响那一条，不该让泵的日志里冒出一个跟工单无关的堆栈。
+   *
+   * @returns 这一轮结束时完成；有没有发出、发了几条不回报（要看效果去读「最近动态」）
+   */
+  async flushOutbox(): Promise<void> {
+    if (this.closed) return
     try {
-      this.notify.drain()
+      await this.dispatch.flush()
     } catch (error) {
-      // 取通知失败只影响「最近动态」这一格，不影响工单推进。
-      this.log(`[superagent] 通知未取回：${describe(error)}`)
+      // 取队列本身失败（某行 JSON 坏了会抛）只记一行，下一拍照旧跑。
+      this.log(`[superagent] 出站消息未发出：${describe(error)}`)
     }
   }
 
