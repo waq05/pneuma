@@ -824,13 +824,9 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
   // 动态 import：unit 层的用例只用 tempHome / fakeLLM 时，不该把整张内核插件图拖进来
   // （那会让单条用例从 5ms 变成上百毫秒，也让「unit 不碰真内核」这条规矩更难守）。
   //
-  // 说明符故意不带 `.js`：`tsconfig.spec.json` 只 include spec 文件，一旦它静态解析到
-  // `src/host/kernel.ts`，内核与其依赖会被拉进这次编译，而 `src/services/types.ts` 的
-  // cordis `Context` 模块增强不在同一份 include 里，整棵源码树会报「Context 上没有
-  // agent / session」。Vite 的解析会补 `.ts`（`@pneuma/runtime` 已 alias 成绝对路径），
-  // 所以运行时不受影响；类型侧这个 import 按 `any` 处理，下面自己声明了要用的形状。
-  // @ts-ignore -- 见上：NodeNext 不认无扩展名的裸说明符，Vite 认。
-  const kernelModule = (await import('@pneuma/runtime/host/kernel')) as {
+  // 说明符带 `.js` 是 NodeNext 的要求；`tsconfig.spec.json` 的 include 里有整棵 `src`，
+  // 所以 cordis 的 `Context` 声明合并也在程序里，这里不需要任何类型绕过。
+  const kernelModule = (await import('@pneuma/runtime/host/kernel.js')) as {
     createKernel: (bootOptions: { config: DscCoreConfig; resumeSessionPath: string | null }) => Promise<unknown>
   }
   const ctx = await kernelModule.createKernel({ config, resumeSessionPath: null })

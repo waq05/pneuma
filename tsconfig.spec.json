@@ -14,9 +14,15 @@
   },
   "include": [
     "vitest.config.ts",
-    "src/**/*.spec.ts",
-    "src/**/*.int.spec.ts",
-    "src/**/*.e2e.ts",
+    // 整棵 src 都要进来，不只是 spec。
+    //
+    // 原因：cordis 的 `Context` 增强是「声明合并」，靠的是某个模块在程序里被包含进来。
+    // 只列 spec 文件时，spec 里静态 import 内核会把 kernel.ts 拉进程序，可增强那一份
+    // 却不在，于是满屏 `Property 'xxx' does not exist on type 'Context'`——而主构建
+    // （`pnpm typecheck`）是全绿的。两边的差别就在这一条 include。
+    // 代价：与主构建重复编一遍 src，实测 7.2s → 约 20s，换来的是不用在 harness 里写 @ts-ignore。
+    "src/**/*.ts",
+    "src/**/*.tsx",
     "tests/**/*.ts"
   ],
   // `tests/setup/dom.ts` 给 jsdom 打桩，必然用 DOM API，归 ui-shell/tsconfig.spec.json 查。
