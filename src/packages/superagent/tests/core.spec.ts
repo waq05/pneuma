@@ -7,18 +7,30 @@
  *   3. Mandate 重新校验——工单结束后能不能带着旧授权继续干，全看这一条。
  * 这三样任何一样漂了，症状都不是报错，而是「不该接的接了」或「该接的接不了」，所以要钉死。
  *
- * 断言来源：除标注「自补」的两条外，全部照抄上游
+ * 断言来源：除标注「自补」的一条外，全部照抄上游
  * `D:\code\dsh-superagent-prototype\tests\policy.spec.ts`，每条用例标题后面注明上游行号。
- * 上游用 `SourceRegistry` + 真实的 Feishu / GitHub 来源插件取接收范围；本包还没有来源适配层，
- * 所以用下面 `scopeOf()` 这个 stub 复刻同一批 `scope()` 返回值（注释里写明每个分支对应上游哪条断言），
- * 判据（`gate` / `revalidate` 的结论）仍是上游原文。
+ * 上游用 `SourceRegistry` + 真实的 Feishu / GitHub 来源插件取接收范围；本包还没有 Feishu 来源适配层
+ * （`adapters/scope.ts` 只登记 manual 与 GitHub），所以用下面 `scopeOf()` 这个 stub 复刻同一批 `scope()`
+ * 返回值（注释里写明每个分支对应上游哪条断言），判据（`gate` / `revalidate` 的结论）仍是上游原文。
  *
- * import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
+ * 迁移说明：原文件跑的是构建产物、先手工 build；现在直接 import 源码。
  *
  * @module @pneuma/superagent/tests
  */
-import assert from 'node:assert/strict'
-import { after, test } from 'node:test'
+import { expect, test } from 'vitest'
+import type {
+  AcceptMode,
+  AdmissionCell,
+  Mandate,
+  MandateBasis,
+  Strength,
+  Thread,
+  Ticket,
+  Trigger,
+} from '../core/model.js'
+import type { AdmissionRow } from '../core/admission.js'
+import type { Assessment, Rule, Settings, SourcePolicy } from '../core/policy.js'
+import type { GateResult, SourceScope } from '../core/ports.js'
 
 const {
   SettingsSchema,
@@ -28,16 +40,17 @@ const {
   policyEffects,
   policyVersion,
   settingsPolicy,
-} = await import('../../../../lib/packages/superagent/core/policy.js')
+} = await import('../core/policy.js')
 
 const MEMBER = 'ou_alice'
 const CHAT = 'oc_team'
 const OBSERVED = 'oc_1111111111111111111111111111'
 
-let passed = 0
-
-/** `SettingsSchema.parse` 的输入：两个来源的计划，与上游 `base` 同形。 */
-const feishuSource = (config, enabled = true) => ({ enabled, config })
+/** `SettingsSchema.parse` 的输入：一个来源实例（启用状态 + 该来源自己的配置），与上游 `base` 同形。 */
+const feishuSource = (
+  config: Record<string, unknown>,
+  enabled = true,
+): { enabled: boolean; config: Record<string, unknown> } => ({ enabled, config })
 const base = SettingsSchema.parse({
   policy: {
     sources: {
@@ -61,7 +74,7 @@ const base = SettingsSchema.parse({
  * - GitHub：默认监听但不观察；`observeComments` / `observeCi` / `observeIssues` 打开时对应行才观察。
  * 未配置的来源实例按「启用、空配置」处理（上游 `SourceRegistry` 同此行为）。
  */
-function scopeOf(settings) {
+function scopeOf(settings: Settings): SourceScope {
   return {
     scope({ source, meta }) {
       const instance = settings.sources[source] ?? { enabled: true, config: {} }
@@ -84,7 +97,8 @@ function scopeOf(settings) {
           ? { listened: false, reason: 'direct_messages_not_allowed' }
           : { listened: true, observed: false, row: 'direct' }
       }
-      const chat = (config.chats ?? []).find((item) => item.chatId === meta.chatId)
+      const chats = (config.chats as { chatId: string; listen: string }[] | undefined) ?? []
+      const chat = chats.find((item) => item.chatId === meta.chatId)
       if (chat) return { listened: true, observed: chat.listen === 'all', row: chat.chatId }
       if (config.otherChats === 'mentions') return { listened: true, observed: false, row: 'other' }
       return { listened: false, reason: 'chat_not_allowed' }
@@ -92,12 +106,12 @@ function scopeOf(settings) {
   }
 }
 
-function setup(settings = base) {
+function setup(settings: Settings = base) {
   const sources = scopeOf(settings)
   return { sources, policy: settingsPolicy(settings, sources), version: policyVersion(settings) }
 }
 
-const thread = (subscriptions = []) => ({
+const thread = (subscriptions: string[] = []): Thread => ({
   key: 'feishu:x',
   ref: { source: 'feishu', id: 'x' },
   createdAt: '',
@@ -107,7 +121,7 @@ const thread = (subscriptions = []) => ({
   meta: {},
 })
 
-const feishu = (overrides = {}) => ({
+const feishu = (overrides: Partial<Trigger> = {}): Trigger => ({
   id: 't',
   source: 'feishu',
   threads: [{ source: 'feishu', id: 'x' }],
@@ -120,12 +134,12 @@ const feishu = (overrides = {}) => ({
   ...overrides,
 })
 
-const unaddressed = (overrides = {}) => {
+const unaddressed = (overrides: Partial<Trigger> = {}): Trigger => {
   const { addressed: _addressed, ...rest } = feishu(overrides)
   return rest
 }
 
-const github = (login, addressed) => ({
+const github = (login: string, addressed?: 'mention' | 'direct'): Trigger => ({
   id: 'g',
   source: 'github',
   threads: [{ source: 'github', id: '1' }],
@@ -137,24 +151,16 @@ const github = (login, addressed) => ({
   meta: { number: 1, isPr: true },
 })
 
-const ticket = { id: 'ticket', ended: { at: '', by: 'executor', reason: 'closed', outcome: 'closed' } }
+/** 一张工单；只填本用例用到的字段（`gate` 只读 `id`，其余字段与授权判定无关）。 */
+const ticket = {
+  id: 'ticket',
+  ended: { at: '', by: 'executor', reason: 'closed', outcome: 'closed' },
+} as unknown as Ticket
 
-/**
- * 断言工具：node:assert 没有 `toMatchObject`，这里按同样的语义实现（只查给出的键，不做全等）。
- * 上游 `toEqual` 的地方一律用 `assert.deepEqual`，不降级。
- */
-function matchObject(actual, expected) {
-  if (expected === null || typeof expected !== 'object') return Object.is(actual, expected)
-  if (typeof actual !== 'object' || actual === null) return false
-  for (const [key, value] of Object.entries(expected)) if (!matchObject(actual[key], value)) return false
-  return true
-}
-
-function assertMatch(actual, expected) {
-  assert.ok(
-    matchObject(actual, expected),
-    `实际 ${JSON.stringify(actual)} 不匹配期望 ${JSON.stringify(expected)}`,
-  )
+/** 准入闸的判别联合：接单才算过闸，不过就带原因让用例失败（与 `sources.spec.ts` 同一写法）。 */
+function admitted(result: GateResult): Extract<GateResult, { admissible: true }> {
+  if (!result.admissible) throw new Error(`期望接单，实际被判：${result.reason}（${JSON.stringify(result)}）`)
+  return result
 }
 
 const { policy } = setup()
@@ -162,120 +168,115 @@ const { policy } = setup()
 // ── gate：准入判定的基本形态（上游 tests/policy.spec.ts:53-89）─────────────────
 
 test('gate：名单内发送者点名 → explicit（上游 policy.spec.ts:54）', () => {
-  assertMatch(policy.gate(feishu(), thread(), []), {
+  expect(policy.gate(feishu(), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { via: 'addressed', source: 'feishu', sender: 'Alice', addressed: 'mention', scope: { chatId: CHAT } },
   })
-  assertMatch(policy.gate(feishu({ addressed: 'direct', meta: { chatId: 'p2p', direct: true, mentioned: false } }), thread(), []), {
+  expect(policy.gate(feishu({ addressed: 'direct', meta: { chatId: 'p2p', direct: true, mentioned: false } }), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { addressed: 'direct' },
   })
   // GitHub 登录名按大小写不敏感比较；条目没有显示名时用 id 命名发送者。
-  assertMatch(policy.gate(github('alice', 'mention'), thread(), []), {
+  expect(policy.gate(github('alice', 'mention'), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { source: 'github', sender: 'Alice' },
   })
-  passed += 1
 })
 
 test('gate：各来源各一张名单，Feishu id 在 GitHub 上不放行（上游 policy.spec.ts:60）', () => {
-  assert.deepEqual(policy.gate(github(MEMBER, 'mention'), thread(), []), { admissible: false, reason: 'not_a_member' })
-  assert.deepEqual(allowedSender(base, { source: 'github', id: 'ALICE' }), { id: 'Alice' })
-  assert.equal(allowedSender(base, { source: 'feishu', id: 'Alice' }), undefined)
-  assert.equal(anyoneAllowed(base), true)
-  assert.equal(anyoneAllowed(SettingsSchema.parse({})), false)
-  passed += 1
+  expect(policy.gate(github(MEMBER, 'mention'), thread(), [])).toStrictEqual({ admissible: false, reason: 'not_a_member' })
+  expect(allowedSender(base, { source: 'github', id: 'ALICE' })).toStrictEqual({ id: 'Alice' })
+  expect(allowedSender(base, { source: 'feishu', id: 'Alice' })).toBeUndefined()
+  expect(anyoneAllowed(base)).toBe(true)
+  expect(anyoneAllowed(SettingsSchema.parse({}))).toBe(false)
 })
 
 test('gate：线程上已有工单的追加消息按 followup 判（上游 policy.spec.ts:67）', () => {
   const quiet = { meta: { chatId: CHAT, direct: false, mentioned: false } }
-  assertMatch(policy.gate(unaddressed({ ...quiet, actor: { source: 'feishu', id: 'ou_guest' } }), thread(['ticket']), []), {
+  expect(policy.gate(unaddressed({ ...quiet, actor: { source: 'feishu', id: 'ou_guest' } }), thread(['ticket']), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { via: 'followup' },
   })
-  assertMatch(policy.gate(unaddressed(quiet), thread(['ticket']), []), {
+  expect(policy.gate(unaddressed(quiet), thread(['ticket']), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { via: 'followup', sender: 'Alice' },
   })
-  assertMatch(policy.gate(github('someone'), thread(), [ticket]), { admissible: true, strength: 'inferred' })
+  expect(policy.gate(github('someone'), thread(), [ticket])).toMatchObject({ admissible: true, strength: 'inferred' })
   // 只为上下文关注的线程不产生 followup：仍按准入表判，和普通线程一样。
   const context = { ...thread(['ticket']), context: ['ticket'] }
-  assertMatch(policy.gate(unaddressed(quiet), context, [ticket]), { admissible: false })
-  passed += 1
+  expect(policy.gate(unaddressed(quiet), context, [ticket])).toMatchObject({ admissible: false })
 })
 
 test('gate：被观察的未点名消息 → inferred；off 时 no_mention（上游 policy.spec.ts:76）', () => {
   const observed = unaddressed({ meta: { chatId: OBSERVED, direct: false, mentioned: false } })
-  assertMatch(policy.gate(observed, thread(), []), {
+  expect(policy.gate(observed, thread(), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { via: 'admission', observation: { mode: 'auto' } },
   })
-  assert.deepEqual(setup({ ...base, eval: { ...base.eval, mode: 'off' } }).policy.gate(observed, thread(), []), {
+  expect(setup({ ...base, eval: { ...base.eval, mode: 'off' } }).policy.gate(observed, thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'no_mention',
   })
-  passed += 1
 })
 
 test('gate：未列名单者的私信不按 followup 放行（上游 policy.spec.ts:81）', () => {
-  assert.deepEqual(
+  expect(
     policy.gate(
       feishu({ actor: { source: 'feishu', id: 'ou_guest' }, addressed: 'direct', meta: { chatId: 'p2p', direct: true, mentioned: false } }),
       thread(['ticket']),
       [],
     ),
-    { admissible: false, reason: 'not_a_member' },
-  )
-  passed += 1
+  ).toStrictEqual({ admissible: false, reason: 'not_a_member' })
 })
 
 test('gate：机器人 / 未列名单 / 未点名分别拒绝（上游 policy.spec.ts:84）', () => {
-  assert.deepEqual(policy.gate(feishu({ human: false }), thread(), []), { admissible: false, reason: 'not_human' })
-  assert.deepEqual(policy.gate(feishu({ actor: { source: 'feishu', id: 'ou_guest' } }), thread(), []), {
+  expect(policy.gate(feishu({ human: false }), thread(), [])).toStrictEqual({ admissible: false, reason: 'not_human' })
+  expect(policy.gate(feishu({ actor: { source: 'feishu', id: 'ou_guest' } }), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'not_a_member',
   })
-  assert.deepEqual(policy.gate(unaddressed({ meta: { chatId: CHAT, direct: false, mentioned: false } }), thread(), []), {
+  expect(policy.gate(unaddressed({ meta: { chatId: CHAT, direct: false, mentioned: false } }), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'no_mention',
   })
-  passed += 1
 })
 
 test('admission：表全空时复刻旧行为（上游 policy.spec.ts:102）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
-  assertMatch(policy.gate(inChat(OBSERVED, MEMBER, false), thread(), []), {
+  expect(policy.gate(inChat(OBSERVED, MEMBER, false), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { via: 'admission', row: OBSERVED, cell: 'listedUnaddressed', observation: { mode: 'auto' } },
   })
-  assert.deepEqual(policy.gate(inChat(CHAT, STRANGER), thread(), []), { admissible: false, reason: 'not_a_member' })
-  assert.deepEqual(
+  expect(policy.gate(inChat(CHAT, STRANGER), thread(), [])).toStrictEqual({ admissible: false, reason: 'not_a_member' })
+  expect(
     policy.gate(feishu({ actor: { source: 'feishu', id: STRANGER }, addressed: 'direct', meta: { chatId: 'p2p', direct: true, mentioned: false } }), thread(), []),
-    { admissible: false, reason: 'not_a_member' },
-  )
+  ).toStrictEqual({ admissible: false, reason: 'not_a_member' })
   // 名单内发送者点名一律 explicit，跟表格怎么写无关。
-  assertMatch(withTable({ [CHAT]: { unlistedAddressed: 'ignore' } }).policy.gate(inChat(CHAT), thread(), []), {
+  expect(withTable({ [CHAT]: { unlistedAddressed: 'ignore' } }).policy.gate(inChat(CHAT), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
   })
-  passed += 1
 })
 
 /** 准入表用例的公共构造：改表格 / 改来源配置 / 改接单模式，其余沿用 `base`。 */
-function withTable(admission, config = {}, mode = 'auto') {
+function withTable(
+  admission: Record<string, AdmissionRow>,
+  config: Record<string, unknown> = {},
+  mode: AcceptMode = 'auto',
+) {
   const settings = SettingsSchema.parse({
     ...base,
     eval: { ...base.eval, mode },
@@ -287,14 +288,14 @@ function withTable(admission, config = {}, mode = 'auto') {
 
 test('admission：未列名单者点名按格子给 explicit 或 inferred，inferred 需要评估模式（上游 policy.spec.ts:109）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
   const explicit = withTable({ [CHAT]: { unlistedAddressed: 'explicit' } }).policy.gate(inChat(CHAT, STRANGER), thread(), [])
-  assert.deepEqual(explicit, {
+  expect(explicit).toStrictEqual({
     admissible: true,
     strength: 'explicit',
     basis: {
@@ -306,135 +307,127 @@ test('admission：未列名单者点名按格子给 explicit 或 inferred，infe
       addressed: 'mention',
     },
   })
-  assertMatch(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }).policy.gate(inChat(CHAT, STRANGER), thread(), []), {
+  expect(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }).policy.gate(inChat(CHAT, STRANGER), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { cell: 'unlistedAddressed' },
   })
-  assert.deepEqual(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }, {}, 'off').policy.gate(inChat(CHAT, STRANGER), thread(), []), {
+  expect(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }, {}, 'off').policy.gate(inChat(CHAT, STRANGER), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'not_a_member',
   })
-  assertMatch(
+  expect(
     withTable({ direct: { unlistedAddressed: 'explicit' } }).policy.gate(
       feishu({ actor: { source: 'feishu', id: STRANGER }, addressed: 'direct', meta: { chatId: 'p2p', direct: true, mentioned: false } }),
       thread(),
       [],
     ),
-    { admissible: true, strength: 'explicit', basis: { row: 'direct', cell: 'unlistedAddressed' } },
-  )
+  ).toMatchObject({ admissible: true, strength: 'explicit', basis: { row: 'direct', cell: 'unlistedAddressed' } })
   // 表格里没配这个群的行：不放假。
-  assert.deepEqual(withTable({ [OBSERVED]: { unlistedAddressed: 'explicit' } }).policy.gate(inChat(CHAT, STRANGER), thread(), []), {
+  expect(withTable({ [OBSERVED]: { unlistedAddressed: 'explicit' } }).policy.gate(inChat(CHAT, STRANGER), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'not_a_member',
   })
-  passed += 1
 })
 
 test('admission：名单内未点名消息按格子忽略，不接收的消息不查表（上游 policy.spec.ts:117）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
-  assert.deepEqual(withTable({ [OBSERVED]: { listedUnaddressed: 'ignore' } }).policy.gate(inChat(OBSERVED, MEMBER, false), thread(), []), {
+  expect(withTable({ [OBSERVED]: { listedUnaddressed: 'ignore' } }).policy.gate(inChat(OBSERVED, MEMBER, false), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'admission_ignored',
   })
   // 只收点名的群收不到未点名消息，所以哪怕是 inferred 的格子也不放行。
-  assert.deepEqual(withTable({ [CHAT]: { listedUnaddressed: 'inferred' } }).policy.gate(inChat(CHAT, MEMBER, false), thread(), []), {
+  expect(withTable({ [CHAT]: { listedUnaddressed: 'inferred' } }).policy.gate(inChat(CHAT, MEMBER, false), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'no_mention',
   })
-  assert.deepEqual(withTable({ [CHAT]: { unlistedUnaddressed: 'inferred' } }).policy.gate(inChat(CHAT, STRANGER, false), thread(), []), {
+  expect(withTable({ [CHAT]: { unlistedUnaddressed: 'inferred' } }).policy.gate(inChat(CHAT, STRANGER, false), thread(), [])).toStrictEqual({
     admissible: false,
     reason: 'not_a_member',
   })
-  passed += 1
 })
 
 test('admission：other 行只在来源配置允许时放行未列聊天（上游 policy.spec.ts:123）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
-  assert.deepEqual(setup().sources.scope(inChat('oc_elsewhere')), { listened: false, reason: 'chat_not_allowed' })
+  expect(setup().sources.scope(inChat('oc_elsewhere'))).toStrictEqual({ listened: false, reason: 'chat_not_allowed' })
   const others = withTable({ other: { unlistedAddressed: 'explicit' } }, { otherChats: 'mentions' })
-  assert.deepEqual(others.sources.scope(inChat('oc_elsewhere')), { listened: true, observed: false, row: 'other' })
-  assertMatch(others.policy.gate(inChat('oc_elsewhere'), thread(), []), { admissible: true, strength: 'explicit', basis: { row: 'other' } })
-  assertMatch(others.policy.gate(inChat('oc_elsewhere', STRANGER), thread(), []), {
+  expect(others.sources.scope(inChat('oc_elsewhere'))).toStrictEqual({ listened: true, observed: false, row: 'other' })
+  expect(others.policy.gate(inChat('oc_elsewhere'), thread(), [])).toMatchObject({ admissible: true, strength: 'explicit', basis: { row: 'other' } })
+  expect(others.policy.gate(inChat('oc_elsewhere', STRANGER), thread(), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { row: 'other', cell: 'unlistedAddressed' },
   })
-  passed += 1
 })
 
 test('admission：off 模式下没有 inferred followup，名单内发送者仍是 explicit（上游 policy.spec.ts:130）', () => {
   const quiet = { meta: { chatId: CHAT, direct: false, mentioned: false } }
   const off = setup({ ...base, eval: { ...base.eval, mode: 'off' } }).policy
-  assert.deepEqual(off.gate(unaddressed({ ...quiet, actor: { source: 'feishu', id: 'ou_guest' } }), thread(['ticket']), []), {
+  expect(off.gate(unaddressed({ ...quiet, actor: { source: 'feishu', id: 'ou_guest' } }), thread(['ticket']), [])).toStrictEqual({
     admissible: false,
     reason: 'not_a_member',
   })
-  assertMatch(off.gate(unaddressed(quiet), thread(['ticket']), []), {
+  expect(off.gate(unaddressed(quiet), thread(['ticket']), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { via: 'followup' },
   })
-  passed += 1
 })
 
 test('admission：explicit 格子在任何模式都算明确请求（上游 policy.spec.ts:137）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
-  for (const mode of ['auto', 'observe', 'off']) {
+  for (const mode of ['auto', 'observe', 'off'] as const) {
     const open = withTable({ [CHAT]: { unlistedAddressed: 'explicit' } }, {}, mode)
-    assertMatch(open.policy.gate(inChat(CHAT, STRANGER), thread(['ticket']), []), {
+    expect(open.policy.gate(inChat(CHAT, STRANGER), thread(['ticket']), [])).toMatchObject({
       admissible: true,
       strength: 'explicit',
       basis: { via: 'admission', cell: 'unlistedAddressed' },
     })
     // 格子不是 explicit 时，followup 仍按 inferred 走，只要评估没关。
     const strict = withTable({ [CHAT]: { unlistedAddressed: 'ignore' } }, {}, mode)
-    assertMatch(
-      strict.policy.gate(inChat(CHAT, STRANGER), thread(['ticket']), []),
+    expect(strict.policy.gate(inChat(CHAT, STRANGER), thread(['ticket']), [])).toMatchObject(
       mode === 'off' ? { admissible: false } : { admissible: true, strength: 'inferred', basis: { via: 'followup' } },
     )
   }
-  passed += 1
 })
 
 test('admission：有工单线程的 followup 不受表格约束（上游 policy.spec.ts:148）', () => {
   const STRANGER = 'ou_stranger'
-  const inChat = (chatId, sender = MEMBER, addressed = true) => {
+  const inChat = (chatId: string, sender = MEMBER, addressed = true): Trigger => {
     const message = feishu({ actor: { source: 'feishu', id: sender }, meta: { chatId, direct: false, mentioned: addressed } })
     if (addressed) return message
     const { addressed: _addressed, ...rest } = message
     return rest
   }
   const strict = withTable({ [OBSERVED]: { listedUnaddressed: 'ignore', unlistedUnaddressed: 'ignore' } })
-  assertMatch(strict.policy.gate(inChat(OBSERVED, MEMBER, false), thread(['ticket']), []), {
+  expect(strict.policy.gate(inChat(OBSERVED, MEMBER, false), thread(['ticket']), [])).toMatchObject({
     admissible: true,
     strength: 'explicit',
     basis: { via: 'followup' },
   })
-  assertMatch(strict.policy.gate(inChat(OBSERVED, STRANGER, false), thread(['ticket']), []), {
+  expect(strict.policy.gate(inChat(OBSERVED, STRANGER, false), thread(['ticket']), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { via: 'followup' },
   })
-  passed += 1
 })
 
 test('admission：格子变弱会让 Mandate 失效，格子不变则保持（上游 policy.spec.ts:153）', () => {
@@ -445,29 +438,27 @@ test('admission：格子变弱会让 Mandate 失效，格子不变则保持（�
   const gate = open.policy.gate(inChat(), thread(), [])
   if (!gate.admissible) throw new Error('expected admission')
   const mandate = { strength: gate.strength, policyVersion: 'v', basis: gate.basis, actor: { source: 'feishu', id: STRANGER }, scope: '' }
-  assert.equal(open.policy.revalidate(mandate), true)
-  assert.equal(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }).policy.revalidate(mandate), false)
-  assert.equal(withTable({}).policy.revalidate(mandate), false)
-  passed += 1
+  expect(open.policy.revalidate(mandate)).toBe(true)
+  expect(withTable({ [CHAT]: { unlistedAddressed: 'inferred' } }).policy.revalidate(mandate)).toBe(false)
+  expect(withTable({}).policy.revalidate(mandate)).toBe(false)
 })
 
 test('admission：格子变化会改 Policy 版本（上游 policy.spec.ts:162）', () => {
-  assert.notEqual(withTable({ [CHAT]: { unlistedAddressed: 'explicit' } }).version, setup().version)
-  assert.equal(withTable({}).version, setup().version)
-  passed += 1
+  expect(withTable({ [CHAT]: { unlistedAddressed: 'explicit' } }).version).not.toBe(setup().version)
+  expect(withTable({}).version).toBe(setup().version)
 })
 
 // ── 接单模式：off / observe / auto（上游 policy.spec.ts:277-325）──────────────
 
 test('mode：auto 下按命中规则接受 inferred，命中规则必须启用（上游 policy.spec.ts:287）', () => {
-  const settings = (mode) => {
+  const settings = (mode: AcceptMode): Settings => {
     const parsed = SettingsSchema.parse({})
     return { ...parsed, eval: { ...parsed.eval, mode } }
   }
   const direction = { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'asked' }
-  const judged = (current, matched) =>
+  const judged = (current: Settings, matched: boolean) =>
     current.policy.rules.filter((rule) => rule.enabled).map((rule) => ({ rule_id: rule.id, matched, reason: 'judged' }))
-  const accept = (current, matched = true) => ({
+  const accept = (current: Settings, matched = true): Assessment => ({
     decision: 'accept',
     rule_assessments: judged(current, matched),
     direction,
@@ -479,38 +470,33 @@ test('mode：auto 下按命中规则接受 inferred，命中规则必须启用�
   })
   const auto = settings('auto')
   const outcome = assessmentOutcome(accept(auto), auto, 'inferred')
-  assertMatch(outcome, {
+  expect(outcome).toMatchObject({
     kind: 'accept',
     rules: auto.policy.rules.filter((rule) => rule.enabled).map((rule) => rule.id),
     name: 'fix-copy',
   })
-  assertMatch(assessmentOutcome(accept(settings('observe')), settings('observe'), 'inferred'), {
+  expect(assessmentOutcome(accept(settings('observe')), settings('observe'), 'inferred')).toMatchObject({
     kind: 'ignore',
     reason: { code: 'observed', values: { text: 'asked' } },
     audit: { would_accept: true },
   })
-  assertMatch(assessmentOutcome(accept(auto, false), auto, 'inferred'), { kind: 'ignore', reason: { code: 'noRuleMatched' } })
-  assert.throws(
-    () => assessmentOutcome({ ...accept(auto), rule_assessments: [] }, auto, 'inferred'),
-    /Exactly one assessment for every enabled rule/,
-  )
-  assert.throws(
-    () => assessmentOutcome({ ...accept(auto), intent_evidence: null }, auto, 'inferred'),
-    /Acceptance requires intent_evidence/,
-  )
-  const scope = { scope: () => ({ listened: true, observed: true }) }
-  const enabled = auto.policy.rules.find((rule) => rule.enabled).id
-  assert.equal(settingsPolicy(auto, scope).admitsInferred([enabled]), true)
-  assert.equal(settingsPolicy(auto, scope).admitsInferred(['unknown']), false)
-  assert.equal(settingsPolicy(auto, scope).admitsInferred([]), false)
-  assert.equal(settingsPolicy(settings('observe'), scope).admitsInferred([enabled]), false)
-  passed += 1
+  expect(assessmentOutcome(accept(auto, false), auto, 'inferred')).toMatchObject({ kind: 'ignore', reason: { code: 'noRuleMatched' } })
+  expect(() => assessmentOutcome({ ...accept(auto), rule_assessments: [] }, auto, 'inferred'))
+    .toThrow(/Exactly one assessment for every enabled rule/)
+  expect(() => assessmentOutcome({ ...accept(auto), intent_evidence: null }, auto, 'inferred'))
+    .toThrow(/Acceptance requires intent_evidence/)
+  const scope: SourceScope = { scope: () => ({ listened: true, observed: true }) }
+  const enabled = auto.policy.rules.find((rule) => rule.enabled)!.id
+  expect(settingsPolicy(auto, scope).admitsInferred([enabled])).toBe(true)
+  expect(settingsPolicy(auto, scope).admitsInferred(['unknown'])).toBe(false)
+  expect(settingsPolicy(auto, scope).admitsInferred([])).toBe(false)
+  expect(settingsPolicy(settings('observe'), scope).admitsInferred([enabled])).toBe(false)
 })
 
 test('mode：explicit 候选不受接单模式影响，off 与 observe 下照常接受（上游 policy.spec.ts:315）', () => {
   const rules = SettingsSchema.parse({}).policy.rules.filter((rule) => rule.enabled)
   const direction = { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'asked' }
-  const assessment = {
+  const assessment: Assessment = {
     decision: 'accept',
     direction,
     title: 'Fix',
@@ -519,73 +505,77 @@ test('mode：explicit 候选不受接单模式影响，off 与 observe 下照常
     intent_evidence: 'quote',
     rule_assessments: rules.map((rule, index) => ({ rule_id: rule.id, matched: index === 0, reason: 'judged' })),
   }
-  for (const mode of ['observe', 'off']) {
+  for (const mode of ['observe', 'off'] as const) {
     const settings = SettingsSchema.parse({ eval: { mode } })
-    assertMatch(assessmentOutcome(assessment, settings, 'explicit'), { kind: 'accept', title: 'Fix' })
-    assertMatch(assessmentOutcome(assessment, settings, 'inferred'), { kind: 'ignore', reason: { code: 'observed' } })
+    expect(assessmentOutcome(assessment, settings, 'explicit')).toMatchObject({ kind: 'accept', title: 'Fix' })
+    expect(assessmentOutcome(assessment, settings, 'inferred')).toMatchObject({ kind: 'ignore', reason: { code: 'observed' } })
   }
-  passed += 1
 })
 
 test('mode：off 下 gate 不接 inferred，observe 下仍产生 inferred 候选（上游 policy.spec.ts:76/130）', () => {
   const observed = unaddressed({ meta: { chatId: OBSERVED, direct: false, mentioned: false } })
   const quiet = unaddressed({ meta: { chatId: CHAT, direct: false, mentioned: false } })
-  for (const mode of ['off', 'observe', 'auto']) {
+  for (const mode of ['off', 'observe', 'auto'] as const) {
     const current = setup({ ...base, eval: { ...base.eval, mode } }).policy
     const listed = current.gate(observed, thread(), [])
-    if (mode === 'off') assert.deepEqual(listed, { admissible: false, reason: 'no_mention' })
-    else assertMatch(listed, { admissible: true, strength: 'inferred' })
+    if (mode === 'off') expect(listed).toStrictEqual({ admissible: false, reason: 'no_mention' })
+    else expect(listed).toMatchObject({ admissible: true, strength: 'inferred' })
     // 名单内发送者的未点名消息在任何模式下都是 explicit followup：off 只关掉「推断」，不关掉「明确」。
-    assertMatch(current.gate(quiet, thread(['ticket']), []), { admissible: true, strength: 'explicit' })
+    expect(current.gate(quiet, thread(['ticket']), [])).toMatchObject({ admissible: true, strength: 'explicit' })
   }
-  passed += 1
 })
 
 // ── Mandate 重新校验（上游 policy.spec.ts:167-231）──────────────────────────
 
 test('Mandate：准入表矩阵（listedUnaddressed × inferred，上游 policy.spec.ts:167）', () => {
   revalidateMatrix({ cell: 'listedUnaddressed', strength: 'inferred' })
-  passed += 1
 })
 test('Mandate：准入表矩阵（unlistedAddressed × explicit，上游 policy.spec.ts:167）', () => {
   revalidateMatrix({ cell: 'unlistedAddressed', strength: 'explicit' })
-  passed += 1
 })
 test('Mandate：准入表矩阵（unlistedAddressed × inferred，上游 policy.spec.ts:167）', () => {
   revalidateMatrix({ cell: 'unlistedAddressed', strength: 'inferred' })
-  passed += 1
 })
 test('Mandate：准入表矩阵（unlistedUnaddressed × inferred，上游 policy.spec.ts:167）', () => {
   revalidateMatrix({ cell: 'unlistedUnaddressed', strength: 'inferred' })
-  passed += 1
 })
 
-const CELLS = ['listedUnaddressed', 'unlistedAddressed', 'unlistedUnaddressed']
+const CELLS: AdmissionCell[] = ['listedUnaddressed', 'unlistedAddressed', 'unlistedUnaddressed']
 const SENDER = 'ou_sender'
+const MODES: readonly AcceptMode[] = ['off', 'observe', 'auto']
+const SCOPES = ['all', 'mentions', 'none'] as const
+
+type MatrixCase = {
+  listed: boolean
+  mode: AcceptMode
+  rule: boolean
+  scope: (typeof SCOPES)[number]
+  holds: boolean
+}
 
 /**
  * 上游 `it.each` 那张表：4 种来源 × 名单内/外 × 三种模式 × 规则启用/停用 × 群接收 all/mentions/none × 格子握住/失效。
  * 每个来源 36 组，断言逐个照抄（含 `expected()` 的判据本身）。
  */
-function revalidateMatrix(origin) {
-  const cases = [true, false].flatMap((listed) =>
-    ['off', 'observe', 'auto'].flatMap((mode) =>
+function revalidateMatrix(origin: { cell: AdmissionCell; strength: Strength }): void {
+  const cases: MatrixCase[] = [true, false].flatMap((listed) =>
+    MODES.flatMap((mode) =>
       [true, false].flatMap((rule) =>
-        ['all', 'mentions', 'none'].flatMap((scope) => [true, false].map((holds) => ({ listed, mode, rule, scope, holds }))),
+        SCOPES.flatMap((scope) => [true, false].map((holds) => ({ listed, mode, rule, scope, holds }))),
       ),
     ),
   )
   /** docs/002：线程必须仍被接收；名单内发送者点名一律 explicit；后来进名单的发送者走 listed 格子。 */
-  function expected({ listed, mode, rule, scope, holds }) {
-    if (scope === 'none') return false
-    if (origin.cell === 'unlistedAddressed' && listed) return true
-    const now = origin.cell === 'unlistedUnaddressed' && listed ? 'listedUnaddressed' : origin.cell
-    if ((now === 'listedUnaddressed' && !listed) || !holds) return false
-    return origin.strength === 'explicit' || (mode === 'auto' && rule)
+  function expected(item: MatrixCase): boolean {
+    if (item.scope === 'none') return false
+    if (origin.cell === 'unlistedAddressed' && item.listed) return true
+    const now = origin.cell === 'unlistedUnaddressed' && item.listed ? 'listedUnaddressed' : origin.cell
+    if ((now === 'listedUnaddressed' && !item.listed) || !item.holds) return false
+    return origin.strength === 'explicit' || (item.mode === 'auto' && item.rule)
   }
   for (const item of cases) {
     // 行给出与接受时同等或更强的强度；格子不成立时给 ignore。
-    const grant = (cell) => (!item.holds ? 'ignore' : cell === 'unlistedAddressed' ? origin.strength : 'inferred')
+    const grant = (cell: AdmissionCell) => (!item.holds ? 'ignore' : cell === 'unlistedAddressed' ? origin.strength : 'inferred')
     const chats = item.scope === 'none' ? [] : [{ chatId: CHAT, listen: item.scope }]
     const settings = SettingsSchema.parse({
       eval: { mode: item.mode },
@@ -598,8 +588,9 @@ function revalidateMatrix(origin) {
       },
     })
     const addressed = origin.cell === 'unlistedAddressed'
-    const observed = origin.strength === 'inferred' ? { observation: { mode: 'auto' }, rules: ['copy'] } : {}
-    const basis = {
+    const observed: { observation?: { mode: AcceptMode }; rules?: string[] } =
+      origin.strength === 'inferred' ? { observation: { mode: 'auto' }, rules: ['copy'] } : {}
+    const basis: MandateBasis = {
       via: 'admission',
       source: 'feishu',
       scope: { chatId: CHAT, direct: false, mentioned: addressed },
@@ -608,37 +599,34 @@ function revalidateMatrix(origin) {
       ...(addressed ? { addressed: 'mention' } : {}),
       ...observed,
     }
-    const mandate = { strength: origin.strength, policyVersion: 'v', basis, actor: { source: 'feishu', id: SENDER }, scope: '' }
+    const mandate: Mandate = { strength: origin.strength, policyVersion: 'v', basis, actor: { source: 'feishu', id: SENDER }, scope: '' }
     const actual = setup(settings).policy.revalidate(mandate)
-    assert.equal(
+    expect(
       actual,
-      expected(item),
       `cell=${origin.cell} strength=${origin.strength} listed=${item.listed} mode=${item.mode} rule=${item.rule} scope=${item.scope} holds=${item.holds}`,
-    )
+    ).toBe(expected(item))
   }
 }
 
 test('Mandate：explicit 随名单与监听存活，规则型只随 auto 与启用规则存活（上游 policy.spec.ts:206）', () => {
-  const basis = { via: 'addressed', source: 'feishu', scope: { chatId: CHAT, direct: false }, sender: 'Alice', addressed: 'mention' }
-  const mandate = { strength: 'explicit', policyVersion: 'v', basis, actor: { source: 'feishu', id: MEMBER }, scope: '' }
-  assert.equal(policy.revalidate(mandate), true)
+  const basis: MandateBasis = { via: 'addressed', source: 'feishu', scope: { chatId: CHAT, direct: false }, sender: 'Alice', addressed: 'mention' }
+  const mandate: Mandate = { strength: 'explicit', policyVersion: 'v', basis, actor: { source: 'feishu', id: MEMBER }, scope: '' }
+  expect(policy.revalidate(mandate)).toBe(true)
   const nobody = { ...base, policy: { ...base.policy, sources: {} } }
-  assert.equal(setup(nobody).policy.revalidate(mandate), false)
+  expect(setup(nobody).policy.revalidate(mandate)).toBe(false)
   const silent = { ...base, sources: { feishu: feishuSource({ chats: [], directMessages: true }) } }
-  assert.equal(setup(silent).policy.revalidate(mandate), false)
+  expect(setup(silent).policy.revalidate(mandate)).toBe(false)
   // 记录 basis 之前签发的 Mandate：发送者仍在名单、来源仍在听，就继续成立。
-  const listed = { via: 'listed', source: 'feishu', scope: { chatId: CHAT, direct: false }, sender: 'Alice' }
-  assert.equal(setup(silent).policy.revalidate({ ...mandate, basis: listed }), false)
-  assert.equal(policy.revalidate({ ...mandate, basis: listed }), true)
-  const inferred = { ...mandate, strength: 'inferred', basis: { via: 'listed', observation: {}, rules: ['copy'] } }
-  assert.equal(policy.revalidate(inferred), true)
-  assert.equal(setup({ ...base, eval: { ...base.eval, mode: 'observe' } }).policy.revalidate(inferred), false)
-  assert.equal(
+  const listed: MandateBasis = { via: 'listed', source: 'feishu', scope: { chatId: CHAT, direct: false }, sender: 'Alice' }
+  expect(setup(silent).policy.revalidate({ ...mandate, basis: listed })).toBe(false)
+  expect(policy.revalidate({ ...mandate, basis: listed })).toBe(true)
+  const inferred: Mandate = { ...mandate, strength: 'inferred', basis: { via: 'listed', observation: {}, rules: ['copy'] } }
+  expect(policy.revalidate(inferred)).toBe(true)
+  expect(setup({ ...base, eval: { ...base.eval, mode: 'observe' } }).policy.revalidate(inferred)).toBe(false)
+  expect(
     setup({ ...base, policy: { ...base.policy, rules: base.policy.rules.map((rule) => ({ ...rule, enabled: rule.id !== 'copy' })) } }).policy.revalidate(inferred),
-    false,
-  )
-  assert.equal(setup(nobody).policy.revalidate({ ...mandate, basis: { via: 'followup' } }), true)
-  passed += 1
+  ).toBe(false)
+  expect(setup(nobody).policy.revalidate({ ...mandate, basis: { via: 'followup' } })).toBe(true)
 })
 
 test('Mandate：机器人候选随名单与 auto 模式存活（上游 policy.spec.ts:433，来源换成 Feishu）', () => {
@@ -647,21 +635,20 @@ test('Mandate：机器人候选随名单与 auto 模式存活（上游 policy.sp
     policy: { ...base.policy, sources: { ...base.policy.sources, feishu: { ...base.policy.sources.feishu, bots: [{ id: 'cli_alerts' }] } } },
   })
   const meta = { chatId: CHAT, direct: false, mentioned: true }
-  const mandate = {
+  const mandate: Mandate = {
     strength: 'inferred',
     policyVersion: '',
     actor: { source: 'feishu', id: 'cli_alerts' },
     scope: '',
     basis: { via: 'bot', source: 'feishu', scope: meta, row: CHAT, sender: 'cli_alerts', observation: { mode: 'auto' } },
   }
-  assert.equal(setup(settings).policy.revalidate(mandate), true)
+  expect(setup(settings).policy.revalidate(mandate)).toBe(true)
   const withoutBots = SettingsSchema.parse({
     ...base,
     policy: { ...base.policy, sources: { ...base.policy.sources, feishu: { ...base.policy.sources.feishu, bots: [] } } },
   })
-  assert.equal(setup(withoutBots).policy.revalidate(mandate), false)
-  assert.equal(setup({ ...settings, eval: { ...settings.eval, mode: 'observe' } }).policy.revalidate(mandate), false)
-  passed += 1
+  expect(setup(withoutBots).policy.revalidate(mandate)).toBe(false)
+  expect(setup({ ...settings, eval: { ...settings.eval, mode: 'observe' } }).policy.revalidate(mandate)).toBe(false)
 })
 
 test('Mandate：名单内的机器人点名才进候选（上游 policy.spec.ts:326）', () => {
@@ -670,19 +657,18 @@ test('Mandate：名单内的机器人点名才进候选（上游 policy.spec.ts:
     policy: { ...base.policy, sources: { ...base.policy.sources, feishu: { ...base.policy.sources.feishu, bots: [{ id: 'cli_alerts' }] } } },
   })
   const mention = feishu({ actor: { source: 'feishu', id: 'cli_alerts' }, human: false, meta: { chatId: CHAT, direct: false, mentioned: true } })
-  assertMatch(setup(settings).policy.gate(mention, thread(), []), {
+  expect(setup(settings).policy.gate(mention, thread(), [])).toMatchObject({
     admissible: true,
     strength: 'inferred',
     basis: { via: 'bot', addressed: 'mention', row: CHAT },
   })
-  passed += 1
 })
 
 // ── 版本与影响面（上游 policy.spec.ts:224-231、346-378）─────────────────────
 
 test('policyVersion：规则、接单模式、来源授权变化才改版本（上游 policy.spec.ts:224）', () => {
   const { version } = setup()
-  assert.equal(
+  expect(
     setup({
       ...base,
       paused: true,
@@ -690,15 +676,12 @@ test('policyVersion：规则、接单模式、来源授权变化才改版本（�
       eval: { ...base.eval, timeoutSeconds: 300 },
       sources: { ...base.sources, github: { enabled: true, config: { pollSeconds: 600 } } },
     }).version,
-    version,
-  )
-  assert.equal(setup({ ...base, sources: { feishu: feishuSource({ chats: [], directMessages: false }) } }).version, version)
-  assert.notEqual(setup({ ...base, eval: { ...base.eval, mode: 'off' } }).version, version)
-  assert.notEqual(
+  ).toBe(version)
+  expect(setup({ ...base, sources: { feishu: feishuSource({ chats: [], directMessages: false }) } }).version).toBe(version)
+  expect(setup({ ...base, eval: { ...base.eval, mode: 'off' } }).version).not.toBe(version)
+  expect(
     setup({ ...base, policy: { ...base.policy, sources: { ...base.policy.sources, github: { allowed: [], admission: {} } } } }).version,
-    version,
-  )
-  passed += 1
+  ).not.toBe(version)
 })
 
 const effectBase = SettingsSchema.parse({
@@ -710,37 +693,38 @@ const effectBase = SettingsSchema.parse({
     sources: { feishu: { allowed: [{ id: 'ou_alice' }] } },
   },
 })
-const effectScope = () => ({ scope: () => ({ listened: true, observed: true }) })
-const effectTicket = (id, mandate) => ({ id, mandate })
+const effectScope = (): SourceScope => ({ scope: () => ({ listened: true, observed: true }) })
+/** 一张工单；只填本用例用到的字段（`policyEffects` 只读 `id` 与 `mandate`）。 */
+const effectTicket = (id: string, mandate: Pick<Mandate, 'strength' | 'actor' | 'basis'>): Ticket =>
+  ({ id, mandate }) as unknown as Ticket
 
 test('policyEffects：告诉工单这次变更怎么影响它，其余工单不动（上游 policy.spec.ts:354）', () => {
   const inferred = effectTicket('t1', { strength: 'inferred', actor: { source: 'feishu', id: 'ou_guest' }, basis: { via: 'listed', rules: ['copy'] } })
   const explicit = effectTicket('t2', { strength: 'explicit', actor: { source: 'feishu', id: 'ou_alice' }, basis: { via: 'listed', source: 'feishu' } })
-  const rules = (copy, visual = {}) => ({
+  const rules = (copy: Partial<Rule>, visual: Partial<Rule> = {}): Settings => ({
     ...effectBase,
     policy: {
       ...effectBase.policy,
       rules: [{ ...effectBase.policy.rules[0], ...copy }, { ...effectBase.policy.rules[1], ...visual }],
     },
   })
-  assert.equal(policyEffects([inferred, explicit], effectBase, rules({}, { enabled: false }), effectScope).size, 0)
-  assert.deepEqual(policyEffects([inferred], effectBase, rules({ instruction: 'Fix typos only.' }), effectScope).get('t1'), {
+  expect(policyEffects([inferred, explicit], effectBase, rules({}, { enabled: false }), effectScope).size).toBe(0)
+  expect(policyEffects([inferred], effectBase, rules({ instruction: 'Fix typos only.' }), effectScope).get('t1')).toStrictEqual({
     rules: [{ id: 'copy', name: 'Copy', change: 'changed', instruction: 'Fix typos only.' }],
   })
-  assert.deepEqual(policyEffects([inferred], effectBase, rules({ enabled: false }), effectScope).get('t1'), {
+  expect(policyEffects([inferred], effectBase, rules({ enabled: false }), effectScope).get('t1')).toStrictEqual({
     rules: [{ id: 'copy', name: 'Copy', change: 'disabled' }],
   })
   // 名单里多一个人不影响工单；把发起人移出名单才会。
-  const allowed = (list) => ({
+  const allowed = (list: SourcePolicy['allowed']): Settings => ({
     ...effectBase,
     policy: { ...effectBase.policy, sources: { ...effectBase.policy.sources, feishu: { ...effectBase.policy.sources.feishu, allowed: list } } },
   })
-  assert.equal(policyEffects([inferred, explicit], effectBase, allowed([{ id: 'ou_alice' }, { id: 'ou_bob' }]), effectScope).size, 0)
-  assert.deepEqual(policyEffects([explicit], effectBase, allowed([]), effectScope).get('t2'), {
+  expect(policyEffects([inferred, explicit], effectBase, allowed([{ id: 'ou_alice' }, { id: 'ou_bob' }]), effectScope).size).toBe(0)
+  expect(policyEffects([explicit], effectBase, allowed([]), effectScope).get('t2')).toStrictEqual({
     requesterAllowed: false,
     requester: { source: 'feishu', id: 'ou_alice' },
   })
-  passed += 1
 })
 
 test('policyEffects：接单模式离开 auto 时推断工单报 proactive:false（上游 policy.spec.ts:366）', () => {
@@ -750,22 +734,21 @@ test('policyEffects：接单模式离开 auto 时推断工单报 proactive:false
     basis: { via: 'listed', source: 'feishu', rules: ['copy'], observation: {} },
   })
   const explicit = effectTicket('t2', { strength: 'explicit', actor: { source: 'feishu', id: 'ou_alice' }, basis: { via: 'listed', source: 'feishu' } })
-  const auto = { ...effectBase, eval: { ...effectBase.eval, mode: 'auto' } }
-  const observe = { ...effectBase, eval: { ...effectBase.eval, mode: 'observe' } }
+  const auto: Settings = { ...effectBase, eval: { ...effectBase.eval, mode: 'auto' } }
+  const observe: Settings = { ...effectBase, eval: { ...effectBase.eval, mode: 'observe' } }
   const effects = policyEffects([rule, explicit], auto, observe, effectScope)
   // 不是发起人被移除：写这句话的人仍可发起工作。
-  assert.deepEqual(effects.get('t3'), { proactive: false })
-  assert.equal(effects.has('t2'), false)
+  expect(effects.get('t3')).toStrictEqual({ proactive: false })
+  expect(effects.has('t2')).toBe(false)
   const bot = effectTicket('t4', { strength: 'explicit', actor: { source: 'feishu', id: 'cli_ci_bot' }, basis: { via: 'listed', source: 'feishu' } })
   const listed = {
     ...effectBase,
     policy: { ...effectBase.policy, sources: { ...effectBase.policy.sources, feishu: { ...effectBase.policy.sources.feishu, allowed: [{ id: 'cli_ci_bot' }] } } },
   }
-  assert.deepEqual(policyEffects([bot], listed, effectBase, effectScope).get('t4'), {
+  expect(policyEffects([bot], listed, effectBase, effectScope).get('t4')).toStrictEqual({
     requesterAllowed: false,
     requester: { source: 'feishu', id: 'cli_ci_bot' },
   })
-  passed += 1
 })
 
 // ── 设计文档 §4.3：P0 手动来源必须走 gate（自补）────────────────────────────
@@ -773,13 +756,13 @@ test('policyEffects：接单模式离开 auto 时推断工单报 proactive:false
 test('P0 手动来源：三种接单模式下都判定为 explicit（自补，依据 docs/superagent-design.md:203-218）', () => {
   // 设计文档 §4.3：P0 只有手动来源，发送者是操作者本人、addressed='mention'，结果恒为 explicit，
   // 且「这条路径必须走 gate，不能跳过」——因此这里断言 gate 本身的输出，而不是绕过它。
-  const settings = (mode) =>
+  const settings = (mode: AcceptMode) =>
     SettingsSchema.parse({
       eval: { mode },
       policy: { sources: { manual: { allowed: [{ id: 'operator' }] } } },
       sources: { manual: { enabled: true, config: {} } },
     })
-  const trigger = {
+  const trigger: Trigger = {
     id: 'm1',
     source: 'manual',
     threads: [{ source: 'manual', id: 'ticket-1' }],
@@ -790,17 +773,12 @@ test('P0 手动来源：三种接单模式下都判定为 explicit（自补，�
     addressed: 'mention',
     meta: {},
   }
-  for (const mode of ['off', 'observe', 'auto']) {
+  for (const mode of ['off', 'observe', 'auto'] as const) {
     const current = settingsPolicy(settings(mode), scopeOf(settings(mode)))
-    const result = current.gate(trigger, thread(), [])
-    assert.equal(result.admissible, true, `mode=${mode} 应放行手动来源`)
-    assert.equal(result.strength, 'explicit', `mode=${mode} 手动来源应恒为 explicit`)
-    assert.equal(result.basis.via, 'addressed', `mode=${mode} 依据应为 addressed`)
-    assert.equal(result.basis.sender, 'operator')
+    const result = admitted(current.gate(trigger, thread(), []))
+    expect(result.admissible, `mode=${mode} 应放行手动来源`).toBe(true)
+    expect(result.strength, `mode=${mode} 手动来源应恒为 explicit`).toBe('explicit')
+    expect(result.basis.via, `mode=${mode} 依据应为 addressed`).toBe('addressed')
+    expect(result.basis.sender).toBe('operator')
   }
-  passed += 1
-})
-
-after(() => {
-  console.log(`通过 ${passed}`)
 })
