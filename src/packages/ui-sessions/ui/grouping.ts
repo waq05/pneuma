@@ -180,7 +180,7 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
     .map(([dir, list]) => [dir, orderedSessions(dir, list, sort, sessionOrder)] as [string, SessionSummary[]])
     .sort((a, b) => {
       if (sort === 'manual') {
-        // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则活动组置顶，其余按最近使用
+        // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则空的活动组置顶，其余按最近使用
         if (order.length > 0) {
           const ra = rank(a[0])
           const rb = rank(b[0])
@@ -189,8 +189,13 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
             if (rb < 0) return -1
             return ra - rb
           }
-        } else if ((a[0] === cwd) !== (b[0] === cwd)) {
-          return a[0] === cwd ? -1 : 1
+        } else {
+          // 活动组只在「还没有会话」时才置顶：刚切过去的新工作区要第一眼看得见。
+          // 已经有会话的组不参与抢位——否则点开任意一条历史会话，宿主 cwd 一变它就
+          // 整块跳到侧栏顶部（2026-11-13 报障：点会话时工作区跟着跑）。
+          const aFresh = a[0] === cwd && a[1].length === 0
+          const bFresh = b[0] === cwd && b[1].length === 0
+          if (aFresh !== bFresh) return aFresh ? -1 : 1
         }
         return lastUsed(b[1]) - lastUsed(a[1])
       }
