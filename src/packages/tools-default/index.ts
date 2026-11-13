@@ -9,7 +9,7 @@
  * @module dsc/plugins/tools-default
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from './bash.js'
+import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createJobsService, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from './bash.js'
 import { createPersistentShellTool, PERSISTENT_TIMEOUT_MS, PersistentShellTable } from './persistent-shell.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '@pneuma/runtime/core/tools/fs-tools.js'
 import { readImageTool } from './image-tool.js'
@@ -123,6 +123,13 @@ export const toolsDefaultPlugin: Plugin.Object = {
         noticeTimers.set(key, timer)
       },
     })
+
+    // ---- 作业表的对外查询口（backlog G3）----
+    // 作业的 `owner` 已经写的是发起会话 id，但外面查不到「这个会话还有几个作业在跑」。
+    // superagent 的执行器要在 worker 回合结束后等这些作业收尾（对齐上游
+    // `executor/background.ts` 的 `untilQuiet`），只能靠这个口。
+    const offJobs = ctx.provide('jobs', createJobsService(table))
+    ctx.effect(() => offJobs, 'tools-default: provide jobs')
 
     // ---- T20 终端会话表 ----
     // 与作业表共用同一张进程登记表（stopAllBackgroundChildren 收摊时一并收掉）；

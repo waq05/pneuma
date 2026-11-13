@@ -573,6 +573,48 @@ export interface ToolService {
   visible(scope?: AgentScope): ToolEntry[]
 }
 
+// ── jobs ─────────────────────────────────────────────────────────────────────
+
+/** 作业的一行（{@link JobsService} 的视图，不带输出缓冲）。 */
+export interface JobView {
+  id: string
+  /** 发起会话 id；不知道归属的调用方（脚本、老探针）没有这一项。 */
+  owner?: string
+  status: 'running' | 'completed' | 'failed' | 'killed'
+  command: string
+  startedAt: number
+  finishedAt?: number
+  exitCode: number | null
+}
+
+/**
+ * 后台作业表（tools-default 插件提供；插件没开时不存在，读它要用 `ctx.get('jobs')`）。
+ *
+ * 为什么要有这个口：作业表原本只在 tools-default 内部用，作业的 `owner` 已经写的是
+ * 发起会话 id（`bash.ts` 的 `launch` 收 `ctx.sessionId`），但外面查不到「这个会话还有
+ * 几个作业在跑」。superagent 的执行器要在 worker 回合结束后等这些作业收尾（对齐上游
+ * `executor/background.ts` 的 `untilQuiet`），只能靠这个口。
+ *
+ * 只有查询与终止：作业的启动仍在 bash 工具上（`run_in_background`），这个服务不提供
+ * 第二套启动路径——「命令 → shell」的进程边界留在 `bash.ts` 收口。
+ */
+export interface JobsService {
+  /** 某个会话（owner）起的作业；不给 owner = 全部。 */
+  list(owner?: string): JobView[]
+  /** 某个会话还在跑的作业（`status === 'running'`）。 */
+  running(owner: string): JobView[]
+  /**
+   * 等一个作业结束（完成 / 失败 / 被终止）。
+   * @returns true = 已经不在跑；false = 超时或信号先中止。
+   */
+  wait(id: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean>
+  /**
+   * 终止一个作业（整树收尾，已收输出保留，还能用 `job_output` 读）。
+   * @returns true = 真的收了一个在跑的；false = 它已经不在跑，或没有这个作业。
+   */
+  kill(id: string): boolean
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 /** 斜杠命令元数据。 */
@@ -1606,6 +1648,8 @@ declare module '@deepseek-ai/cordis' {
     /** 会话目标与自动续跑。 */
     goal: GoalService
     tools: ToolService
+    /** 后台作业表（tools-default 插件提供；插件没开时不存在，读它要用 `ctx.get('jobs')`）。 */
+    jobs?: JobsService
     transcript: TranscriptService
     commands: CommandService
     compact: CompactService

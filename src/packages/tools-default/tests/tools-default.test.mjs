@@ -74,6 +74,34 @@ test('bash 输出截断：头 60% + 尾 40%，短输出不动', () => {
   passed += 1
 })
 
+// 作业表对外查询口（backlog G3）：superagent 的执行器靠它等 worker 回合结束后的作业。
+// 钉四件事：owner 过滤、running 只列在跑的、wait 真等到结束、kill 只收在跑的。
+test('jobs 服务：owner 过滤、running、wait 等到结束、kill 幂等', async () => {
+  const table = new bash.JobTable({ notify: () => {} })
+  const jobs = bash.createJobsService(table)
+  const cwd = process.cwd()
+  // 两个作业分属两个会话：过滤要按 owner 分得开。
+  const mine = table.launch('node -e "setTimeout(()=>{},600)"', cwd, 'session-a')
+  const other = table.launch('node -e "setTimeout(()=>{},600)"', cwd, 'session-b')
+  assert.equal(jobs.list('session-a').length, 1, 'list 要按 owner 过滤')
+  assert.equal(jobs.list('session-a')[0].id, mine)
+  assert.equal(jobs.list('session-b')[0].id, other)
+  assert.equal(jobs.running('session-a').length, 1, '刚起的作业应当在 running 里')
+  assert.equal(jobs.running('session-a')[0].owner, 'session-a', 'running 要带上 owner')
+  // kill 一个在跑的：返回 true，之后它不再出现在 running 里。
+  assert.equal(jobs.kill(mine), true)
+  assert.equal(jobs.running('session-a').length, 0, '被终止的作业不该还在 running 里')
+  // 再 kill 一次同一个：已经不在跑，返回 false（幂等）。
+  assert.equal(jobs.kill(mine), false)
+  // wait 真等到另一个作业结束。
+  assert.equal(await jobs.wait(other, 10_000), true, 'wait 应当等到作业结束')
+  assert.equal(jobs.list('session-b')[0].status, 'completed')
+  // 没有这个作业：wait 立刻 true（没有东西可等），kill 返回 false。
+  assert.equal(await jobs.wait('job-does-not-exist', 1000), true)
+  assert.equal(jobs.kill('job-does-not-exist'), false)
+  passed += 1
+})
+
 after(() => {
   console.log('通过 ' + String(passed) + ' 项')
 })
