@@ -39,12 +39,12 @@
 | 项 | 内容 |
 | --- | --- |
 | 上游怎么做 | `effect` 表 + 6 种 kind（`assessment` / `launch` / `delivery` / `relay` / `notice` / `reply`），写事务里入队、提交后调度，带并发上限、指数退避、健康上报（`app/effects.ts`） |
-| 当前怎么样 | `effect` 表建了但**一次不读写**（`adapters/store.ts:56`）。派工走执行器内存队列，通知直接写 `outbox`，2 秒泵推进 |
-| 缺的后果 | 进程崩在「已入队、还没派工」那一刻，这批活丢；上游不会丢 |
-| 补的话动哪 | `adapters/` 加 `effects.ts`，`Engine` 侧改成入队；`runtime.pump()` 改成 `effects.drain()` |
+| 当前怎么样 | **有了持久化 effect 队列**：`adapters/effects.ts`（418 行）照上游 `app/effects.ts` 移植；派工与投递改入队（`executor.ts:858` `launch`、`:871` `delivery`），运行期 `runtime.ts:427` 构造、`:457` `start()`、`:1134` `drain()` |
+| 缺的后果 | 已消除：进程崩在「已入队、还没派工」那一刻，重启后从库里接着调度，不再丢活 |
+| 补的话动哪 | 已补：`2197838e`（`adapters/effects.ts` 移植 + 执行器两处 `enqueue` + 运行期三处接线） |
 | 验收 | 派工前硬杀宿主，重启后那张工单仍在队列里并被执行，`git log` 有提交 |
-| 状态 | 未补 |
-| 值得补吗 | **建议补**。这是与上游最大的架构差异，也是崩溃丢活的根因。但改动面大（引擎写事务与调度器的边界），要单独一轮做 |
+| 状态 | **已补**：`2197838e` |
+| 值得补吗 | 已补。与上游剩一处差异：队列健康没接进 doctor——doctor 是拉取式（`HealthCheck.run`），队列是推送式（`claim(kind).set(entry)`），适配该在装配处做，见 `runtime.ts:425` 注释 |
 
 ### G3 执行器的后台任务（回合结束后继续跑）
 
