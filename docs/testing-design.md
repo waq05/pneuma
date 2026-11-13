@@ -1,9 +1,13 @@
 # dsc 测试体系概要设计（对齐 DSH / codex 路线）
 
 > 给谁看：要补测试、要改测试门禁、要判断「这个改动验到什么程度算够」的人（包括下次坐到位子上的 AI 助手）。
-> 状态：**设计定稿，尚未实施**。本文只写设计与工期，不含实现代码。
+> 状态：**设计中，P0–P1 已实施，P2 收尾中，P3–P7 未开始**。本文只写设计与工期，不含实现代码。
 > 版本：v2（v1 只补基础；v2 按「对齐 codex 与 DSH 测试体系」扩到 8 层 + 工程化治理）。
 > 依据：2026-11-13 对 dsc、DSH（deepseek-harness）、codex 三个仓库测试体系的实际调查，数字均取自当天仓库现场。
+>
+> **读的时候注意**：第 1 节「现状」与第 2 节「对齐基线」的实测列是 **P0 起点（2026-11-13）的快照**，
+> 保留它是为了说明「为什么当初这么设计」。要看**现在**到哪一步，去 [testing-handoff.md](testing-handoff.md)；
+> 要看**还差什么**，去 [testing-backlog.md](testing-backlog.md)。
 
 | 想知道 | 去看 |
 | --- | --- |
@@ -425,12 +429,10 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 
 1. `tests/harness.ts` 抽取（第 8 节前四个设施）。
 2. 24 条探针的假 SSE 收敛到 `fakeLLM`。
-3. **把 `check:plugin`（含 119 条包级测试）接进 CI**——这一步最便宜、见效最快：测试早就写好了，只是没人自动跑。
-   实装结论（2026-11-13）：整串 `check:plugin` **不能**直接进 PR 门。它里面的
-   `plugin-inventory-check` 要读 `lib/ui/plugins/`（界面单元），那批产物得先把界面壳整个编一遍。
-   所以拆成两半：PR 门只跑 `node scripts/package-tests.mjs`（119 条，72.7 秒，只需 `pnpm build`）；
-   完整那串放夜跑 `probe` job 末尾——那里本来就为跑界面探针构建了界面壳，两份产物齐了，
-   加这条不多花构建时间。
+3. **把 119 条包级测试接进 CI**——这一步最便宜、见效最快：测试早就写好了，只是没人自动跑。
+   **已做（2026-11-13）**：它们迁进 Vitest 之后跟着 `pnpm test` 走 PR 门，临时加的 `plugin` job
+   与 `scripts/package-tests.mjs` 都已删除。整串 `check:plugin` 留在夜跑 `probe` job——它含
+   `plugin-inventory-check`，要读 `lib/ui/plugins/`，得先编界面壳。
 4. 为 `src/core/` 纯函数模块补 spec：`clamp`、`records`、`strings`、`json-text`、`shell-quote`、`terminal-env`、`token-estimate`、`err-text`、`transcript-text`、`git-surface`、`todo-reminder`、`microcompact`、`compact-*`、`session-*`。
 
 ### P1b 迁包级测试（119 条）——**已完成（2026-11-13）**
@@ -456,12 +458,12 @@ node scripts/check-core.mjs --list              → 仍是 122 条（旧体系�
 `plugin-standard-check.mjs` 的判据从 `*.test.mjs` 改成 `*.spec.ts`；
 `verify.yml` 的 `plugin` job 删除（它的唯一理由是「这批测试要先 build 再单独跑」）。
 
-迁移规则（详见详细设计 §15.2 与 [testing-migration-playbook.md](testing-migration-playbook.md)）：
+迁移规则（**已全部执行完毕**；配方见详细设计 §15.2 与 [testing-migration-playbook.md](testing-migration-playbook.md)，P3 迁 ui 探针时还能复用）：
 
 - `import ... from '../../../../lib/packages/<id>/index.js'` → 改成相对源码路径 `../index.js`，靠解析插件落到 `.ts`。
 - 自造 `check()` + `node:assert` → `test()` + `expect`。
-- **源码文本断言必须重写**：现有 119 条里大量 `assert.match(source, /name: 'todo_write'/)`，这类断言改类名/改引号就假红、改逻辑但保留字面量就假绿。迁到 Vitest 时改成断言导出的对象（`todoPlugin` 的字段、`tool.schema` 等）。
-- 迁完删旧 `.test.mjs`，`package-tests.mjs` 的发现列表随之缩短；全部迁完后这个脚本与 `check:plugin` 里的这一步一起删。
+- **源码文本断言必须重写**：119 条里大量 `assert.match(source, /name: 'todo_write'/)`，这类断言改类名/改引号就假红、改逻辑但保留字面量就假绿。已改成断言导出的对象（`todoPlugin` 的字段、`tool.schema` 等）。
+- 迁完删旧 `.test.mjs`；全部迁完后 `package-tests.mjs` 与 `check:plugin` 里的那一步一起删。**已删**。
 
 ### P2 迁 integration（最大一块）
 
