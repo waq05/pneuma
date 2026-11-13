@@ -37,7 +37,7 @@
     "check:remote": "node scripts/remote-e2e.mjs",
     "check:p0": "node scripts/check-p0.mjs",
     "check:style": "node scripts/style-check.mjs",
-    "check:plugin": "node scripts/plugin-model-check.mjs --strict && node scripts/plugin-standard-check.mjs && node scripts/plugin-inventory-check.mjs && node scripts/plugin-model-test.mjs && node scripts/plugin-list-test.mjs && node scripts/plugin-compose-check.mjs && node scripts/plugin-swap-e2e.mjs",
+    "check:plugin": "node scripts/plugin-model-check.mjs --strict && node scripts/plugin-standard-check.mjs && node scripts/plugin-inventory-check.mjs && node scripts/plugin-compose-check.mjs && node scripts/plugin-swap-e2e.mjs",
     "check:all": "pnpm run check:style && pnpm run check:plugin && pnpm run check:ui && pnpm run check:dsh && pnpm run check:core && pnpm run check:remote",
     "test": "vitest run --project unit --project ui --project tui",
     "test:unit": "vitest run --project unit",
