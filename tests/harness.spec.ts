@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { fakeLLM, readSessionJsonl, tempHome, type FakeLLM } from './harness.js'
+import { fakeLLM, readSessionJsonl, replayLLM, tempHome, type FakeLLM } from './harness.js'
 
 /** 清理栈：每条用例自己登记，红了也照样在 afterEach 里执行。 */
 const cleanups: Array<() => void> = []
@@ -272,6 +272,96 @@ describe('fakeLLM', () => {
     expect(response.status).toBe(400)
     await expect(fake.close()).rejects.toThrow(/没有被正常应答/)
     await expect(fake.close()).rejects.toThrow(/没有被正常应答/)
+  })
+})
+
+describe('replayLLM', () => {
+  /** 用独立实现算指纹：如果这里直接 import harness 的实现，录制约定漂了也测不出来。 */
+  function hashOf(messages: unknown): string {
+    return `sha256:${createHash('sha256').update(JSON.stringify(messages)).digest('hex')}`
+  }
+
+  /** 写一份录制；行序故意不按 turn 排，验证回放端自己按 turn 组织而不是靠行序。 */
+  function writeRecording(records: Array<Record<string, unknown>>, name = 'session.jsonl'): string {
+    const file = join(work, name)
+    writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8')
+    return file
+  }
+
+  const messages1 = [{ role: 'user', content: '你好' }]
+  const messages2 = [...messages1, { role: 'assistant', content: '你好' }]
+
+  test('按 turn 回放录制的文本与工具调用，并记录每次请求体', async () => {
+    const file = writeRecording([
+      { kind: 'request', turn: 2, requestHash: hashOf(messages2), messages: messages2 },
+      { kind: 'response', turn: 2, chunks: [{ toolCall: { name: 'read', args: { path: 'a.txt' } } }] },
+      { kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 },
+      { kind: 'response', turn: 1, chunks: [{ text: '你' }, { text: '好' }, { done: true }] },
+    ])
+    const fake = await replayLLM(file)
+    cleanups.push(() => void fake.close())
+
+    const first = await postChat(fake, messages1)
+    expect(textOf(first.text)).toBe('你好')
+
+    const second = await postChat(fake, messages2)
+    const call = toolCallOf(second.text)
+    expect(call?.id).toBe('call_replay_2_0')
+    expect(call?.function.name).toBe('read')
+    expect(JSON.parse(call!.function.arguments)).toEqual({ path: 'a.txt' })
+
+    expect(fake.requestCount).toBe(2)
+    expect(fake.bodies).toEqual([messages1, messages2])
+  })
+
+  test('请求形状变了（hash 不符）就 409 + close 抛错，不静默降级', async () => {
+    const file = writeRecording([
+      { kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 },
+      { kind: 'response', turn: 1, chunks: [{ text: '录制的回答' }, { done: true }] },
+    ])
+    const fake = await replayLLM(file)
+    const response = await postChat(fake, [{ role: 'user', content: '改过的请求' }])
+    expect(response.status).toBe(409)
+    expect(response.text).toContain('requestHash 不符')
+    // 只靠 HTTP 409 还不够：调用方可能没检查状态。close 必须再抛一次。
+    await expect(fake.close()).rejects.toThrow(/没有被正常应答/)
+  })
+
+  test('录制文件读不到 / 没有 response / response 缺 request 时都在加载阶段抛错', async () => {
+    await expect(replayLLM(join(work, 'missing.jsonl'))).rejects.toThrow(/读不到录制文件/)
+
+    const noResponse = writeRecording([{ kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 }], 'no-response.jsonl')
+    await expect(replayLLM(noResponse)).rejects.toThrow(/没有 kind:"response"/)
+
+    const noRequest = writeRecording(
+      [{ kind: 'response', turn: 1, chunks: [{ text: 'x' }] }],
+      'no-request.jsonl',
+    )
+    await expect(replayLLM(noRequest)).rejects.toThrow(/只有 response 没有 request/)
+  })
+
+  test('重复 turn、坏行、非法 chunk 都拒绝：录制坏了要红在加载阶段', async () => {
+    const duplicated = writeRecording([
+      { kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 },
+      { kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 },
+      { kind: 'response', turn: 1, chunks: [{ text: 'x' }] },
+    ], 'duplicated.jsonl')
+    await expect(replayLLM(duplicated)).rejects.toThrow(/两条 request/)
+
+    const badJson = join(work, 'bad-json.jsonl')
+    // 第 1 行必须合法，才能把错误定位到第 2 行；否则这条用例验的是「第 1 行缺失字段」。
+    writeFileSync(
+      badJson,
+      `{"kind":"request","turn":1,"requestHash":"${hashOf(messages1)}"}\nnot json\n`,
+      'utf8',
+    )
+    await expect(replayLLM(badJson)).rejects.toThrow(/第 2 行不是合法 JSON/)
+
+    const badChunk = writeRecording([
+      { kind: 'request', turn: 1, requestHash: hashOf(messages1), messages: messages1 },
+      { kind: 'response', turn: 1, chunks: [{ done: true, text: '同时给' }] },
+    ], 'bad-chunk.jsonl')
+    await expect(replayLLM(badChunk)).rejects.toThrow(/带了 done 就不能/)
   })
 })
 

@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { DscCoreConfig } from '@pneuma/runtime/core/config.js'
+import { hashChatMessages } from './support/hash.js'
 
 /** `tests/harness.ts` 所在目录与仓库根：golden、CLI 入口都从仓库根定位。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -458,6 +459,178 @@ export async function fakeLLM(options: FakeLLMOptions): Promise<FakeLLM> {
   })
 }
 
+// ── 6.3 replayLLM ────────────────────────────────────────────────────────────
+
+/** 录制文件里的一行 response 的 chunk 形状（见详设 §8.3）。 */
+interface RecordedChunk {
+  text?: string
+  toolCall?: { name: string; args: unknown }
+  done?: true
+}
+
+/** 解析后的录制：turn → 请求 hash / 应答增量。 */
+interface Recording {
+  requestHashes: Map<number, string>
+  responses: Map<number, SseChunk[]>
+  /** 录制路径，只用于报错文案。 */
+  path: string
+}
+
+/** 校验一条 chunk 并翻成内部增量；`done` 只是终止标记，不产生帧。 */
+function toSseChunks(chunks: unknown, turn: number, path: string): SseChunk[] {
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    throw new Error(`replayLLM：${path} 的 turn=${turn} 没有 chunks（空应答无法回放）`)
+  }
+  const out: SseChunk[] = []
+  chunks.forEach((chunk, index) => {
+    const where = `replayLLM：${path} 的 turn=${turn} chunks[${index}]`
+    if (chunk === null || typeof chunk !== 'object' || Array.isArray(chunk)) {
+      throw new Error(`${where} 必须是对象`)
+    }
+    const { text, toolCall, done } = chunk as Record<string, unknown>
+    if (done !== undefined) {
+      if (done !== true) throw new Error(`${where} 的 done 只能是 true`)
+      if (text !== undefined || toolCall !== undefined) {
+        throw new Error(`${where} 带了 done 就不能再带 text / toolCall`)
+      }
+      return
+    }
+    if (text !== undefined) {
+      if (typeof text !== 'string') throw new Error(`${where} 的 text 必须是字符串`)
+      out.push({ content: text })
+      return
+    }
+    if (toolCall !== undefined) {
+      if (toolCall === null || typeof toolCall !== 'object' || Array.isArray(toolCall)) {
+        throw new Error(`${where} 的 toolCall 必须是对象 { name, args }`)
+      }
+      const name = (toolCall as { name?: unknown }).name
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new Error(`${where} 的 toolCall.name 必须是非空字符串`)
+      }
+      const args = (toolCall as { args?: unknown }).args
+      stringifyArgs(args, where)
+      out.push({ toolCall: { id: `call_replay_${turn}_${index}`, name, args } })
+      return
+    }
+    throw new Error(`${where} 什么都不含（要 text、toolCall 或 done）`)
+  })
+  return out
+}
+
+/**
+ * 读录制文件。坏行、重复 turn、缺 request 行全部直接抛：
+ * 录制是进版本库的人工审核产物，坏了就该红在加载阶段，而不是回放中途给出半份剧本。
+ */
+function parseRecording(raw: string, path: string): Recording {
+  const requestHashes = new Map<number, string>()
+  const responses = new Map<number, SseChunk[]>()
+  // Windows 编辑器可能给文件加 BOM；不剥掉的话第一行 JSON.parse 必失败。
+  const lines = raw.replace(/^\uFEFF/, '').split(/\r?\n/)
+  lines.forEach((line, index) => {
+    if (line.trim() === '') return
+    let record: unknown
+    try {
+      record = JSON.parse(line)
+    } catch (error) {
+      throw new Error(`replayLLM：${path} 第 ${index + 1} 行不是合法 JSON（${errorText(error)}）`)
+    }
+    if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+      throw new Error(`replayLLM：${path} 第 ${index + 1} 行不是对象`)
+    }
+    const { kind, turn, requestHash } = record as { kind?: unknown; turn?: unknown; requestHash?: unknown }
+    if (typeof turn !== 'number' || !Number.isInteger(turn) || turn < 1) {
+      throw new Error(`replayLLM：${path} 第 ${index + 1} 行的 turn 必须是 ≥1 的整数`)
+    }
+    if (kind === 'request') {
+      if (requestHashes.has(turn)) {
+        throw new Error(`replayLLM：${path} 里 turn=${turn} 有两条 request 行`)
+      }
+      if (typeof requestHash !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(requestHash)) {
+        throw new Error(`replayLLM：${path} 第 ${index + 1} 行的 requestHash 必须是 sha256:<64 位小写十六进制>`)
+      }
+      requestHashes.set(turn, requestHash)
+      return
+    }
+    if (kind === 'response') {
+      if (responses.has(turn)) {
+        throw new Error(`replayLLM：${path} 里 turn=${turn} 有两条 response 行`)
+      }
+      responses.set(turn, toSseChunks((record as { chunks?: unknown }).chunks, turn, path))
+      return
+    }
+    throw new Error(`replayLLM：${path} 第 ${index + 1} 行的 kind 只能是 "request" 或 "response"`)
+  })
+  if (responses.size === 0) {
+    throw new Error(`replayLLM：${path} 里没有 kind:"response" 行，没有可回放的内容`)
+  }
+  for (const turn of responses.keys()) {
+    if (!requestHashes.has(turn)) {
+      throw new Error(`replayLLM：${path} 的 turn=${turn} 只有 response 没有 request，无法校验请求形状`)
+    }
+  }
+  return { requestHashes, responses, path }
+}
+
+/**
+ * 按录制文件回放模型应答。
+ *
+ * 每一轮请求到达时都拿 `messages` 重算指纹，与录制里的 `requestHash` 比对；不一致就
+ * **硬失败**（409 + close 时抛错），不退回「随便给一段」。这条校验存在的唯一理由，
+ * 是「代码改了导致请求形状变化，回放却照样通过」——那会让整个快照层变成一层假绿。
+ *
+ * 返回的 `FakeLLM` 与 `fakeLLM` 同形：快照场景可以在「录制」与「回放」两种模式之间
+ * 只换构造函数，其余流程完全一致。
+ */
+export async function replayLLM(recordingPath: string): Promise<FakeLLM> {
+  if (typeof recordingPath !== 'string' || recordingPath.trim() === '') {
+    throw new TypeError('replayLLM：recordingPath 必须是非空字符串')
+  }
+  let raw: string
+  try {
+    raw = readFileSync(recordingPath, 'utf8')
+  } catch (error) {
+    throw new Error(`replayLLM：读不到录制文件 ${recordingPath}（${errorText(error)}）`)
+  }
+  const recording = parseRecording(raw, recordingPath)
+  return startFakeServer({
+    label: `replayLLM(${recordingPath})`,
+    // 录制里没有标题请求（它不是对话轮次）；仍然按提示词识别并单独应答，
+    // 否则标题插件会消费掉第一轮剧本，后续轮次整体错位。
+    isTitleRequest: isTitleRequestByPrompt,
+    respond(body, turn) {
+      const expected = recording.requestHashes.get(turn)
+      if (expected === undefined) {
+        return {
+          status: 409,
+          message: `replayLLM：录制里没有 turn=${turn} 的 request 行，回放无法校验请求形状`,
+        }
+      }
+      const messages = (body as { messages: unknown[] }).messages
+      let actual: string
+      try {
+        actual = hashChatMessages(messages)
+      } catch (error) {
+        return { status: 409, message: `replayLLM：turn=${turn} 的 messages 无法计算指纹（${errorText(error)}）` }
+      }
+      if (actual !== expected) {
+        return {
+          status: 409,
+          message:
+            `replayLLM：turn=${turn} 的 requestHash 不符——录制的请求形状变了。\n` +
+            `  录制：${expected}\n  实际：${actual}\n` +
+            '  改过系统提示 / 工具 schema / 历史组装的话，请重新录制；不要放宽这条校验。',
+        }
+      }
+      const chunks = recording.responses.get(turn)
+      if (chunks === undefined) {
+        return { status: 409, message: `replayLLM：录制里没有 turn=${turn} 的 response 行` }
+      }
+      return chunks
+    },
+  })
+}
+
 // ── 6.5 readSessionJsonl ─────────────────────────────────────────────────────
 
 /**
@@ -498,5 +671,252 @@ export function readSessionJsonl(path: string): Array<Record<string, unknown>> {
     records.push(value as Record<string, unknown>)
   }
   return records
+}
+
+// ── 6.4 bootKernel ───────────────────────────────────────────────────────────
+
+/** `bootKernel` 的入参。 */
+export interface BootKernelOptions {
+  /** 假模型的 baseUrl；内核会把它装成一个名为 `test` 的供应商。 */
+  providerBaseUrl: string
+  /** 覆盖默认配置的顶层字段（providers 要整份给，不做深合并）。 */
+  config?: Record<string, unknown>
+}
+
+/** 起好的真内核。 */
+export interface BootedKernel {
+  /** cordis 根 Context；按需断言服务时再窄化。 */
+  ctx: unknown
+  /** 跑一个真回合：发消息 → 等 turn-end → 等 agent 空闲 → 等落盘。 */
+  runTurn(text: string): Promise<void>
+  /** 卸载内核；可重复调用。 */
+  dispose(): Promise<void>
+}
+
+/** 内核里 harness 用到的服务面：只声明用到的，不把整个 Context 类型拖进来。 */
+interface KernelSurface {
+  on(event: 'dsc/turn-end', listener: (reason: string) => void): () => void
+  emit(event: 'dsc/exit'): void
+  registry: { keys(): Iterable<unknown>; delete(plugin: unknown): unknown }
+  agent: { followup(text: string): void; isRunning(filePath: string): boolean }
+  session: { current(): { filePath: string } }
+}
+
+/** 默认供应商配置：形状照抄 `scripts/todo-reminder-test.mjs:207-233` 的可用组合。 */
+function defaultKernelConfig(baseUrl: string): DscCoreConfig {
+  return {
+    providers: {
+      test: {
+        name: 'test',
+        displayName: 'Test',
+        baseUrl,
+        apiKey: 'k',
+        models: [
+          {
+            id: 'm',
+            name: 'm',
+            contextWindow: 100000,
+            maxTokens: 500,
+            modalities: ['text'],
+            thinkingLevels: [],
+            thinkingParam: 'none',
+            effortMap: {},
+          },
+        ],
+      },
+    },
+    defaultProvider: 'test',
+    defaultModel: 'm',
+  }
+}
+
+/**
+ * 确认「现在的主目录是临时的」，并返回它。
+ *
+ * ## 为什么必须在起内核前判一次
+ *
+ * `core/path-policy.ts` 的 `DSC_HOME` 是模块顶层常量，由 `homedir()/.dsc` 一次算定；
+ * 一旦落到真实主目录，内核就会往开发者自己的 `~/.dsc` 写会话、抢真实会话的写租约。
+ * 失败的样子不是报错，是「测试绿了、用户数据脏了」——这类事故只能在入口处拦住。
+ *
+ * 判据用「路径是否在系统临时目录里」，不依赖调用过 `tempHome()` 的记账：integration 层
+ * 的 setup（`tests/setup/temp-home.ts`）也是一样建临时目录的，两套入口都该被放行。
+ * 顺带覆盖 `DSC_HOME` 被外部环境变量指向真实目录的情况。
+ */
+function assertIsolatedHome(): string {
+  const home = process.env.HOME ?? process.env.USERPROFILE
+  if (home === undefined || home.trim() === '') {
+    throw new Error('bootKernel：HOME / USERPROFILE 都没设，先调 tempHome() 再起内核（否则会写真实 ~/.dsc）')
+  }
+  const temp = tmpdir()
+  const dscHome = process.env.DSC_HOME ?? join(home, '.dsc')
+  if (!isInside(home, temp) || !isInside(dscHome, temp)) {
+    throw new Error(
+      'bootKernel：拒绝在真实主目录上起内核。\n' +
+        `  HOME=${home}\n  DSC_HOME=${dscHome}\n  临时目录=${temp}\n` +
+        '  先调 tempHome()（integration 层由 tests/setup/temp-home.ts 兜底）。',
+    )
+  }
+  return home
+}
+
+/**
+ * 铺一份最小的隔离主目录：关掉长期记忆与 OS 沙箱，`config.yaml` 给个模型名。
+ *
+ * 为什么关记忆：它在回合结束会投机器通知、还会**多发一次模型请求**（探针
+ * `scripts/todo-reminder-test.mjs:32-37` 踩过）。假模型按请求序号发剧本，多出来的这次
+ * 请求会吃掉下一轮剧本，断言结果看起来随机错位。
+ *
+ * 为什么关沙箱：Windows 上它启动时要做账号/网络体检（`sandbox/win/doctor.ts:176`），
+ * 会 spawn 一个 PowerShell 子进程；实测这个子进程在测试 worker 里可能一直挂着，
+ * vitest 跑完不退出。harness 的目标是「起真内核跑假模型」，工具执行的 OS 隔离不在
+ * 这一层验证；需要沙箱行为的用例自己预置 `plugins.json` 覆盖本清单。
+ *
+ * 只在文件不存在时写：调用方预置的清单优先。
+ */
+function prepareIsolatedHome(home: string): void {
+  const dscHome = process.env.DSC_HOME ?? join(home, '.dsc')
+  mkdirSync(dscHome, { recursive: true })
+  const pluginsFile = join(dscHome, 'plugins.json')
+  if (!existsSync(pluginsFile)) {
+    const plugins = {
+      version: 1,
+      // memory 走 config.enabled（插件自己的开关）；sandbox 走 disabled（条目树的总开关）。
+      entries: [
+        { file: 'memory', config: { enabled: false } },
+        { file: 'sandbox', disabled: true },
+      ],
+    }
+    writeFileSync(pluginsFile, `${JSON.stringify(plugins, null, 2)}\n`, 'utf8')
+  }
+  const configFile = join(dscHome, 'config.yaml')
+  if (!existsSync(configFile)) {
+    writeFileSync(configFile, 'model:\n  name: test\n', 'utf8')
+  }
+}
+
+/**
+ * 起真内核：装配全部行与插件，供应商指向假端点。
+ *
+ * 返回的 `runTurn` 是探针里那段等待逻辑的封装（`scripts/todo-reminder-test.mjs:239-250`）：
+ * 先挂 `dsc/turn-end` 再 `followup`（反过来会漏掉同步结束的回合），然后等 agent 空闲，
+ * 最后给 80ms 让会话写流落盘。少了最后这一拍，紧跟其后的 `readSessionJsonl` 会随机
+ * 读到缺少最后一条记录的日志——这是最容易被误判成「会话丢消息」的假失败。
+ */
+export async function bootKernel(options: BootKernelOptions): Promise<BootedKernel> {
+  if (options === null || typeof options !== 'object') {
+    throw new TypeError('bootKernel：options 必须是 { providerBaseUrl, config? }')
+  }
+  const baseUrl = options.providerBaseUrl
+  if (typeof baseUrl !== 'string' || !/^https?:\/\//.test(baseUrl)) {
+    throw new TypeError(`bootKernel：providerBaseUrl 必须是 http(s):// 地址（收到 ${JSON.stringify(baseUrl)}）`)
+  }
+  if (options.config !== undefined && (options.config === null || typeof options.config !== 'object' || Array.isArray(options.config))) {
+    throw new TypeError('bootKernel：config 必须是普通对象')
+  }
+  const home = assertIsolatedHome()
+  if (!existsSync(CLI_ENTRY)) {
+    // bin/dsc.js 与测试同仓；缺了说明工作树不对（比如只 checkout 了部分目录）。
+    throw new Error(`bootKernel：找不到内核入口 ${CLI_ENTRY}，工作树不完整？`)
+  }
+  prepareIsolatedHome(home)
+  const config = { ...defaultKernelConfig(baseUrl), ...(options.config ?? {}) } as unknown as DscCoreConfig
+  // 动态 import：unit 层的用例只用 tempHome / fakeLLM 时，不该把整张内核插件图拖进来
+  // （那会让单条用例从 5ms 变成上百毫秒，也让「unit 不碰真内核」这条规矩更难守）。
+  //
+  // 说明符故意不带 `.js`：`tsconfig.spec.json` 只 include spec 文件，一旦它静态解析到
+  // `src/host/kernel.ts`，内核与其依赖会被拉进这次编译，而 `src/services/types.ts` 的
+  // cordis `Context` 模块增强不在同一份 include 里，整棵源码树会报「Context 上没有
+  // agent / session」。Vite 的解析会补 `.ts`（`@pneuma/runtime` 已 alias 成绝对路径），
+  // 所以运行时不受影响；类型侧这个 import 按 `any` 处理，下面自己声明了要用的形状。
+  // @ts-ignore -- 见上：NodeNext 不认无扩展名的裸说明符，Vite 认。
+  const kernelModule = (await import('@pneuma/runtime/host/kernel')) as {
+    createKernel: (bootOptions: { config: DscCoreConfig; resumeSessionPath: string | null }) => Promise<unknown>
+  }
+  const ctx = await kernelModule.createKernel({ config, resumeSessionPath: null })
+  const surface = ctx as unknown as KernelSurface
+  const missing = [
+    typeof surface.on === 'function' ? undefined : 'ctx.on',
+    typeof surface.emit === 'function' ? undefined : 'ctx.emit',
+    typeof surface.registry?.keys === 'function' ? undefined : 'ctx.registry.keys',
+    typeof surface.registry?.delete === 'function' ? undefined : 'ctx.registry.delete',
+    typeof surface.agent?.followup === 'function' ? undefined : 'ctx.agent.followup',
+    typeof surface.agent?.isRunning === 'function' ? undefined : 'ctx.agent.isRunning',
+    typeof surface.session?.current === 'function' ? undefined : 'ctx.session.current',
+  ].filter((item): item is string => item !== undefined)
+  if (missing.length > 0) {
+    // 内核起来了但服务没挂全：没有可用的卸载口也要尽量先收尾，别把定时器留在进程里。
+    try {
+      surface.emit?.('dsc/exit')
+    } catch {
+      // 装配都不完整，这一步失败只会掩盖真正缺的服务名。
+    }
+    throw new Error(`bootKernel：内核装配不完整，缺少 ${missing.join('、')}`)
+  }
+
+  let disposed = false
+  const isRunning = (): boolean => surface.agent.isRunning(surface.session.current().filePath)
+
+  const runTurn = async (text: string): Promise<void> => {
+    if (typeof text !== 'string' || text.trim() === '') {
+      throw new TypeError('bootKernel.runTurn：text 必须是非空字符串')
+    }
+    if (disposed) throw new Error('bootKernel.runTurn：内核已 dispose，不能再跑回合')
+    let off = (): void => {}
+    const ended = new Promise<void>((resolveTurn, rejectTurn) => {
+      const timer = setTimeout(() => {
+        off()
+        rejectTurn(
+          new Error(
+            `bootKernel.runTurn：${RUN_TURN_TIMEOUT_MS}ms 内没等到 dsc/turn-end（假端点关了吗？回合卡在哪一步？）`,
+          ),
+        )
+      }, RUN_TURN_TIMEOUT_MS)
+      off = surface.on('dsc/turn-end', (reason: string) => {
+        clearTimeout(timer)
+        off()
+        if (reason === 'completed') resolveTurn()
+        // 非正常结束必须让调用方看到：把 error 当成功吞掉，会让「模型请求被拒」这类
+        // 事故变成一条「回合跑完了但会话是空的」的诡异断言，排查方向完全错。
+        else rejectTurn(new Error(`bootKernel.runTurn：回合以 ${reason} 结束，不是 completed`))
+      })
+    })
+    surface.agent.followup(text)
+    await ended
+    const idle = await until(() => !isRunning(), RUN_TURN_TIMEOUT_MS)
+    if (!idle) {
+      throw new Error(`bootKernel.runTurn：turn-end 之后 ${RUN_TURN_TIMEOUT_MS}ms 仍未空闲，内核可能卡在写租约或收尾`)
+    }
+    await new Promise((resolveSleep) => setTimeout(resolveSleep, SETTLE_AFTER_TURN_MS))
+  }
+
+  const dispose = async (): Promise<void> => {
+    if (disposed) return
+    disposed = true
+    const failures: Error[] = []
+    // 先发应用层收尾事件：session / agent / tui 这些插件在 `dsc/exit` 上关文件、停回合
+    // （`src/packages/session/index.ts:351`、`src/packages/agent/index.ts:323`）。
+    try {
+      surface.emit('dsc/exit')
+    } catch (error) {
+      failures.push(error instanceof Error ? error : new Error(errorText(error)))
+    }
+    // 再逐个卸载插件 fiber：只发 dsc/exit 不够——定时器、监听器、子进程是插件 disposer
+    // 收的，不卸载它们，vitest 的 worker 会被句柄钉住（实测：不卸载时进程 5 秒仍不退出）。
+    // cordis 4.1 的根 Context 没有 `dispose()`（很多探针里的 `ctx.dispose?.()` 实际是空操作），
+    // 能用的卸载口是 registry：`delete(plugin)` 会 dispose 该插件的全部 fiber。
+    for (const plugin of [...surface.registry.keys()]) {
+      try {
+        surface.registry.delete(plugin)
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error(errorText(error)))
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `bootKernel.dispose：${failures.length} 个插件收尾失败`)
+    }
+  }
+
+  return { ctx, runTurn, dispose }
 }
 
