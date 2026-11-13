@@ -378,7 +378,16 @@ paths 只有 `@pneuma/*`。反过来把 DOM 库加进 §5.2 更糟——内核�
 
 ## 6 `tests/harness.ts` API 规格
 
-七个导出，每个都写清签名、行为、失败模式。
+**已实现，以 [	ests/harness.ts](../tests/harness.ts) 为准**——那一份有完整注释（含「踩过的坑」八条）。
+本节写的是设计时的规格，实装后有两处增补：
+
+| 增补 | 为什么 |
+| --- | --- |
+| `tempRepo()` | 内核的 `turnDiff` 与 `env-facts` 读进程 cwd 的 git 状态。用例跑在仓库本体里会把**开发机上未提交的改动**记成「这一轮改了这些文件」，别人同时在写文件时实时与重放对不上。它建临时仓库并 `chdir` 进去 |
+| `fakeLLM` 的 `status` / `headers` / `{reasoning, content}` | 非 2xx 与响应头是 llm 层要验的分支；`reasoning_content` 不给的话 transcript 的 thinking 行永远不会出现 |
+| `bootKernel` 的 `resumeSessionPath` | 不给这个入参，「从旧会话启动」这条路径根本走不到（`resumedStartup` 恒为 false） |
+
+下面七个是本来的规格，签名与行为仍然有效。
 
 ### 6.1 `tempHome`
 
@@ -795,11 +804,8 @@ CI workflow 里两步：
       - name: 集成测试
         run: pnpm test:int          # 2026-11-13 提前到 PR 门，见下方说明
 
-  plugin:                            # 2026-11-13 新增（P1a 第 3 项）
-    steps:
-      # ... 安装、build
-      - name: 包级测试（119 条）
-        run: node scripts/package-tests.mjs
+  # 2026-11-13 曾短暂存在一个 plugin job（装依赖 → build → 跑 package-tests.mjs）。
+  # 2026-11-14 删除：119 条迁进 Vitest 后跟着 pnpm test 走 PR 门，它没有存在理由了。
 
   probe:
     steps:
@@ -818,7 +824,7 @@ CI workflow 里两步：
 
 | 项 | 最初设想 | 实装 |
 | --- | --- | --- |
-| `check:plugin` | PR 门整串跑 | PR 只跑 `package-tests.mjs`（119 条，72.7s，只需 `pnpm build`）；整串进夜跑，因为它含 `plugin-inventory-check`，要读 `lib/ui/plugins/`，得先编界面壳 |
+| `check:plugin` | PR 门整串跑 | PR **不再跑它**：119 条包级测试已进 `pnpm test`；整串（模型校验/包标准/清单快照/装配/热替换）留夜跑，因为它含 `plugin-inventory-check`，要读 `lib/ui/plugins/`，得先编界面壳 |
 | `test:int` | 夜跑 | PR 门。15 条守线上事故（同一 callId 两条工具结果 → 网关 400），隔夜太慢；它只解析 `src/**` 不依赖 `lib/`，本地 905ms。超过两分钟再移回夜跑 |
 
 ### 12.2 新增 `test-live.yml`
@@ -867,24 +873,26 @@ jobs:
 
 ## 13 `package.json` scripts
 
+以下七条是**实际在跑的**（2026-11-14 抄自 package.json；设计稿里另列过 e2e/bench/live/cli/coverage，
+那些属 P3–P5，还没建）：
+
 ```jsonc
 {
-  "test":             "vitest run --project unit --project ui",
-  "test:unit":        "vitest run --project unit",
-  "test:int":         "vitest run --project integration",
-  "test:ui":          "vitest run --project ui",
-  "test:snapshot":    "vitest run --project snapshot",
-  "test:e2e":         "vitest run --config vitest.e2e.config.ts",
-  "test:bench":       "node tests/bench/run.mjs",
-  "test:live":        "vitest run --config vitest.live.config.ts",
-  "test:live:assert-ran": "node tests/live/assert-ran.mjs",
-  "test:cli":         "vitest run --project cli",
-  "test:coverage":    "vitest run --coverage",
-  "test:legacy":      "pnpm run check:core && pnpm run check:ui",
-  "typecheck:spec":   "tsc -p tsconfig.spec.json --noEmit"
+  "test": "vitest run --project unit --project ui --project tui",
+  "test:unit": "vitest run --project unit",
+  "test:int": "pnpm run build && vitest run --project integration",
+  "test:ui": "vitest run --project ui",
+  "test:tui": "vitest run --project tui",
+  "test:snapshot": "vitest run --project snapshot --passWithNoTests",
+  "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit && tsc -p ui-shell/tsconfig.spec.json --noEmit"
 }
 ```
 
+三条与设计稿不同，都是实装时改的：
+
+- `test` 纳入了 `tui`。原本只跑 unit + ui，新加的 tui project 121 条用例从来没进过门禁。
+- `test:int` 前面加了 `pnpm run build`。integration 层跑的是 `lib` 平面（D25），不构建就是拿旧产物验新代码。
+- `test:snapshot` 带 `--passWithNoTests`：快照层（P4）还没建，不带这个参数照文档跑一次必红。
 `check:all` 在现有链尾追加 `pnpm run test`（只加快档）。
 
 ---
@@ -983,7 +991,9 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 
 ## 16 实施顺序（文件级）
 
-P0 已按这张表做完（2026-11-13），表中的「验收」列写的是当时真跑出来的判据。
+**P0–P1b 已全部按这张表做完**（2026-11-13 ~ 11-14），「验收」列写的是当时真跑出来的判据。
+第 10、11 步的产物后来又被拆掉了（119 条进 Vitest 后 package-tests.mjs 与 plugin job 删除），
+这属于正常演化，不是没做完。
 
 | 步 | 做什么 | 产出 | 验收 |
 | --- | --- | --- | --- |
@@ -997,7 +1007,7 @@ P0 已按这张表做完（2026-11-13），表中的「验收」列写的是当�
 | 8 | 迁 POC-3 | `src/packages/ui-status/ui/status-model.spec.ts` | 44 条绿 |
 | 9 | 接门禁 | `verify.yml` + scripts | PR 能看到 `pnpm test` |
 | 10 | **把 `check:plugin` 接进 PR 门禁** | `verify.yml` | 119 条包级测试第一次在 CI 里跑 |
-| 11 | 迁包级测试（P1b） | `src/packages/*/tests/*.spec.ts` | 每迁一个包，`package-tests.mjs --list` 少一条 |
+| 11 | 迁包级测试（P1b） | `src/packages/*/tests/*.spec.ts` | 119 个包全部迁完，共 806 条；旧 `package-tests.mjs` 删除 |
 
 第 5 步容易被跳过：`vitest.config.ts` 的 `setupFiles` 指向这两个文件，没有它们，
 integration 与 ui 层的第一条用例直接报 `Cannot find module`，而不是「测试失败」。
