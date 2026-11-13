@@ -1164,7 +1164,15 @@ node scripts/plugin-inventory-check.mjs # exit 0，78 插件 / 26 分区 / 22 �
 
 | 项 | 缺什么 | 谁决定 |
 | --- | --- | --- |
-| 飞书来源/通知 | 上游两条腿都是 `lark-cli` 子进程（`feishu-loops.ts:71`、`feishu-channel.ts:23`），代码里没有一处自己发 HTTP。轮询能替代「配置点名的群」，替代不了「新群/私聊自动发现」与秒级延迟 | 要不要把 `lark-cli` 变成运行时依赖 |
-| PR 的 CI 轮询 | `pollPullChecks(options, number)` 已导出，但「哪些 PR 该看」要工单清单，接线层还没做 | 我 |
-| PR 自动绑定 | 同上，要 `tickets.open()`；`agentPull` / `ticketBranch` 已备好 | 我 |
+| 飞书来源/通知 | 上游两条腿都是 `lark-cli` 子进程（`feishu-loops.ts:71`、`feishu-channel.ts:23`），代码里没有一处自己发 HTTP。轮询能替代「配置点名的群」，替代不了「新群/私聊自动发现」与秒级延迟。默认路线：保留 CLI 子进程，装不上就不启动这个来源 | 要不要把 `lark-cli` 变成运行时依赖 |
 | 真账号验收 | 需要仓库 + `GITHUB_TOKEN`，`@` 一次要真的产出 PR | 用户 |
+| 接线的可测接缝 | `bindPulls`（认领 PR）与 `pollPullCi`（看 CI）都在 `apply` 的闭包里，没有可注入的接缝，所以这两条接线目前**没有用例**。抽成「入参是 api + 工单清单 + bindThread」的纯函数就能测 | 我 |
+
+**已补的两处（原列在此表）**：
+
+- **PR 的 CI 轮询**：`pollPullChecks` 现在由泵调用——每次 GitHub 轮询跑完后，对每张开着且
+  `pullOf()` 有值的工单调一次（`index.ts` 的 `pollPullCi`）。
+- **PR 自动绑定**：每拍读完事件流就读一次开着的 PR，按 `agentPull`（机器人自己开的、head 在
+  本仓库）与 `ticketBranch`（分支末段等于工单短名）认领，线程 id 用 PR 号——与适配器报
+  `threadClosed` 时用的 id 必须一致，否则工单永远等不到「PR 合并了」。顺序是「先认领、再看
+  CI」，反了会白等一拍。
