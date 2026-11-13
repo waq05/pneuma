@@ -149,6 +149,27 @@ export default defineConfig({
           sequence: { concurrent: false },
         },
       },
+      {
+        extends: true,
+        // TUI 组件不在 `ui/` 子目录下：`src/packages/tui/app/**` 是 ink 渲染层，
+        // 既不是浏览器代码（不需要 jsdom），也不匹配 ui project 的
+        // `src/packages/*/ui/**` 模式——没有这个 project，那批渲染探针无家可归。
+        //
+        // 与 ui 层的差别：ink 渲染在 node 里跑，靠假 stdin/stdout（PassThrough）拿帧，
+        // 不是 jsdom + react-dom。所以这里 environment 是 node，也不挂 react 插件以外的
+        // 浏览器桩。
+        test: {
+          name: 'tui',
+          include: ['src/packages/tui/**/*.spec.ts', 'src/packages/tui/**/*.spec.tsx'],
+          exclude: ['**/node_modules/**'],
+          environment: 'node',
+          testTimeout: 15_000,
+          hookTimeout: 15_000,
+          retry: 0,
+          // 假终端与定时器是进程级状态，线程间会互相踩。
+          pool: 'forks',
+        },
+      },
     ],
   },
 })
