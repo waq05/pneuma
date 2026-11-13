@@ -5,6 +5,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
+import * as mod from '../index.js'
 import { agentPlugin } from '../index.js'
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -29,6 +30,8 @@ test('package.json 是 ESM 功能包，装配指向 cordis.patch.yml', () => {
 
 // 入口真能加载：直接 import 源码入口并检查插件对象的三件事。
 test('入口能加载，插件名与 apply 对得上', () => {
+  // 入口应当恰好导出一个 *Plugin 对象：多一个就说明有人把另一个插件塞进了这个包。
+  expect(Object.keys(mod).filter((key) => /Plugin$/.test(key))).toEqual(['agentPlugin'])
   expect(typeof agentPlugin).toBe('object')
   expect(typeof agentPlugin.name).toBe('string')
   // 插件名 = 包名去掉 @pneuma/ 前缀 = 装配行的 id；三者不一致说明装配时认错了包。
