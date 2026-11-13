@@ -11,39 +11,42 @@
  *   7. 窗口容量：第 21 条挤掉最旧的；
  *   8. 别家写的行（读不出消息）：删掉，不抛、不进窗口；
  *   9. 坏行（不是 JSON、或能解析但缺 id/kind）：自救删掉，同批的好消息照发——一行坏数据不能挡住所有回复；
- *  10. 写回队列失败：那条消息只剩内存这一份，下一拍补写回去，不能静默丢。
+ *   10. 写回队列失败：那条消息只剩内存这一份，下一拍补写回去，不能静默丢。
  *
  * 时钟由 `now` 注入，库在 `tmpdir()` 下的临时 `DSC_HOME` 里。
- * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
+ * 迁移说明：原文件 import `lib/` 构建产物；现在直接 import 源码，不再要求先 `pnpm run build`。
  *
  * @module @pneuma/superagent/tests/dispatch
  */
-import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { after, test } from 'node:test'
+import { afterAll, expect, test } from 'vitest'
+import type { OutboundMessage } from '../core/ports.js'
+import type { DscStore } from '../adapters/store.js'
+import type { MessageSender } from '../adapters/dispatch.js'
+import type { RecentNotice } from '../adapters/notify.js'
 
-// 必须在 import lib/ 之前把 DSC_HOME 指到临时目录，否则会读走开发者真实的 ~/.dsc。
+// 必须在 import 源码之前把 DSC_HOME 指到临时目录，否则会读走开发者真实的 ~/.dsc。
 const home = mkdtempSync(join(tmpdir(), 'superagent-dispatch-home-'))
 const previousHome = process.env['DSC_HOME']
 process.env['DSC_HOME'] = home
 
-const { openStore } = await import('../../../../lib/packages/superagent/adapters/store.js')
-const { OutboxDispatcher } = await import('../../../../lib/packages/superagent/adapters/dispatch.js')
-const { StoreNotifier, RECENT_CAP } = await import('../../../../lib/packages/superagent/adapters/notify.js')
+const { openStore } = await import('../adapters/store.js')
+const { OutboxDispatcher } = await import('../adapters/dispatch.js')
+const { StoreNotifier, RECENT_CAP } = await import('../adapters/notify.js')
 
 const STARTED = '2026-09-10T00:00:00.000Z'
-const roots = [home]
+const roots: string[] = [home]
 
-after(() => {
+afterAll(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true })
   if (previousHome === undefined) delete process.env['DSC_HOME']
   else process.env['DSC_HOME'] = previousHome
 })
 
-/** 一个用例一份临时根目录与一个库；用完关库、留目录给 after 清。 */
-async function withStore(work) {
+/** 一个用例一份临时根目录与一个库；用完关库、留目录给 afterAll 清。 */
+async function withStore<T>(work: (store: DscStore) => Promise<T>): Promise<T> {
   const root = mkdtempSync(join(tmpdir(), 'superagent-dispatch-'))
   roots.push(root)
   process.env['DSC_HOME'] = root
@@ -55,19 +58,41 @@ async function withStore(work) {
   }
 }
 
+/** 出站消息 + 入队时刻（`notify.ts` 写进 payload 的那两个字段之一）。 */
+interface QueuedMessage extends OutboundMessage {
+  at?: string
+}
+
 /** 一条出站消息；`messageId` 是回话目标，`source` 决定谁来发。 */
-const message = (id, source = 'feishu', text = '好的，我开始了', at = STARTED) => ({
+const message = (id: string, source = 'feishu', text = '好的，我开始了', at = STARTED): QueuedMessage => ({
   id,
   channel: { source, thread: `${source}:1`, address: { messageId: 'om_1', chatId: 'oc_1' } },
   text,
   kind: 'reply',
   ticketId: 't1',
-  ...{ at },
+  at,
 })
 
 /** 往队列里放一条；`payload.at` 是入队时刻，与生产代码写的那一行同形（`notify.ts`）。 */
-const seed = (store, item) => {
+const seed = (store: DscStore, item: QueuedMessage): void => {
   store.enqueueOutbox({ id: item.id, kind: item.kind, payload: { message: item, at: item.at ?? STARTED } })
+}
+
+/** 发送泵的探针：窗口、日志、已发消息都留在外面给断言看。 */
+interface DispatchProbe {
+  dispatcher: InstanceType<typeof OutboxDispatcher>
+  window: RecentNotice[]
+  lines: string[]
+  sent: QueuedMessage[]
+  /** 把时钟往前推，模拟「下一拍」。 */
+  tick: (ms: number) => void
+  rows: () => string[]
+}
+
+/** `makeDispatcher` 的可选项。 */
+interface DispatchFixtureOptions {
+  send?: MessageSender
+  senders?: () => Partial<Record<string, MessageSender>>
 }
 
 /**
@@ -76,23 +101,27 @@ const seed = (store, item) => {
  * @param options.senders - 换成别的发送方表（默认只有 feishu，且总成功）
  * @param options.send - 默认发送方的行为
  */
-function makeDispatcher(store, options = {}) {
+function makeDispatcher(store: DscStore, options: DispatchFixtureOptions = {}): DispatchProbe {
   let at = STARTED
-  const window = []
-  const lines = []
-  const sent = []
-  const send = options.send ?? (async () => 'sent')
+  const window: RecentNotice[] = []
+  const lines: string[] = []
+  const sent: QueuedMessage[] = []
+  const send: MessageSender = options.send ?? (async () => 'sent')
   const dispatcher = new OutboxDispatcher({
     store,
     senders: options.senders ?? (() => ({
-      feishu: async (item) => {
-        sent.push(item)
+      feishu: async (item: OutboundMessage) => {
+        sent.push(item as QueuedMessage)
         return await send(item)
       },
     })),
-    remember: (fresh) => { window.push(...fresh) },
+    remember: (fresh: readonly RecentNotice[]) => {
+      window.push(...fresh)
+    },
     now: () => at,
-    log: (line) => { lines.push(line) },
+    log: (line: string) => {
+      lines.push(line)
+    },
   })
   return {
     dispatcher,
@@ -100,8 +129,11 @@ function makeDispatcher(store, options = {}) {
     lines,
     sent,
     /** 把时钟往前推，模拟「下一拍」。 */
-    tick: (ms) => { at = new Date(Date.parse(at) + ms).toISOString() },
-    rows: () => store.handle.prepare('SELECT id FROM outbox ORDER BY rowid').all().map((row) => row.id),
+    tick: (ms) => {
+      at = new Date(Date.parse(at) + ms).toISOString()
+    },
+    rows: () =>
+      (store.handle.prepare('SELECT id FROM outbox ORDER BY rowid').all() as Array<{ id: string }>).map((row) => row.id),
   }
 }
 
@@ -111,10 +143,10 @@ test('1. 发出去：调用发送方、删行、那句话进最近动态', async
     const probe = makeDispatcher(store)
     await probe.dispatcher.flush()
 
-    assert.equal(probe.sent.length, 1)
-    assert.equal(probe.sent[0].id, 'm1')
-    assert.deepEqual(probe.rows(), [], '发成功应删行')
-    assert.deepEqual(probe.window, [{ at: STARTED, text: '好的，我开始了' }], '时刻要用入队时刻，不是现在')
+    expect(probe.sent.length).toBe(1)
+    expect(probe.sent[0].id).toBe('m1')
+    expect(probe.rows(), '发成功应删行').toStrictEqual([])
+    expect(probe.window, '时刻要用入队时刻，不是现在').toStrictEqual([{ at: STARTED, text: '好的，我开始了' }])
   })
 })
 
@@ -122,16 +154,18 @@ test('2. 发失败：行按原 id 写回，退避没到点不再试', async () =
   await withStore(async (store) => {
     seed(store, message('m1'))
     const probe = makeDispatcher(store, {
-      send: async () => { throw new Error('502 bad gateway') },
+      send: async () => {
+        throw new Error('502 bad gateway')
+      },
     })
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), ['m1'], '失败要写回队列，不能丢')
-    assert.equal(probe.window.length, 1, '说了什么仍要记进最近动态')
-    assert.match(probe.lines[0], /稍后重试：发送失败：502 bad gateway/u)
+    expect(probe.rows(), '失败要写回队列，不能丢').toStrictEqual(['m1'])
+    expect(probe.window.length, '说了什么仍要记进最近动态').toBe(1)
+    expect(probe.lines[0]).toMatch(/稍后重试：发送失败：502 bad gateway/u)
 
     await probe.dispatcher.flush()
-    assert.equal(probe.sent.length, 1, '退避没到点，第二拍不该再发')
-    assert.deepEqual(probe.rows(), ['m1'])
+    expect(probe.sent.length, '退避没到点，第二拍不该再发').toBe(1)
+    expect(probe.rows()).toStrictEqual(['m1'])
   })
 })
 
@@ -150,9 +184,9 @@ test('3. 退避到点：再试一次，成功就删行', async () => {
     probe.tick(5000)
     await probe.dispatcher.flush()
 
-    assert.equal(probe.sent.length, 2, '到点后应重试一次')
-    assert.deepEqual(probe.rows(), [])
-    assert.equal(probe.window.length, 1, '重投的同一条不该在窗口里出现两遍')
+    expect(probe.sent.length, '到点后应重试一次').toBe(2)
+    expect(probe.rows()).toStrictEqual([])
+    expect(probe.window.length, '重投的同一条不该在窗口里出现两遍').toBe(1)
   })
 })
 
@@ -162,9 +196,9 @@ test('4. 永久发不出：删行、不重试', async () => {
     const probe = makeDispatcher(store, { send: async () => 'gone' })
     await probe.dispatcher.flush()
 
-    assert.deepEqual(probe.rows(), [], '永久发不出的行要丢掉，否则每拍都会重试')
-    assert.equal(probe.sent.length, 1)
-    assert.match(probe.lines[0], /永久发不出/u)
+    expect(probe.rows(), '永久发不出的行要丢掉，否则每拍都会重试').toStrictEqual([])
+    expect(probe.sent.length).toBe(1)
+    expect(probe.lines[0]).toMatch(/永久发不出/u)
   })
 })
 
@@ -178,14 +212,14 @@ test('5. 来源没起来：退避等着，试满八次才丢弃', async () => {
     for (const ms of waits) {
       if (ms > 0) probe.tick(ms)
       await probe.dispatcher.flush()
-      assert.deepEqual(probe.rows(), ['m1'], '来源没起来时要保留，不能立刻丢')
+      expect(probe.rows(), '来源没起来时要保留，不能立刻丢').toStrictEqual(['m1'])
     }
-    assert.match(probe.lines.at(-1), /还没起来/u)
+    expect(probe.lines.at(-1) ?? '').toMatch(/还没起来/u)
 
     probe.tick(300_000)
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), [], '第八次之后丢弃')
-    assert.match(probe.lines.at(-1), /放弃投递/u)
+    expect(probe.rows(), '第八次之后丢弃').toStrictEqual([])
+    expect(probe.lines.at(-1) ?? '').toMatch(/放弃投递/u)
   })
 })
 
@@ -195,9 +229,9 @@ test('6. manual 通道：只进最近动态，不调发送方', async () => {
     const probe = makeDispatcher(store)
     await probe.dispatcher.flush()
 
-    assert.equal(probe.sent.length, 0, 'manual 是没有真实会话的占位，不该调发送方')
-    assert.deepEqual(probe.rows(), [])
-    assert.equal(probe.window.length, 1)
+    expect(probe.sent.length, 'manual 是没有真实会话的占位，不该调发送方').toBe(0)
+    expect(probe.rows()).toStrictEqual([])
+    expect(probe.window.length).toBe(1)
   })
 })
 
@@ -213,16 +247,19 @@ test('7. 窗口容量：第 21 条挤掉最旧的', async () => {
     const dispatcher = new OutboxDispatcher({
       store,
       senders: () => ({}),
-      remember: (fresh) => { notifier.remember(fresh) },
+      remember: (fresh: readonly RecentNotice[]) => {
+        notifier.remember(fresh)
+      },
       now: () => STARTED,
       log: () => {},
     })
     await dispatcher.flush()
 
     const window = notifier.recent()
-    assert.equal(window.length, RECENT_CAP)
-    assert.ok(!window.some((item) => item.text.includes('通知 01')), '最旧的那条应被挤掉')
-    assert.match(window.at(-1).text, /通知 21/, '最新的在末尾')
+    expect(window.length).toBe(RECENT_CAP)
+    expect(window.some((item) => item.text.includes('通知 01')), '最旧的那条应被挤掉').toBe(false)
+    expect(window.at(-1)?.text ?? '').toMatch(/通知 21/)
+    expect(window.at(-1)?.text ?? '', '最新的在末尾').toContain('通知 21')
   })
 })
 
@@ -232,9 +269,9 @@ test('8. 别家写的行：删掉，不抛、不进窗口', async () => {
     const probe = makeDispatcher(store)
     await probe.dispatcher.flush()
 
-    assert.deepEqual(probe.rows(), [])
-    assert.equal(probe.window.length, 0)
-    assert.equal(probe.sent.length, 0)
+    expect(probe.rows()).toStrictEqual([])
+    expect(probe.window.length).toBe(0)
+    expect(probe.sent.length).toBe(0)
   })
 })
 
@@ -247,10 +284,10 @@ test('9. 坏行：自救删掉，同批的好消息照发', async () => {
     const probe = makeDispatcher(store)
     await probe.dispatcher.flush()
 
-    assert.equal(probe.sent.length, 1, '一行坏数据不能挡住所有回复')
-    assert.deepEqual(probe.rows(), [], '坏行与好消息都应清掉')
-    assert.ok(probe.lines.some((line) => line.includes('取出站消息失败')), '要先说清取队列失败了')
-    assert.ok(probe.lines.some((line) => line.includes('删掉 2 行读不出来的数据')), '两种坏行都要删掉')
+    expect(probe.sent.length, '一行坏数据不能挡住所有回复').toBe(1)
+    expect(probe.rows(), '坏行与好消息都应清掉').toStrictEqual([])
+    expect(probe.lines.some((line) => line.includes('取出站消息失败')), '要先说清取队列失败了').toBe(true)
+    expect(probe.lines.some((line) => line.includes('删掉 2 行读不出来的数据')), '两种坏行都要删掉').toBe(true)
   })
 })
 
@@ -266,16 +303,18 @@ test('10. 写回队列失败：留在内存里，下一拍补写回去', async (
     })
     // 让「写回队列」这一步失败：那一行已经被 drainOutbox 从库里取走删掉了，只剩内存这一份。
     const original = store.enqueueOutbox.bind(store)
-    store.enqueueOutbox = () => { throw new Error('database is locked') }
+    store.enqueueOutbox = () => {
+      throw new Error('database is locked')
+    }
     await probe.dispatcher.flush()
-    assert.deepEqual(probe.rows(), [], '这一拍确实没写回库里')
-    assert.ok(probe.lines.some((line) => line.includes('写回队列失败')), '失败要留痕迹')
+    expect(probe.rows(), '这一拍确实没写回库里').toStrictEqual([])
+    expect(probe.lines.some((line) => line.includes('写回队列失败')), '失败要留痕迹').toBe(true)
 
     store.enqueueOutbox = original
     failing = false
     probe.tick(5000)
     await probe.dispatcher.flush()
-    assert.equal(probe.sent.length, 2, '下一拍要重试那条消息')
-    assert.deepEqual(probe.rows(), [], '发成功之后不该留行')
+    expect(probe.sent.length, '下一拍要重试那条消息').toBe(2)
+    expect(probe.rows(), '发成功之后不该留行').toStrictEqual([])
   })
 })

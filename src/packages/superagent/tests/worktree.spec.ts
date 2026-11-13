@@ -9,22 +9,18 @@
  * 全程 `tmpdir()` + `mkdtemp`，且每个用例一份仓库、一个工作树根：绝不碰用户真实的
  * `~/.dsc`，也不改用户的全局 git 配置（身份用仓库局部 `git config` 设，CI 里才有提交可用）。
  *
- * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
+ * 迁移说明：原文件 import `lib/` 构建产物；现在直接 import 源码，不再要求先 `pnpm run build`。
  *
  * @module @pneuma/superagent/tests
  */
-import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { after, test } from 'node:test'
+import { afterAll, expect, test } from 'vitest'
+import { ensureWorktree, listWorktrees, removeWorktree, slugOf } from '../adapters/worktree.js'
 
-const worktreeModule = await import('../../../../lib/packages/superagent/adapters/worktree.js')
-const { ensureWorktree, listWorktrees, removeWorktree, slugOf } = worktreeModule
-
-const roots = []
-let passed = 0
+const roots: string[] = []
 
 /**
  * 跑测试用的 git：剥掉继承来的 `GIT_*`。
@@ -32,13 +28,14 @@ let passed = 0
  * 不剥的话，开发者 shell 里设过 `GIT_DIR`（自己在用 worktree 时很常见）会让这些命令
  * 全落到别的仓库——测试就会在别人的工作区上跑，甚至改到别人的分支。
  */
-const cleanEnv = {}
+const cleanEnv: Record<string, string> = {}
 for (const [key, value] of Object.entries(process.env)) {
   if (key.toUpperCase().startsWith('GIT_') || value === undefined) continue
   cleanEnv[key] = value
 }
 
-function git(cwd, args) {
+/** 跑一次 git，返回 stdout。 */
+function git(cwd: string, args: readonly string[]): string {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
@@ -49,7 +46,7 @@ function git(cwd, args) {
 }
 
 /** 造一个能提交的临时仓库：`worktree add` 至少要有一次提交，否则没有 HEAD 可当起点。 */
-function makeRepo() {
+function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'superagent-worktree-repo-'))
   roots.push(dir)
   git(dir, ['init', '-q'])
@@ -63,33 +60,36 @@ function makeRepo() {
 }
 
 /** 单独一个工作树根目录：放在仓库外面，模拟 `<DSC_HOME>/superagent/worktrees/`。 */
-function makeRoot(label) {
+function makeRoot(label: string): string {
   const dir = mkdtempSync(join(tmpdir(), `superagent-worktree-${label}-`))
   roots.push(dir)
   return dir
 }
 
 /** 路径比较的规范形：git 报的是正斜杠、Windows 大小写不敏感，直接比字符串会假失败。 */
-function samePath(a, b) {
-  const norm = (value) => {
+function samePath(a: string, b: string): boolean {
+  const norm = (value: string): string => {
     const absolute = resolve(value).replace(/\\/g, '/')
     return process.platform === 'win32' ? absolute.toLowerCase() : absolute
   }
   return norm(a) === norm(b)
 }
 
+afterAll(() => {
+  for (const dir of roots) rmSync(dir, { recursive: true, force: true })
+})
+
 test('1. 建出目录与分支：created 为 true，HEAD 在 agent/<slug> 上', () => {
   const repo = makeRepo()
   const root = makeRoot('create')
   const handle = ensureWorktree({ repo, name: 'fix login copy', root })
 
-  assert.equal(handle.created, true)
-  assert.equal(handle.path, join(root, 'fix-login-copy'))
-  assert.equal(handle.branch, 'agent/fix-login-copy')
-  assert.ok(existsSync(handle.path), '工作树目录应当存在')
+  expect(handle.created).toBe(true)
+  expect(handle.path).toBe(join(root, 'fix-login-copy'))
+  expect(handle.branch).toBe('agent/fix-login-copy')
+  expect(existsSync(handle.path), '工作树目录应当存在').toBe(true)
   // 分支真被 checkout 出来了，而不只是名字对：git 自己说的话才算数。
-  assert.equal(git(handle.path, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'agent/fix-login-copy')
-  passed += 1
+  expect(git(handle.path, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('agent/fix-login-copy')
 })
 
 test('2. 再调一次：目录已存在就复用，created 为 false、不报错、路径不变', () => {
@@ -102,11 +102,10 @@ test('2. 再调一次：目录已存在就复用，created 为 false、不报错
 
   const second = ensureWorktree({ repo, name: 'fix login copy', root })
 
-  assert.equal(second.created, false)
-  assert.equal(second.path, first.path)
-  assert.equal(second.branch, first.branch)
-  assert.equal(readFileSync(marker, 'utf8'), 'still here\n')
-  passed += 1
+  expect(second.created).toBe(false)
+  expect(second.path).toBe(first.path)
+  expect(second.branch).toBe(first.branch)
+  expect(readFileSync(marker, 'utf8')).toBe('still here\n')
 })
 
 test('3. 目录删了但分支还在：重新 add 回来，分支上的提交还在', () => {
@@ -121,17 +120,16 @@ test('3. 目录删了但分支还在：重新 add 回来，分支上的提交还
 
   // 模拟用户手工 rm -rf：git 的 `.git/worktrees/<name>` 登记还在，这是一条真实会遇到的路径。
   rmSync(first.path, { recursive: true, force: true })
-  assert.ok(!existsSync(first.path))
+  expect(existsSync(first.path)).toBe(false)
 
   const again = ensureWorktree({ repo, name: 'restore me', root })
 
-  assert.equal(again.created, true, '目录没了要重新 add，不是复用')
-  assert.equal(again.path, first.path)
+  expect(again.created, '目录没了要重新 add，不是复用').toBe(true)
+  expect(again.path).toBe(first.path)
   // 用 `-B` 的话这里会回到 init 那个提交，sha 与文件都对不上。
-  assert.equal(git(again.path, ['rev-parse', 'HEAD']).trim(), sha)
+  expect(git(again.path, ['rev-parse', 'HEAD']).trim()).toBe(sha)
   // 只断言内容，不逐字节比换行：Windows 上 `core.autocrlf` 会把 checkout 出来的文件转成 CRLF。
-  assert.match(readFileSync(join(again.path, 'work.txt'), 'utf8'), /agent change/)
-  passed += 1
+  expect(readFileSync(join(again.path, 'work.txt'), 'utf8')).toMatch(/agent change/)
 })
 
 test('4. listWorktrees：主工作区与新工作树都在，分支名去掉 refs/heads/', () => {
@@ -141,14 +139,13 @@ test('4. listWorktrees：主工作区与新工作树都在，分支名去掉 ref
 
   const entries = listWorktrees(repo)
 
-  assert.equal(entries.length, 2)
-  assert.ok(entries.some((entry) => samePath(entry.path, repo)), '主工作区也要列出来')
+  expect(entries.length).toBe(2)
+  expect(entries.some((entry) => samePath(entry.path, repo)), '主工作区也要列出来').toBe(true)
   const added = entries.find((entry) => entry.branch === 'agent/list-me')
-  assert.ok(added !== undefined, '新工作树的分支应当是 agent/list-me')
-  assert.ok(samePath(added.path, handle.path))
+  expect(added, '新工作树的分支应当是 agent/list-me').toBeDefined()
+  expect(samePath(added?.path ?? '', handle.path)).toBe(true)
   // porcelain 里是 `branch refs/heads/agent/list-me`，解析后不该留着前缀。
-  assert.ok(entries.every((entry) => entry.branch === undefined || !entry.branch.startsWith('refs/heads/')))
-  passed += 1
+  expect(entries.every((entry) => entry.branch === undefined || !entry.branch.startsWith('refs/heads/'))).toBe(true)
 })
 
 test('5. removeWorktree：目录消失、listWorktrees 里也没有（再清一次不报错）', () => {
@@ -158,41 +155,34 @@ test('5. removeWorktree：目录消失、listWorktrees 里也没有（再清一�
 
   removeWorktree({ repo, path: handle.path })
 
-  assert.ok(!existsSync(handle.path), '清理后目录应当消失')
-  assert.ok(!listWorktrees(repo).some((entry) => samePath(entry.path, handle.path)))
+  expect(existsSync(handle.path), '清理后目录应当消失').toBe(false)
+  expect(listWorktrees(repo).some((entry) => samePath(entry.path, handle.path))).toBe(false)
   // 清理按钮被点两下是常事：第二次只当「已经清过」，不该抛。
-  removeWorktree({ repo, path: handle.path })
-  passed += 1
+  expect(() => removeWorktree({ repo, path: handle.path })).not.toThrow()
 })
 
 test('6. slugOf：全中文、带空格、带 /、带 ..、超长都安全', () => {
   // 全中文是本插件最常见的输入：没有音译，只能折成空串后兜底。
-  assert.equal(slugOf('改登录页文案'), 'ticket')
-  assert.equal(slugOf('fix login copy'), 'fix-login-copy')
-  assert.equal(slugOf('a/b/c'), 'a-b-c')
+  expect(slugOf('改登录页文案')).toBe('ticket')
+  expect(slugOf('fix login copy')).toBe('fix-login-copy')
+  expect(slugOf('a/b/c')).toBe('a-b-c')
 
   // `..\..\x`（反斜杠在 Windows 上就是路径分隔符）：绝不能留下上跳或隐藏目录的写法。
   const traversal = slugOf('..\\..\\x')
-  assert.ok(!traversal.startsWith('.'), `不能以点开头：${traversal}`)
-  assert.ok(!traversal.includes('..'), `不能含 ..：${traversal}`)
-  assert.match(traversal, /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  expect(traversal.startsWith('.'), `不能以点开头：${traversal}`).toBe(false)
+  expect(traversal.includes('..'), `不能含 ..：${traversal}`).toBe(false)
+  expect(traversal).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
 
   // 超长：截到 60，且截断后不能留下尾部的 - 或 .（分支名与目录名都不许这么结尾）。
   const long = slugOf('x'.repeat(200))
-  assert.equal(long, 'x'.repeat(60))
-  assert.equal(slugOf(`fix ${'y'.repeat(200)}`).length, 60)
-  assert.ok(!/[-.]$/.test(slugOf(`fix ${'y'.repeat(200)}`)))
+  expect(long).toBe('x'.repeat(60))
+  expect(slugOf(`fix ${'y'.repeat(200)}`).length).toBe(60)
+  expect(/[-.]$/.test(slugOf(`fix ${'y'.repeat(200)}`))).toBe(false)
 
   // 几个边界：只有符号、开头的点、连续的 .. 与 -。
-  assert.equal(slugOf(''), 'ticket')
-  assert.equal(slugOf('...'), 'ticket')
-  assert.equal(slugOf('.hidden'), 'hidden')
-  assert.equal(slugOf('fix..copy'), 'fix.copy')
-  assert.equal(slugOf('--fix--copy--'), 'fix-copy')
-  passed += 1
-})
-
-after(() => {
-  for (const dir of roots) rmSync(dir, { recursive: true, force: true })
-  console.log(`通过 ${passed}`)
+  expect(slugOf('')).toBe('ticket')
+  expect(slugOf('...')).toBe('ticket')
+  expect(slugOf('.hidden')).toBe('hidden')
+  expect(slugOf('fix..copy')).toBe('fix.copy')
+  expect(slugOf('--fix--copy--')).toBe('fix-copy')
 })
