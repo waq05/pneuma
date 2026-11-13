@@ -369,6 +369,10 @@ console.log('1. A 回合跑动中切到 B')
   {
     const rosterDir = join(home, '.dsc', 'team')
     mkdirSync(rosterDir, { recursive: true })
+    // 等过一个文件系统 mtime 窗口再写：名册读缓存按 mtime 判「文件动过没有」，
+    // Windows 的 mtimeMs 精度只有十来毫秒——同一窗口内写，缓存会命中旧名册，
+    // 这条用例就会偶发读不到刚写的僵尸（check-core 里抓到过一次）。
+    await new Promise((resolve) => setTimeout(resolve, 20))
     writeFileSync(
       join(rosterDir, 'roster.json'),
       `${JSON.stringify({
