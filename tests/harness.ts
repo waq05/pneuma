@@ -23,6 +23,7 @@
  * @module dsc/tests/harness
  */
 import { spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Socket } from 'node:net'
@@ -824,6 +825,12 @@ function assertIsolatedHome(): string {
  * vitest 跑完不退出。harness 的目标是「起真内核跑假模型」，工具执行的 OS 隔离不在
  * 这一层验证；需要沙箱行为的用例自己预置 `plugins.json` 覆盖本清单。
  *
+ * 为什么关标题插件：它会在回合之间**多发一次请求**去起标题。假模型按请求序号发剧本，
+ * 这一次会吃掉下一轮剧本——症状是「第一个回合绿、后面回合悄悄不调工具」，而且不像报错，
+ * 像模型自己改了主意。`isTitleRequestByPrompt` 认的是内置提示词，插件换了措辞就漏判，
+ * 所以这里直接停用，比靠提示词识别可靠。要验标题行为就在 `fakeLLM` 里给
+ * `isTitleRequest`，或自己预置清单把它打开。
+ *
  * 只在文件不存在时写：调用方预置的清单优先。
  */
 function prepareIsolatedHome(home: string): void {
@@ -833,10 +840,12 @@ function prepareIsolatedHome(home: string): void {
   if (!existsSync(pluginsFile)) {
     const plugins = {
       version: 1,
-      // memory 走 config.enabled（插件自己的开关）；sandbox 走 disabled（条目树的总开关）。
+      // memory 走 config.enabled（插件自己的开关）；sandbox 与 session-title 走 disabled
+      // （条目树的总开关）。三条理由见上方注释：多一次请求就会吃掉一轮剧本。
       entries: [
         { file: 'memory', config: { enabled: false } },
         { file: 'sandbox', disabled: true },
+        { file: 'session-title', disabled: true },
       ],
     }
     writeFileSync(pluginsFile, `${JSON.stringify(plugins, null, 2)}\n`, 'utf8')
@@ -855,6 +864,53 @@ function prepareIsolatedHome(home: string): void {
  * 最后给 80ms 让会话写流落盘。少了最后这一拍，紧跟其后的 `readSessionJsonl` 会随机
  * 读到缺少最后一条记录的日志——这是最容易被误判成「会话丢消息」的假失败。
  */
+/**
+ * 建一个临时 git 仓库并把进程 cwd 挪进去，返回 `{ dir, restore }`。
+ *
+ * ## 为什么需要它
+ *
+ * 内核的 `turnDiff` 与会话 `meta.cwd` 都取自**进程当前工作目录**，`env-facts` 还直接跑
+ * `git` 读工作区状态。用例若跑在仓库自己的工作区里，就会把**开发机上未提交的改动**当成
+ * 「这一轮改了这些文件」——别人同时在写文件时，实时路径与重放路径对不上，用例红得莫名其妙
+ * （实测：`transcript-metadata` 的 `turnDiff` 里出现了另一个代理刚建的文件）。
+ *
+ * 换到独立仓库之后，工作区只含这条用例自己写的东西，实时与重放才可比。
+ *
+ * ## 用法
+ *
+ * ```ts
+ * const repo = tempRepo()
+ * afterAll(repo.restore)
+ * ```
+ *
+ * `restore` 只 chdir 回去，**不删目录**：失败了要留着看 git 状态。vitest 的 forks 池下
+ * 每个测试文件一个进程，`process.chdir` 不会影响别的文件。
+ */
+export function tempRepo(prefix = 'dsc-repo-'): { dir: string; restore: () => void } {
+  if (typeof prefix !== 'string' || prefix.trim() === '') {
+    throw new TypeError('tempRepo：prefix 必须是非空字符串')
+  }
+  if (prefix.includes('/') || prefix.includes('\\') || prefix.includes('..')) {
+    throw new TypeError('tempRepo：prefix 不能带路径分隔符或 ..（会把仓库建到临时目录外）')
+  }
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const git = (args: string[]): void => {
+    execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  }
+  git(['init', '-q'])
+  // 没有这两个身份，git 在干净机器上会拒绝提交，用例红在建仓库这一步而不是被测逻辑。
+  git(['config', 'user.email', 'dsc-test@example.com'])
+  git(['config', 'user.name', 'dsc-test'])
+  const before = process.cwd()
+  process.chdir(dir)
+  return {
+    dir,
+    restore: () => {
+      process.chdir(before)
+    },
+  }
+}
+
 /**
  * `bootKernel` 之前必须先确认 `lib/` 不比 `src/` 旧。
  *

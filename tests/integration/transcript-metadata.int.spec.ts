@@ -42,12 +42,16 @@ import {
   fakeLLM,
   readSessionJsonl,
   tempHome,
+  tempRepo,
   type BootedKernel,
   type FakeLLM,
 } from '../../tests/harness.js'
 
 /** 临时主目录；必须在任何内核模块被加载之前换好（`DSC_HOME` 是模块级常量）。 */
 const home = tempHome('dsc-transcript-meta-')
+// 仓库工作区：	urnDiff 与 env-facts 读的是进程 cwd 的 git 状态，跑在仓库本体里会把
+// 别人未提交的改动记成「这一轮改了这些」，实时与重放对不上。
+const repo = tempRepo('dsc-transcript-meta-repo-')
 
 /** 内核里本文件用到的服务面：只声明用到的成员。 */
 interface Services {
@@ -163,6 +167,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  repo.restore()
   await kernel?.dispose()
   await llm?.close()
   home.restore()
