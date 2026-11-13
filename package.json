@@ -26,7 +26,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-runtime-package.mjs && node scripts/build-packages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit",
+    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit && tsc -p ui-shell/tsconfig.spec.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "build:ui": "pnpm -C ui-shell build",
     "check:ui": "node scripts/check-ui.mjs",
@@ -78,6 +78,7 @@
     "papaparse": "^5.7.0",
     "pdfjs-dist": "^6.3.289",
     "qrcode": "^1.5.4",
+    "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
     "shiki": "^4.5.0",

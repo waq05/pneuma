@@ -17,9 +17,10 @@
     "src/**/*.spec.ts",
     "src/**/*.int.spec.ts",
     "src/**/*.e2e.ts",
-    "src/packages/*/ui/**/*.spec.ts",
-    "src/packages/*/ui/**/*.spec.tsx",
     "tests/**/*.ts"
   ],
-  "exclude": ["node_modules", "lib"]
+  // `tests/setup/dom.ts` 给 jsdom 打桩，必然用 DOM API，归 ui-shell/tsconfig.spec.json 查。
+  // 界面半整片（`src/packages/*/ui/**`）同理：它们要 `.tsx`、DOM 库与 `@dsc/*` 的解析条件，
+  // 而 `src/**/*.spec.ts` 这条 include 会把它们一并收进来，必须在这里排掉。
+  "exclude": ["node_modules", "lib", "tests/setup/dom.ts", "src/packages/*/ui/**"]
 }

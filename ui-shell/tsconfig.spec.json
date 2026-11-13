@@ -1,0 +1,29 @@
+{
+  // 界面半测试单独一份 tsc 配置。
+  //
+  // 为什么不塞进根 `tsconfig.spec.json`：那份是 node 环境的（`lib` 只有 ES2023、没有 DOM，
+  // `module` 是 NodeNext，paths 只有 `@pneuma/*`）。界面半的 spec 一 import `@dsc/ui`，
+  // 解析链就走进 `.tsx`、`document`、JSON 字典，在那份配置下必然报三类错：
+  // `Cannot find module '@dsc/ui'`、JSON 缺 `with { type: 'json' }`、`document` 不存在。
+  //
+  // 反过来把 DOM 库加进根配置更糟：内核那侧跑在 node 环境，配上 DOM 库等于允许它们在测试里
+  // 写 `document`，写了在真跑时就是 `undefined`——类型检查反而给出假绿。
+  //
+  // 所以这里直接继承 `ui-shell/tsconfig.json`：它已经有 DOM 库、bundler 解析、全套 `@dsc/*`
+  // paths、`resolveJsonModule`，正是界面半代码的编译条件。
+  "extends": "./tsconfig.json",
+  "include": [
+    "../src/packages/*/ui/**/*.spec.ts",
+    "../src/packages/*/ui/**/*.spec.tsx",
+    // 环境声明也必须带上：`ui-primitives/ui/vite-env.d.ts` 里 `declare module '*?url'`
+    // 是 `pdf-view.tsx` 那类 Vite 专有导入能过类型检查的唯一依据。父配置靠 include
+    // `../src/packages/*/ui` 整片收进来，这份只收 spec，漏了它就报 TS2307。
+    "../src/packages/*/ui/**/*.d.ts",
+    // 这个 setup 文件给 jsdom 打桩（`matchMedia` 之类），必然写 DOM API，
+    // 归这份配置查；根配置的 exclude 里排掉了它。
+    "../tests/setup/dom.ts"
+  ],
+  // 必须重写：父配置把界面半的 spec 排除在外（那边是「界面壳自己的 typecheck 不跑测试」），
+  // 不覆盖的话 include 白写。
+  "exclude": ["node_modules", "../node_modules"]
+}
