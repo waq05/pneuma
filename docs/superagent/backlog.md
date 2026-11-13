@@ -31,8 +31,8 @@
 | 当前怎么样 | 没有主会话。P0 用同步规则（`adapters/assessor.ts`），P2 用一次性问答（`adapters/assessor-model.ts`） |
 | 补的话动哪 | 需要一个新的「常驻会话」概念，DSC 目前没有；或把卡片做成界面上的「待确认」条目，人点一下调 `superagentPublish` |
 | 验收 | 一条 `inferred` 强度的候选，能在界面上看到卡片、点确认后建成工单 |
-| 状态 | 未补 |
-| 值得补吗 | **按需**。P0/P1 的明确请求不需要它；只有「推断出来的活要不要接」需要人来拍板时才值得 |
+| 状态 | **不做（架构不兼容）**，理由见下 |
+| 值得补吗 | **不建议**。上游的主会话是「常驻编排会话」，DSC 没有这个概念；做等价物只有两条路，都错位：<br>① 借用用户会话——每来一条候选就往用户正在聊的会话里插一张卡片，还要注册 `orchestrator_eval*` 三个全局工具，所有会话都能看到；<br>② 新建隐藏会话——要一个常驻模型会话加工具可见性隔离，等于新造一套架构，不是移植。<br>当前「同步规则 + 可选一次性问答」已经覆盖了 P0 的明确请求与 P2 的推断判定；缺的只是「人在卡片上点确认」这一步，那一步可以等界面有「待确认」列表时用 `superagentPublish` 补，不必先造主会话。 |
 
 ### G2 持久化 effect 队列
 
@@ -155,8 +155,19 @@
 | 缺的后果 | 机器人被拉进新群不响应；消息延迟最多一个轮询周期 |
 | 补的话动哪 | 要么保留 `lark-cli` 的长连接能力（上游用 `lark-cli` 的事件订阅），要么加一个「群清单同步」 |
 | 验收 | 新建一个群、把机器人拉进去、@ 一次，能建出工单 |
-| 状态 | 未补 |
+| 状态 | **已补（补收侧）**：`+chat-list` 每轮刷新群清单，开机后新出现的群并进补收；实时消息本来就走长连接（`event consume im.message.receive_v1`）。**发现不是瓶颈**——真正卡住「@ 一次建不出工单」的是 S6 |
 | 值得补吗 | **按需**。取决于 `lark-cli` 是否支持长连接 |
+
+### S6 飞书来源没进准入表（已修，发现的真 bug）
+
+| 项 | 内容 |
+| --- | --- |
+| 症状 | 飞书消息收得到、工单一张也建不出来，宿主日志里只有 `not_a_member` |
+| 根因 | `defaultSettings` 只登记了 `manual` 与 `github` 两个来源的 `policy.sources`，飞书从未登记；`superagentScope` 也没有飞书分支，落到 `manualScope` 后判 `source_not_connected`。核心准入闸只认 `policy.sources[source].allowed` 里的精确 id，没有通配 |
+| 修法 | 按 GitHub 同构补一条链路：`adapters/settings.ts` 加 `FEISHU_SOURCE` / `FeishuAccount` / `normalizeFeishuAccount`；`adapters/scope.ts` 加飞书分支；`index.ts` 加设置项 `feishuAllowed`（逗号分隔 `open_id`）并传进 `defaultSettings` / `superagentScope` |
+| 验收 | 填一个 `ou_` 开头的 open_id，飞书里 @ 机器人一次，建出工单 |
+| 状态 | **已修（待真账号验收）** |
+| 值得补吗 | 这不是「补」，是修 bug：修之前飞书来源整个不可用 |
 
 ### S4 `lark-cli` 的打包
 
@@ -190,7 +201,7 @@
 | 原因 | 只有 `plugins` 一页有特判（`ui-sessions/ui/ui.tsx:211-214`） |
 | 补的话动哪 | `ui-superagent/index.ts` 的 `apply` 里补一条「停用即 `setShellPage(null)`」 |
 | 验收 | 停在 Super Agent 页、在插件中心停用它，主区回到会话页 |
-| 状态 | 未补 |
+| 状态 | **已补**：改成通用判据——`ui-sessions` 对**任意**整页判断「启动图里还有没有人报名」，停用即复位（原来只给 `plugins` 写了特判） |
 | 值得补吗 | **建议补**。一条清理就够，属于「停用后不留副作用」的承诺 |
 
 ### U2 详情页转录自动刷新
@@ -221,7 +232,7 @@
 | 当前怎么样 | 只有工单页三组 + 侧栏徽标数字 |
 | 补的话动哪 | `ui-superagent/ui/` 加一页；数据从 `surfaces.superagent.counts` 与 `recent` 取 |
 | 验收 | 打开能看到「需要你 2 / 进行中 1 / 已完成 5」与最近 5 条动态 |
-| 状态 | 未补 |
+| 状态 | **已补**：四页签（概览 / 发布 / 工单 / 设置），概览页是三格计数 + 最近动态 + 零工单空态。上游的四段只搬了两段：待办清单与工单页重复，问题清单 / 24h 流量 / 执行器负载在快照面没有对应字段 |
 | 值得补吗 | **按需**。工单页已经能看出这三组，概览是锦上添花 |
 
 ### U5 来源页（GitHub / 飞书的连接状态与游标）
@@ -256,7 +267,7 @@
 | 当前怎么样 | 只有设置页的几个字段，没有引导；用户不知道「repoPath 是必填、不填发不了单」 |
 | 补的话动哪 | 设置页加一段「第一次使用」引导，或 `apply` 时检测到 `repoPath` 为空就提示一次 |
 | 验收 | 全新装好、打开 Super Agent 页，能看到「先填仓库路径」的可点引导 |
-| 状态 | 未补 |
+| 状态 | **已补（待统一验证）**：快照面在 `ready: true` 但 `repoPath` 为空时返回 `problem.code = 'repo_missing'`，界面在页签下方画一条黄底警告，不挡页面 |
 | 值得补吗 | **建议补**。现在第一次用的人一定会卡在「发布后没反应」 |
 
 ### O2 机器校验（`deployment.ts` 的等价物）
@@ -267,7 +278,7 @@
 | 当前怎么样 | 缺依赖只在日志里说一句；`lark-cli` 缺了不报错 |
 | 补的话动哪 | 体检项里加一项「依赖」：`git --version`、`lark-cli --version` 各跑一次 |
 | 验收 | 体检页能看到「git 2.55 ✓ / lark-cli 未安装 ✗」 |
-| 状态 | 未补 |
+| 状态 | **已补（待统一验证）**：新增体检项 `superagent/dependencies`，git 与 lark-cli 各跑一次 `--version`，缺失记 `warn` 不阻塞启动 |
 | 值得补吗 | **按需**。体检项已经有 orchestrator 与飞书两项，加依赖项成本低 |
 
 ### O3 构建与测试门禁
@@ -277,8 +288,8 @@
 | 现状 | 包内有 19 个 `tests/*.test.mjs`（`scripts/package-tests.mjs` 自动跑）+ 界面 2 个；`pnpm run build` / `check:plugin` 覆盖 |
 | 缺什么 | 没有 Super Agent 专属的「全链路」门禁脚本（真模型、真 worktree 那种，现在只有 `scripts/_sa-resume-e2e.mjs`，下划线前缀不进测试电池） |
 | 补的话动哪 | 把 `_sa-resume-e2e.mjs` 改造成可入电池的探针，或新增一条「发单 → 改文件 → 提交」的假模型用例 |
-| 验收 | `node scripts/package-tests.mjs` 里出现 superagent 全链路用例且 exit 0 |
-| 状态 | 未补 |
+| 验收 | `node scripts/check-core.mjs superagent-e2e-test.mjs` exit 0 |
+| 状态 | **已补（待统一构建验证）**：`scripts/superagent-e2e-test.mjs`，假模型端点 + 真宿主 / 真工具 / 真 worktree / 真 git，24 条断言。落 `check-core`（文件名以 `-test.mjs` 结尾即自动发现），**不是** `package-tests`——那闸只扫包内 `tests/`，把起宿主的用例塞进去会破坏分工 |
 | 值得补吗 | **建议补**。现在「发一单真的改出东西」只有人工跑过，没有自动化回归 |
 
 ### O4 崩溃恢复的边角：出站消息那一批
