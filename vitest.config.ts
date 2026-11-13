@@ -90,6 +90,10 @@ export default defineConfig({
           // src 与 tests 两处都要排——tests/ 下的 harness 集成用例同样以 `.spec.ts` 结尾。
           exclude: [
             'src/packages/*/ui/**',
+            // tui 的组件在 src/packages/tui/app/**，由 tui project 单独收（node + 假终端），
+            // 这里不排就会双跑：测试文件**会被两个 project 各跑一遍，多花时间还让人以为
+            // 用例数对不上。
+            'src/packages/tui/**',
             'src/**/*.int.spec.ts',
             'tests/**/*.int.spec.ts',
             '**/node_modules/**',
