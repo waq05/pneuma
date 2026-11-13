@@ -514,13 +514,16 @@ for (const id of ids) {
       if (bullets.length === 0) docFail('README.md 的「Known Limitations」一节没有一条顶格「- 」条目')
     }
   }
-  // 包级测试的发现规则与 scripts/package-tests.mjs 一致：tests/ 下至少一个
-  // *.test.mjs。只有目录没有文件等于没测——那种"看起来有测试"的包最难发现。
+  // 包级测试的发现规则：tests/ 下至少一个 *.spec.ts（旧名 *.test.mjs 也认，便于过渡期
+  // 分批迁移时两边并存）。只有目录没有文件等于没测——那种"看起来有测试"的包最难发现。
+  //
+  // 2026-11-13 之前这里只认 *.test.mjs，那批测试由 scripts/package-tests.mjs 逐个 spawn；
+  // 迁到 Vitest 之后它们改叫 *.spec.ts、由 pnpm test 统一跑，这条规则跟着改。
   const testsDir = join(dir, 'tests')
   const testFiles = existsSync(testsDir)
-    ? readdirSync(testsDir).filter((name) => name.endsWith('.test.mjs'))
+    ? readdirSync(testsDir).filter((name) => name.endsWith('.spec.ts') || name.endsWith('.test.mjs'))
     : []
-  if (testFiles.length === 0) docFail('tests/ 下没有 *.test.mjs（只有目录不算）')
+  if (testFiles.length === 0) docFail('tests/ 下没有 *.spec.ts（只有目录不算）')
   if (docOk) hard.get(8).passed += 1
 
   // 库包的待办只保留 README 与 tests：模块级可变状态是功能包的装配隐患，
