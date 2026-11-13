@@ -670,6 +670,8 @@ export function apply(ctx: Context, passed?: unknown): void {
             },
             now: () => new Date().toISOString(),
             log: (line) => { console.warn(line) },
+            // 话题轮询的三个动作（活在哪些话题、话题上最新那条消息、话题属性）：都只有运行期知道。
+            threads: target.feishuThreads(),
             // 适配器内部那条循环压到一天，`tick` 的节奏只留泵一处；理由见常量注释。
             backfillEveryMs: FEISHU_INTERNAL_BACKFILL_MS,
           })

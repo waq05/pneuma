@@ -127,6 +127,23 @@ export class StoreRepositories implements Repositories {
         .prepare('INSERT INTO disposition (id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value')
         .run(id, JSON.stringify(value))
     },
+    /**
+     * 一个话题上最新的那条 Trigger。
+     *
+     * 为什么按 `at` 排而不是按写入顺序：`at` 是来源声明的发生时刻，补收读进来的历史消息带着
+     * 过去的时间，写入顺序与发生顺序并不一致。`at` 相同时退回 `rowid`，让同一个话题每次算出的
+     * 结果都一样（否则「最新那条」会在两条之间摇摆，补收的锚跟着抖）。
+     *
+     * 走 `trigger_thread(thread, at)` 这个索引：它是 `save` 顺手维护的那张表
+     * （`store.ts:62`），读一条不必把整张 `trigger` 表 parse 一遍。
+     */
+    latestOn: (thread: string): Trigger | undefined => {
+      const row = this.db
+        .prepare('SELECT id FROM trigger_thread WHERE thread = ? ORDER BY at DESC, rowid DESC LIMIT 1')
+        .get(thread)
+      if (row === undefined) return undefined
+      return this.triggers.get(String(row.id))
+    },
   }
 
   readonly threads = {

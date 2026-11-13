@@ -15,11 +15,13 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Engine, latestAssignment, latestReport, ticketStage, type ChannelRef, type DomainEvent, type Executor,
-  type OutboundMessage, type SourceScope, type ThreadRef, type Ticket, type TicketStage, type Trigger } from './core/index.js'
+  type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage, type Trigger } from './core/index.js'
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
+import type { FeishuThreads } from './adapters/feishu/loops.js'
+import { POLL_HORIZON_MS } from './adapters/feishu/loops.js'
 import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
 import { manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
 import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
@@ -340,6 +342,54 @@ export class SuperagentRuntime {
       bindThread: (ticketId, thread, own) => this.engine.bindThread(ticketId, thread, own),
       threadClosed: (thread, outcome, at) => this.engine.threadClosed(thread, outcome ?? 'closed', at ?? this.clock()),
     }
+  }
+
+  /**
+   * 飞书话题轮询要的三个动作（`FeishuThreads`，见 `adapters/feishu/loops.ts:141`）。
+   *
+   * 三件都只有运行期知道：
+   * - **哪些话题还值得轮询**：要有活工单订阅着，或者最近 14 天内有过消息。端口契约要求
+   *   接线层先筛（`loops.ts:138-139`），因为「哪张工单还活着」不在来源手里。
+   * - **话题上最新的那条 Trigger**：补收的锚。飞书来源拿它的 `meta` 里的 chatId / messageId
+   *   去读话题消息（`loops.ts:348-355`），没有锚就补不了。
+   * - **写话题属性**：落在 `Thread.meta`——模型里就是给来源放原生属性的那一格
+   *   （`core/model.ts:177-181`），话题 id 与最近一次读失败记在那儿。
+   *
+   * 为什么 `patch` 要整行回写：`threads.save` 只认整条话题（`repositories.ts:134`）。读与写之间
+   * 没有 `await`，同一个 tick 里不会被别的写入插进来。
+   */
+  feishuThreads(): FeishuThreads {
+    return {
+      subscribed: (source) => this.repos.threads.list()
+        .filter((thread) => thread.ref.source === source && this.worthPolling(thread)),
+      latest: (key) => this.repos.triggers.latestOn(key),
+      patch: (key, meta) => { this.patchThread(key, meta) },
+    }
+  }
+
+  /**
+   * 一个话题还值不值得轮询（`loops.ts:138-139` 的契约）：有活工单订阅着，或者最近 14 天里有消息。
+   *
+   * 「活工单」按 `ended` 判：结束的工单还会留在 `subscriptions` 里（历史），拿它当活就会让
+   * 一批早该停的话题永远被轮询。
+   */
+  private worthPolling(thread: Thread): boolean {
+    if (thread.subscriptions.some((id) => this.repos.tickets.get(id)?.ended === undefined)) return true
+    const at = Date.parse(thread.lastAt ?? thread.createdAt)
+    const now = Date.parse(this.clock())
+    return Number.isFinite(at) && Number.isFinite(now) && now - at < POLL_HORIZON_MS
+  }
+
+  /** 把来源属性写回话题；`undefined` 表示删掉那个键（`pollError: undefined` 就是「这轮没出错」）。 */
+  private patchThread(key: string, meta: Record<string, unknown>): void {
+    const thread = this.repos.threads.get(key)
+    if (thread === undefined) return
+    const next = { ...thread.meta }
+    for (const [name, value] of Object.entries(meta)) {
+      if (value === undefined) delete next[name]
+      else next[name] = value
+    }
+    this.repos.threads.save({ ...thread, meta: next })
   }
 
   /**
