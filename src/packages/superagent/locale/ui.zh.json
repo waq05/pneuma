@@ -7,6 +7,11 @@
   "field.prepareCommand.help": "建好工作树之后、worker 开跑之前执行的一条命令，比如 pnpm install。留空表示不跑。命令失败这张工单直接判失败，不会自动重试；最多跑 10 分钟。",
   "field.confirmInferred.label": "推断候选先等我确认",
   "field.confirmInferred.help": "打开后，智能体从群里或 PR 里推断出来的候选不会直接开工：先列在「待确认」里，你点「接单」才建工单。明确请求不受影响。只在判定模式是「自动接单」时看得出区别。",
+  "field.evalMode.label": "判定模式",
+  "field.evalMode.help": "推断候选（群里没 @ 机器人、PR 里机器人被点名之类）怎么处理：观察 = 只记不做；自动 = 判定通过的按上面「先等我确认」的开关决定进收件箱还是直接开工。明确请求不受这个设置影响，一直直接开工。",
+  "field.evalMode.option.observe": "观察（只记不做）",
+  "field.evalMode.option.auto": "自动（判定通过的进收件箱或开工）",
+  "field.evalMode.option.off": "关闭（推断候选一律不收）",
   "field.maxWorkers.label": "同时最多几个工单在跑",
   "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
   "field.ticketTimeoutSeconds.label": "单工单超时（秒）",
@@ -39,5 +44,6 @@
   "save.timeoutBad": "超时秒数要填数字（0 表示不限）",
   "save.prepareCommandTooLong": "准备命令太长了（最多 4000 字）",
   "save.githubRepositoryBad": "仓库要写成 owner/name 的样子",
+  "save.evalModeBad": "判定模式只认：观察、自动、关闭三档",
   "save.unknownKey": "未知设置项「{key}」"
 }

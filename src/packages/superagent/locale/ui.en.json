@@ -7,6 +7,11 @@
   "field.prepareCommand.help": "A command run in the worktree after it is created and before the worker starts, such as pnpm install. Leave it empty to skip. A failure fails the ticket at once with no automatic retry; it runs for at most 10 minutes.",
   "field.confirmInferred.label": "Wait for my confirmation on inferred candidates",
   "field.confirmInferred.help": "When on, a candidate the agent inferred from a chat or a pull request does not start work: it is listed under Pending until you accept it. Explicit requests are unaffected. It only makes a difference in the automatic accept mode.",
+  "field.evalMode.label": "Assessment mode",
+  "field.evalMode.help": "How inferred candidates (messages in a chat without @-mentioning the agent, and similar) are handled: observe records them only; automatic sends accepted ones to the pending list above or starts work directly, depending on the confirmation switch. Explicit requests bypass this setting and always start work.",
+  "field.evalMode.option.observe": "Observe (record only)",
+  "field.evalMode.option.auto": "Automatic (accepted candidates go to the pending list or start work)",
+  "field.evalMode.option.off": "Off (inferred candidates are dropped)",
   "field.maxWorkers.label": "Maximum tickets running at once",
   "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
   "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",
@@ -39,5 +44,6 @@
   "save.timeoutBad": "The timeout must be a number of seconds (0 means no limit)",
   "save.prepareCommandTooLong": "The prepare command is too long (4000 characters at most)",
   "save.githubRepositoryBad": "The repository must look like owner/name",
+  "save.evalModeBad": "The assessment mode must be one of: observe, automatic, off",
   "save.unknownKey": "Unknown setting \"{key}\""
 }

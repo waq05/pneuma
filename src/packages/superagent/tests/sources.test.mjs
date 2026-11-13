@@ -198,3 +198,25 @@ test('worker 模型设置面：存进去、读回来是同一个值', () => {
   section.save('workerModel', '')
   assert.equal(readSuperagentConfig().workerModel, '')
 })
+
+// ── 7. 接单模式：候选收件箱的开关（backlog G1）────────────────────────────────
+
+test('接单模式：缺省 observe，存 auto 读回 auto，非法值被 save 拒掉', () => {
+  const section = createSettingsSection()
+  // 不配 = observe：行为与收件箱做出之前一致。
+  assert.equal(readSuperagentConfig().evalMode, 'observe')
+  section.save('evalMode', 'auto')
+  assert.equal(readSuperagentConfig().evalMode, 'auto')
+  section.save('evalMode', 'off')
+  assert.equal(readSuperagentConfig().evalMode, 'off')
+  // 下拉只发三值，但 save 的枚举校验要真拦：给一句提示、不落盘。
+  assert.match(String(section.save('evalMode', 'yolo')), /判定模式/)
+  assert.equal(readSuperagentConfig().evalMode, 'off', '非法值不该覆盖已有的好值')
+})
+
+test('接单模式：defaultSettings 第三参把模式传进 eval 块', async () => {
+  const { defaultSettings } = await import('../../../../lib/packages/superagent/adapters/settings.js')
+  assert.equal(defaultSettings().eval.mode, 'observe', '不传 = observe（与 P0 一致）')
+  assert.equal(defaultSettings(undefined, undefined, 'auto').eval.mode, 'auto')
+  assert.equal(defaultSettings(undefined, undefined, 'off').eval.mode, 'off')
+})

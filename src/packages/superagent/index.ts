@@ -54,6 +54,7 @@ import { SOURCE as FEISHU_SOURCE } from './adapters/feishu/trigger.js'
 import type { AssessorComplete } from './adapters/assessor-model.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, GITHUB_SOURCE, normalizeFeishuAccount, normalizeGithubAccount, type FeishuAccount, type GithubAccount } from './adapters/settings.js'
+import type { Settings } from './core/policy.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
 import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth } from './health.js'
@@ -105,6 +106,15 @@ const PREPARE_COMMAND_KEY = 'prepareCommand'
  * 手改配置文件时写错类型不该悄悄打开一个会让人等确认的开关。
  */
 const CONFIRM_INFERRED_KEY = 'confirmInferred'
+
+/**
+ * 接单模式（`off` / `observe` / `auto`），对应上游 `settings/eval` 块的 `mode`。
+ *
+ * 为什么必须有这个字段：候选收件箱（backlog G1）只在 `auto` 下有内容——推断强度的 accept
+ * 在其它模式会被判成 `would_accept` 记录了事（`core/policy.ts:67`），`confirmInferred` 开了
+ * 也等不到候选。缺省 `observe`（与上游同一条默认）：不显式打开，行为与收件箱做出之前一致。
+ */
+const EVAL_MODE_KEY = 'evalMode'
 /** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
 const GITHUB_REPOSITORY_KEY = 'githubRepository'
 const GITHUB_LOGIN_KEY = 'githubLogin'
@@ -288,6 +298,8 @@ export interface SuperagentConfig {
   feishuDirect: boolean
   /** 判定用模型（`provider/model`）；空 = 不调模型。 */
   assessorModel: string
+  /** 接单模式；候选收件箱只在 `auto` 下有内容。 */
+  evalMode: Settings['eval']['mode']
   /** worker 用模型（`provider/model`）；空 = 跟随宿主当前选路。 */
   workerModel: string
   /** worker 额外禁用的命令名单（已按逗号拆开、去空、去重）；空 = 只有内置限制。 */
@@ -347,6 +359,9 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     )],
     feishuDirect: raw[FEISHU_DIRECT_KEY] === true,
     assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
+    // 枚举只认三值：手改 JSON 写成别的字符串不算——设置面下拉给什么这里就收什么，
+    // 但库文件用户能手改，读路径不能信它的形状（与本函数其它的「类型不对用缺省」同一条）。
+    evalMode: raw[EVAL_MODE_KEY] === 'off' || raw[EVAL_MODE_KEY] === 'auto' ? raw[EVAL_MODE_KEY] : 'observe',
     workerModel: textOf(raw[WORKER_MODEL_KEY]),
     // 名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。
     workerBlockedCommands: [...new Set(
@@ -436,6 +451,17 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           key: CONFIRM_INFERRED_KEY,
           label: t('field.confirmInferred.label'),
           help: t('field.confirmInferred.help'),
+        },
+        {
+          type: 'select',
+          key: EVAL_MODE_KEY,
+          label: t('field.evalMode.label'),
+          help: t('field.evalMode.help'),
+          options: [
+            { value: 'observe', label: t('field.evalMode.option.observe') },
+            { value: 'auto', label: t('field.evalMode.option.auto') },
+            { value: 'off', label: t('field.evalMode.option.off') },
+          ],
         },
         {
           type: 'text',
@@ -540,6 +566,7 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [TIMEOUT_KEY]: config.ticketTimeoutSeconds,
         [PREPARE_COMMAND_KEY]: config.prepareCommand,
         [CONFIRM_INFERRED_KEY]: config.confirmInferred,
+        [EVAL_MODE_KEY]: config.evalMode,
         [GITHUB_REPOSITORY_KEY]: config.githubRepository,
         [GITHUB_LOGIN_KEY]: config.githubLogin,
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
@@ -596,6 +623,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         case CONFIRM_INFERRED_KEY: {
           // 与飞书那两个开关同一种写法：写 `false` 而不是删键，磁盘上分得清「关过」与「没配过」。
           writePluginConfig(CONFIG_KEY, { [CONFIRM_INFERRED_KEY]: value === true })
+          return
+        }
+        case EVAL_MODE_KEY: {
+          // 下拉只发三值，但 save 也能被别的调用方喂脏值：枚举校验在这里再收一次，
+          // 非法值给一句可读的提示，不静默落盘（读路径还会兜一层，两层各管各的边界）。
+          const mode = String(value)
+          if (mode !== 'off' && mode !== 'observe' && mode !== 'auto') return t('save.evalModeBad')
+          writePluginConfig(CONFIG_KEY, { [EVAL_MODE_KEY]: mode })
           return
         }
         case GITHUB_REPOSITORY_KEY: {
@@ -1059,7 +1094,8 @@ export function apply(ctx: Context, passed?: unknown): void {
         },
         timeoutSeconds: () => config().ticketTimeoutSeconds,
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
-        settings: () => defaultSettings(githubAccount(), feishuAccount()),
+        // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
+        settings: () => defaultSettings(githubAccount(), feishuAccount(), config().evalMode),
         scope: superagentScope(githubAccount, feishuAccount),
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),

@@ -84,8 +84,12 @@ export interface FeishuAccount {
  *   记成「开着」，设置页会显示一个永远不工作的来源，准入闸也会多出一条空名单。
  * @param feishu - 配了就把飞书来源登记进来。判据是「名单里至少一个人」：空名单等于
  *   「谁也不许派活」，登记它只会让准入闸对每条消息都回 `not_a_member`，不如不登记。
+ * @param evalMode - 接单模式（`off` / `observe` / `auto`）。缺省 `observe`：推断候选只记不做，
+ *   与 P0 一样保守。**候选收件箱（backlog G1）要有内容必须 `auto`**——推断强度的 accept
+ *   只在 auto 下才会落进收件箱等人点头（`core/policy.ts:67`），observe 下降级成
+ *   `would_accept` 记录了事。
  */
-export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount): Settings {
+export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount, evalMode?: Settings['eval']['mode']): Settings {
   const account = normalizeGithubAccount(github)
   const chat = normalizeFeishuAccount(feishu)
   return SettingsSchema.parse({
@@ -108,7 +112,7 @@ export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount):
         ...(chat === undefined ? {} : { [FEISHU_SOURCE]: { allowed: chat.allowed.map((id) => ({ id })) } }),
       },
     },
-    eval: { mode: 'observe' },
+    eval: { mode: evalMode ?? 'observe' },
   })
 }
 
