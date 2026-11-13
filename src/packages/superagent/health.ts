@@ -10,8 +10,8 @@
  *     而面板上只会看到「派工失败」，看不到根因；
  *   - **锁被占**：另一个 Pneuma 正握着编排库（设计文档 §5.4）。本进程这次能打开库
  *     不代表两边同时写是安全的，早点说出来比等数据打架好；
- *   - **卡在 running**：分配说在跑、进程里却没有 worker。正常路径上 `recover()` 会把
- *     这种单标成 failed；还留着 running 的，说明恢复没跑到（或恢复之后又丢了 worker）。
+ *   - **卡在 running**：分配说在跑、进程里却没有 worker。正常路径上 `recover()` 会
+ *     给它起一份新分配接着干；还留在 running 的，说明恢复没跑到（或恢复之后又丢了 worker）。
  *
  * 探测本身只读：写探测是一次 `BEGIN IMMEDIATE` 后立刻提交的空事务，锁探测是拿一次
  * 再立刻放掉——不写任何业务数据，也不留锁。
@@ -145,7 +145,7 @@ export function createSuperagentHealth(probe: SuperagentHealthProbe): HealthChec
           ...base,
           status: 'warn',
           summary: `${String(running.orphaned)} 张工单卡在 running，进程里没有 worker`,
-          fix: '重启宿主会触发恢复：这些工单会被标成 failed 并通知；也可以对单张用 /sa retry 重派',
+          fix: '重启宿主会触发恢复：这些工单会被自动接续（起新分配、复用工作树）；也可以对单张用 /sa retry 重派',
         }
       }
       return { ...base, status: 'ok', summary: '正常（库可写、锁空着、没有卡住的工单）' }

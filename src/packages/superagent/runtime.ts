@@ -54,8 +54,8 @@ export type RuntimeLog = (line: string) => void
  * 把整张工单摊出去只会让人以为恢复还负责别的。
  */
 export interface RecoveryReport {
-  /** 上次崩在 `running`、进程里又没有 worker，本次标成 `failed` 的工单。 */
-  failed: string[]
+  /** 上次崩在 `running`、进程里又没有 worker，本次起新分配接续的工单。 */
+  resumed: string[]
   /** 上次停在 `pending`、本次重新入队派工的工单。 */
   requeued: string[]
 }
@@ -134,17 +134,6 @@ export interface RuntimeOptions {
 /** 把未知异常压成一行可读文本，日志用。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-/**
- * 崩溃恢复写进工单的那句原因。
- *
- * 必须把「发生了什么」（宿主重启，worker 丢了）与「下一步」（`/sa retry`）都写出来：
- * 这张工单会停在「等人」那一档，人看到的就这一句话。
- */
-function recoverySummary(ticket: Ticket): string {
-  return `宿主重启，worker 丢了：这张工单上次的运行被中断，工作树还留着；` +
-    `确认后可以用 /sa retry ${ticket.id.slice(0, 8)} 重派`
 }
 
 /**
@@ -303,22 +292,29 @@ export class SuperagentRuntime {
    *
    * 判据只有一条：**库里说最新分配还在跑，进程里却没有对应 worker**。
    *   - `pending`：还没派出去就崩了 → 重新入队（`executor.start`，它会按「工单 + 分配」去重）；
-   *   - `running` 且没有 worker：上次真的跑过 → 标 `failed`，写清「宿主重启，worker 丢了」，
-   *     并发一条通知；已经报过 `failed` 的不再改判（重启两次不会刷两条同样的通知）；
+   *   - `running` 且没有 worker：上次真的跑过 → 交给领域的 `assignmentInterrupted`，
+   *     由它结束旧分配、起一份新分配，并把「上次中断了，先看工作树和 git 状态」的提示词
+   *     作为第一条输入投给新 worker（`core/assignments.ts:83-92`）；
    *   - `ended`：领域已经收尾，一律不碰。
    *
-   * **不在这里建工作树**：重派走的是执行器自己的 `start → launch → ensureWorktree`，
+   * **不判失败**：DSC 的 worker 是进程内的 MiniAgent，宿主一死会话就没了，重开一份新分配
+   * 是唯一能继续的路；判失败只会把一张还能干的单推给人。报过 `failed` / `blocked` 的单除外
+   * ——那是 worker 明确交给人的结论（失败原因、要人拍板的问题），重跑会把结论盖掉，交给人
+   * 用 `/sa retry` 决定。
+   *
+   * **不在这里建工作树**：新分配的派工走执行器自己的 `start → launch → ensureWorktree`，
    * 与正常派工同一条路；`ensureWorktree` 本身幂等（同名树在就复用，`adapters/worktree.ts:192`），
-   * 所以恢复既不会丢上一轮的改动，也不会建出第二棵树。
+   * 分支名由工单 id 与标题算出来（`worktreeNameOf`），所以恢复既不丢上一轮的改动，
+   * 也不建第二棵树、更不换分支。
    *
    * 幂等：`pending` 第二次调用时执行器队列里已有同一对（工单 + 分配），`start` 直接返回；
-   * `running` 第二次调用时报告已是 `failed`，这里跳过。可以安全地重复调用。
+   * 接续过的单第二次进来时最新分配已是新那份 `pending`，走上面那一条。可以安全地重复调用。
    *
-   * @returns 本次标失败的与重新入队的工单 id
+   * @returns 本次接续的与重新入队的工单 id
    */
   recover(): RecoveryReport {
     this.assertOpen()
-    const failed: string[] = []
+    const resumed: string[] = []
     const requeued: string[] = []
     const live = this.workerTicketIds()
     for (const ticket of this.repos.tickets.open()) {
@@ -336,23 +332,26 @@ export class SuperagentRuntime {
       }
       // 下面是 running：进程里还有 worker 的说明这次不是崩溃残留（例如刚恢复完又重进这里）。
       if (live.has(ticket.id)) continue
-      // 已经报过 failed 的不再改判：上一次恢复（或 worker 自己）已经把它标成失败了。
-      if (assignment.report?.state === 'failed') continue
+      // 报过 failed / blocked 的不接续：那份结论是 worker 交给人的，重跑会把它盖掉。
+      const reported = assignment.report?.state
+      if (reported === 'failed' || reported === 'blocked') continue
       try {
-        this.engine.report(ticket.id, { state: 'failed', summary: recoverySummary(ticket) })
-        failed.push(ticket.id)
+        this.engine.assignmentInterrupted(ticket.id, assignment.id)
+        // 领域也可能判定「这一单本来就在等人」而不换分配；只把真换了分配的算作接续。
+        if (latestAssignment(this.repos.tickets.get(ticket.id) ?? ticket)?.id === assignment.id) continue
+        resumed.push(ticket.id)
         this.notifyRecovered(ticket, assignment.id)
       } catch (error) {
         this.log(`[superagent] 工单 ${ticket.id} 的崩溃恢复未记入：${describe(error)}`)
       }
     }
-    if (failed.length > 0 || requeued.length > 0) {
+    if (resumed.length > 0 || requeued.length > 0) {
       this.log(
-        `[superagent] 启动恢复：${String(failed.length)} 张标为失败（宿主重启，worker 丢了）、` +
+        `[superagent] 启动恢复：${String(resumed.length)} 张接续（起新分配、工作树沿用）、` +
           `${String(requeued.length)} 张重新入队`,
       )
     }
-    return { failed, requeued }
+    return { resumed, requeued }
   }
 
   /**
@@ -405,8 +404,9 @@ export class SuperagentRuntime {
   /**
    * 体检用读数：未结束、最新分配还在 `running` 的工单有几张，其中几张进程里没有 worker。
    *
-   * 「没有 worker」不一定是坏事：`recover()` 跑过之后 running 会变 failed；还留在 running
-   * 又没 worker 的，就是「没人推进、也没人报错」的卡单，体检要把它点出来。
+   * 「没有 worker」不一定是坏事：`recover()` 跑过之后，卡住的单会换成一份新的 `running`
+   * （或 `pending`）分配；还留在 running 又没 worker 的，就是「没人推进、也没人报错」的卡单，
+   * 体检要把它点出来。
    */
   runningStats(): { total: number; orphaned: number } {
     this.assertOpen()
@@ -496,21 +496,26 @@ export class SuperagentRuntime {
     }
   }
 
-  /** 崩溃恢复的那条通知：入 `outbox`，下一拍泵会把它取进「最近动态」。 */
+  /**
+   * 崩溃接续后的一条通知：入 `outbox`，下一拍泵会把它取进「最近动态」。
+   *
+   * 必须发：接续会在界面上凭空多出一份新分配、进度条从头走，人需要一句话解释「这是自己
+   * 接着干，不用管」，否则会以为有人在偷偷重派。
+   */
   private notifyRecovered(ticket: Ticket, assignmentId: string): void {
-    const shortId = ticket.id.slice(0, 8)
     const message: OutboundMessage = {
       // 幂等键带上分配 id：同一张工单的另一次崩溃是新的一条通知，同一次崩溃只发一次。
       id: `recover:${ticket.id}:${assignmentId}`,
       channel: RECOVERY_CHANNEL,
-      text: `工单「${ticket.title}」上次没跑完：宿主重启，worker 丢了。工作树还留着，确认后可以用 /sa retry ${shortId} 重派。`,
+      text: `工单「${ticket.title}」上次没跑完（宿主重启，worker 丢了）。已自动接续：起了一份新分配，` +
+        `工作树与分支沿用，不用手动重试。`,
       kind: 'notice',
       ticketId: ticket.id,
     }
     try {
       this.outbox.send(message)
     } catch (error) {
-      // 通知失败不影响「已标 failed」这个事实：账已经落库，界面下一拍也会看到阶段变化。
+      // 通知失败不影响「已经接续」这个事实：账已经落库，界面下一拍也会看到阶段变化。
       this.log(`[superagent] 工单 ${ticket.id} 的恢复通知未入队：${describe(error)}`)
     }
   }

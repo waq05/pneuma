@@ -248,7 +248,7 @@ export function apply(ctx: Context, passed?: unknown): void {
    * 宿主上。这是 §5.4「拿不到锁 / 库损坏 → 插件停在未启动，不崩宿主」的落点。
    *
    * 建起来之后立刻跑两件只在启动时做的事（各带自己的 try/catch，失败不影响插件可用）：
-   *   - `recover()`：上次崩溃留下的 `running` 标失败、`pending` 重新入队；
+   *   - `recover()`：上次崩溃留下的 `running` 起新分配接续、`pending` 重新入队；
    *   - `sweep()`：删掉已结束超过 30 天的会话目录。
    */
   function ensure(): SuperagentRuntime | null {
@@ -272,9 +272,9 @@ export function apply(ctx: Context, passed?: unknown): void {
       // 恢复与清扫各自兜底：它们坏了不该让「插件已经能用」这件事退回去。
       try {
         const recovery = opened.recover()
-        if (recovery.failed.length > 0 || recovery.requeued.length > 0) {
+        if (recovery.resumed.length > 0 || recovery.requeued.length > 0) {
           console.warn(
-            `[superagent] 启动恢复：${String(recovery.failed.length)} 张标为失败（宿主重启，worker 丢了）、` +
+            `[superagent] 启动恢复：${String(recovery.resumed.length)} 张接续（起新分配、工作树沿用）、` +
               `${String(recovery.requeued.length)} 张重新入队`,
           )
         }

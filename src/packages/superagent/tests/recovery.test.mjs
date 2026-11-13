@@ -3,8 +3,8 @@
  *
  * 六条用例各钉一件「能跑但长期用会出事」的事：
  *   1. 设置落盘往返：`save()` 真写 `plugins.json`，`values()` 与重开后的新分区读回同一份；
- *   2. 崩溃恢复：库里最新分配停在 `running`、进程里没有 worker → 标 `failed` 并发通知；
- *      已结束的工单一律不动；
+ *   2. 崩溃恢复：库里最新分配停在 `running`、进程里没有 worker → 起新分配接续、
+ *      提示词写明上次中断、并发一条通知；已结束的工单一律不动；
  *   3. 崩溃恢复：`pending` 的工单重新入队派工（走执行器的 `start`，不自己建工作树）；
  *   4. 超时取消：建单超过上限的工单被停 worker、转 `failed`，已结束的不参与；
  *   5. 保留策略：只删已结束超过 30 天的会话目录，工作树不删；
@@ -170,7 +170,7 @@ test('设置落盘往返：save 写 plugins.json，values 与重开后的新分�
 
 // ── 2. 崩溃恢复：running 没有 worker ────────────────────────────────────────
 
-test('running 却没有 worker：标 failed（原因写明宿主重启）并发一条通知；已结束的不动', () => {
+test('running 却没有 worker：起新分配接续，提示词写明上次中断；已结束的不动', () => {
   const { executor, calls } = fakeExecutor()
   withRuntime('orphan', { executor }, ({ runtime, store, root }) => {
     const id = runtime.publish({ title: '崩在中间的单', body: '正文' })
@@ -184,34 +184,48 @@ test('running 却没有 worker：标 failed（原因写明宿主重启）并发�
       ticket.assignments.at(-1).state = 'running'
       ticket.ended = { at: ticket.createdAt, by: 'human', outcome: 'completed' }
     })
+    const oldAssignmentId = readTicket(store, id).assignments.at(-1).id
     calls.start.length = 0
 
     const report = runtime.recover()
-    assert.deepEqual(report.failed, [id], '只有那张没结束的 running 工单该被标失败')
+    assert.deepEqual(report.resumed, [id], '只有那张没结束的 running 工单该被接续')
     assert.deepEqual(report.requeued, [])
-    assert.equal(calls.start.length, 0, 'running 的工单不该被重新派工')
 
-    // 工单进了「等人」的失败档，原因里必须同时有「宿主重启，worker 丢了」与重派办法。
-    assert.deepEqual(runtime.list().find((item) => item.id === id).stage, { stage: 'person', action: 'failed' })
-    const summary = readTicket(store, id).assignments.at(-1).report.summary
-    assert.match(summary, /宿主重启，worker 丢了/)
-    assert.match(summary, /\/sa retry/)
+    const recovered = readTicket(store, id)
+    const oldAssignment = recovered.assignments.at(-2)
+    const next = recovered.assignments.at(-1)
+    // 旧分配结束了（原因是宿主重启），新分配接着干。
+    assert.equal(oldAssignment.id, oldAssignmentId)
+    assert.equal(oldAssignment.state, 'ended')
+    assert.equal(typeof oldAssignment.endedAt, 'string', '旧分配要留下结束时刻')
+    assert.equal(next.state, 'pending', '新分配等执行器派工')
+    assert.notEqual(next.id, oldAssignmentId)
 
-    // 一条通知进了出站队列；下一拍泵会把它取进「最近动态」。
-    const rows = store.handle.prepare('SELECT value FROM outbox ORDER BY rowid').all()
-    assert.equal(rows.length, 1, '应入队一条恢复通知')
-    assert.match(JSON.parse(rows[0].value).payload.message.text, /宿主重启，worker 丢了/)
+    // 第一条输入是恢复提示词：新 worker 的会话是空的，必须被告知「上次中断了、先看现场」。
+    const note = recovered.inputs.find((input) => input.text?.includes('The host restarted during this ticket'))
+    assert.ok(note !== undefined, '新分配要收到一条「上次中断了」的提示词')
+    assert.deepEqual(recovered.undelivered, [note.id], '提示词还没投递，等执行器派工时一起发')
 
-    // 已结束的工单原样：没有被改判、也没有多一份报告。
-    assert.equal(readTicket(store, endedId).assignments.at(-1).report, undefined)
-
-    // 幂等：再恢复一次不会重写报告，也不会再发一条通知。
-    const again = runtime.recover()
-    assert.deepEqual(again.failed, [], '已经标过 failed 的不该被反复改判')
-    assert.equal(store.handle.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 1)
-
-    // 恢复不自己建工作树：建树只发生在执行器 launch 里（这里用的是假执行器，所以没有目录）。
+    // 派工走执行器的 start：按 (工单, 新分配) 交给它，恢复自己不去建树。
+    assert.deepEqual(calls.start, [{ ticketId: id, assignmentId: next.id }])
     assert.equal(existsSync(join(root, 'superagent', 'worktrees')), false, '恢复逻辑不该绕过执行器去建树')
+
+    // 一张通知进了出站队列；下一拍泵会把它取进「最近动态」。
+    const rows = store.handle.prepare('SELECT value FROM outbox ORDER BY rowid').all()
+    assert.equal(rows.length, 1, '应入队一条接续通知')
+    assert.match(JSON.parse(rows[0].value).payload.message.text, /已自动接续/)
+
+    // 已结束的工单原样：没有多一份报告、也没多一份分配。
+    const ended = readTicket(store, endedId)
+    assert.equal(ended.assignments.length, 1)
+    assert.equal(ended.assignments.at(-1).report, undefined)
+
+    // 幂等：再恢复一次时最新分配已是新那份 pending，只会再交给执行器一次，不会再生一份分配。
+    const again = runtime.recover()
+    assert.deepEqual(again.resumed, [], '接续过的单不该被反复接续')
+    assert.deepEqual(again.requeued, [id])
+    assert.equal(readTicket(store, id).assignments.length, 2, '第二次恢复不该再起第三份分配')
+    assert.equal(store.handle.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 1)
   })
 })
 
@@ -226,7 +240,7 @@ test('pending 的工单：恢复时重新入队派工，不自己建工作树', 
 
     const report = runtime.recover()
     assert.deepEqual(report.requeued, [id])
-    assert.deepEqual(report.failed, [])
+    assert.deepEqual(report.resumed, [])
     assert.deepEqual(calls.start, [{ ticketId: id, assignmentId }], '应把同一对（工单 + 分配）重新交给执行器')
 
     // 恢复走的是执行器的 start，不是自己 `ensureWorktree`：假执行器不建树，这里就没有树。
