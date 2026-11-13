@@ -172,7 +172,11 @@ const offTool = ctx.tools.register({
     toolStarted = true
     // 工具上下文必须带会话身份（0.6.48：后台作业通知按它归属）
     toolSessionId = toolCtx.sessionId
-    await sleep(600)
+    // 2 秒而不是 0.6 秒：用例要在 A 的回合**还没收工**时切回 A 再切走（第 3 步），
+    // 之后才等它收工翻出「已完成未读」。0.6 秒在慢机器上不够——A 会在切回之前收工，
+    // 那一次 `session-open` 把 just-finished 清掉，后面的断言就永远等不到
+    //（走 check-core 的 `--import` 起进程时抓到过）。
+    await sleep(2000)
     return 'slow ok'
   },
 })
