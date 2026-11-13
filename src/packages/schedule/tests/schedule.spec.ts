@@ -51,7 +51,7 @@ test('README：模型体验与已知限制两段都在', () => {
 })
 
 test('装配面：十项注入齐、不 provide（面挂在 tools/commands/surfaces 上）', () => {
-  expect([...(schedulePlugin.inject ?? [])]).toEqual([
+  expect(schedulePlugin.inject).toEqual([
     'tools',
     'commands',
     'settings',

@@ -145,7 +145,7 @@ test('插件对象：名字、提供服务、可 apply', () => {
 })
 
 test('inject 声明了它真正用到的七个服务', () => {
-  expect([...(todoPlugin.inject ?? [])]).toEqual([
+  expect(todoPlugin.inject).toEqual([
     'session',
     'tools',
     'commands',

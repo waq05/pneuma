@@ -187,7 +187,9 @@ afterAll(() => {
 test('插件对象：名字、提供服务、两个注入', () => {
   expect(gitPlugin.name).toBe('git')
   expect(gitPlugin.provide).toBe('git')
-  expect([...(gitPlugin.inject ?? [])]).toEqual(['session', 'surfaces'])
+  // 不展开再比：`inject` 的类型是 cordis 的 `Inject<Dict>`，声明上没有 iterator，
+  // `[...x]` 过不了类型检查。运行时它就是数组，直接整体比对即可。
+  expect(gitPlugin.inject).toEqual(['session', 'surfaces'])
   expect(typeof gitPlugin.apply).toBe('function')
 })
 

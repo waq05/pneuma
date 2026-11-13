@@ -148,7 +148,7 @@ const waitForCard = async (harness: Harness): Promise<void> => {
 test('插件对象：名字、提供服务、五个注入', () => {
   expect(planPlugin.name).toBe('plan')
   expect(planPlugin.provide).toBe('plan')
-  expect([...(planPlugin.inject ?? [])]).toEqual(['session', 'tools', 'mode', 'surfaces', 'waiting'])
+  expect(planPlugin.inject).toEqual(['session', 'tools', 'mode', 'surfaces', 'waiting'])
   expect(typeof planPlugin.apply).toBe('function')
 })
 
