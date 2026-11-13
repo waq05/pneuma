@@ -29,13 +29,25 @@
 | D11 | `pnpm test:int` 排在夜跑 `probe` job（详设 §12.1） | 提前到 PR 门 `core` job | 15 条守的是线上事故（同一 callId 两条工具结果 → 网关 400），隔夜才发现太慢；它只解析 `src/**`、不依赖 `lib/`，本地 905ms。设计的排法是按「集成层会长到分钟级」预留的，等 P2 迁完存量探针再移回夜跑 | 待定（提前是否有必要） |
 | D12 | 排版闸门扫描目录不含 `tests`（`scripts/style-check.mjs:40`） | 加上 `tests` | 不扫就是「测试体系新写的代码不受排版闸门管」，而闸门正是靠这份清单才看得见东西 | 已定 |
 
-## 三、协作方式（不是设计里的内容，是执行时的取舍）
+## 三、P1a harness（详设 §6 的七个 API）
+
+| # | 设计原文 | 实做 | 为什么 | 状态 |
+| --- | --- | --- | --- | --- |
+| D14 | hash 不符时「抛错」（§6.3） | 409 响应 + `close()` 抛 `AggregateError`，两个出口都硬失败 | HTTP handler 里没地方把异常抛回 `await` 方；只在一个出口失败会让另一条路径静默绿 | 已定 |
+| D15 | `dispose()` 卸载（§6.4） | `dsc/exit` 事件 + `registry.delete` 逐插件卸载 | cordis 4.1 的根 `Context` **没有** `dispose()`——现有探针里的 `ctx.dispose?.()` 实际是空操作。实测只发 `dsc/exit` 不卸载，进程 5 秒仍不退出 | 已定 |
+| D16 | 未规定（§6.4） | `bootKernel` 默认关 memory 与 sandbox | memory 会在回合结束多发一次模型请求，吃掉假模型的下一轮剧本（`scripts/todo-reminder-test.mjs:32-37` 的先例）；sandbox 在 Windows 启动时 spawn PowerShell 体检，实测挂住 worker 不退出。需要沙箱的用例自己预置 `plugins.json` | 已定 |
+| D17 | `RunCliResult` 只有 code/stdout/stderr（§6.6） | 加 `timedOut` | Windows 上被 kill 后是 `code=1, signal=null`，与正常退出 1 分不开 | 已定 |
+| D18 | golden 归一化（§6.7 只说要归一） | 临时目录整段路径（含随机后缀）→ `<TMP>`；HOME 只换前缀；unified diff 自实现、40 行截断 | 随机后缀不整段换掉，golden 每次都不同 | 已定 |
+| D19 | unit 层「禁止网络」（§7.1） | `fakeLLM` / `replayLLM` 的 unit 用例起 `127.0.0.1` 本地端点 | 假模型的协议（SSE 四段、标题请求判据）只能这么验；连的是 loopback，不出网。代价是 unit 层不再是「零网络」 | 待定（是否移到 integration 层） |
+| D20 | `tsconfig.spec.json` 只收 spec 文件（§5.2） | include 加整棵 `src/**/*.ts` | cordis 的 `Context` 增强是声明合并，只列 spec 时程序里没有增强那一份，静态 import 内核会满屏「Context 上没有 agent / session」，而主构建全绿。实测 7.2s → 9.2s | 已定 |
+
+## 四、协作方式（不是设计里的内容，是执行时的取舍）
 
 | # | 设计原文 | 实做 | 为什么 | 状态 |
 | --- | --- | --- | --- | --- |
 | D13 | 设计假设「一个阶段一口气做完」 | 同一棵工作树里并行跑多个子代理，**代理只跑自己文件的定向验收**，全仓验收由我在阶段末统一跑 | 实测过一次误判：三个代理并行时，一个代理跑全仓 `vitest run --project unit`，看见另外两个代理在途的红（14 failed），归因错误。全仓验收在并行阶段没有意义，因为工作树状态每几分钟就变一次 | 已定 |
 
-## 四、已知问题（不是偏离设计，是现场状况）
+## 五、已知问题（不是偏离设计，是现场状况）
 
 | # | 现象 | 判据 | 影响 |
 | --- | --- | --- | --- |
