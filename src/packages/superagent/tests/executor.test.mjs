@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport } =
+const { WorkerExecutor, worktreeNameOf, turnEndReport, errorReport, transient } =
   await import('../../../../lib/packages/superagent/adapters/executor.js')
 const { ensureWorktree } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
 const { Session } = await import('../../../../lib/core/session.js')
@@ -247,6 +247,33 @@ test('报告映射：turn/end 正常收尾 → ready，error → failed', () => 
   // 主动停止 / 被打断不往已结束的分配上补报告。
   assert.equal(turnEndReport('aborted', '半截正文'), null)
   assert.equal(turnEndReport('completed', '收尾', undefined, true), null)
+})
+
+test('临时故障判据：状态码优先，文本兜底', () => {
+  // 带 status 的错误：408 / 429 / 5xx 是临时故障，4xx 其余不是。
+  assert.equal(transient({ status: 408 }), true, '408 请求超时要重试')
+  assert.equal(transient({ status: 429 }), true, '429 限流要重试')
+  assert.equal(transient({ status: 500 }), true, '500 要重试')
+  assert.equal(transient({ status: 503 }), true, '503 要重试')
+  assert.equal(transient({ status: 404 }), false, '404 重试一万次也一样')
+  assert.equal(transient({ status: 401 }), false, '401 是令牌问题，不是抖动')
+
+  // 没有 status：退到错误文本。
+  assert.equal(transient(new Error('read ECONNRESET')), true, '连接重置要重试')
+  assert.equal(transient(new Error('fetch failed')), true, 'fetch 失败要重试')
+  assert.equal(transient(new Error('socket hang up')), true)
+  assert.equal(transient(new Error('model overloaded')), true)
+  assert.equal(transient(new Error('upstream returned 502')), true, '文本里的 5xx 也算')
+
+  // 非临时故障不能被误判，否则配置错误会白等三次退避。
+  assert.equal(transient(new Error('没有配置仓库路径（设置 → Super Agent → repoPath）')), false)
+  assert.equal(transient(new Error('标题不能为空：先写一句要它做什么')), false)
+  assert.equal(transient('plain string without keywords'), false, '非 Error 值按文本判')
+
+  // `code` 字段也参与判据（Node 的网络错误常把它挂在 Error 的 code 上）。
+  assert.equal(transient(Object.assign(new Error('connection failed'), { code: 'ETIMEDOUT' })), true)
+  // 非 Error 的裸对象不带 code：与上游一致，只 String() 一下，不特判。
+  assert.equal(transient({ code: 'ETIMEDOUT' }), false, '非 Error 值只按文本判')
 })
 
 test('没有宿主上下文时 start 只记缺项日志，不假装成功', () => {

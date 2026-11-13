@@ -188,6 +188,38 @@ function describe(error: unknown): string {
 }
 
 /**
+ * 临时故障的关键字：连接被拒 / 重置 / 超时 / 解析失败，以及模型端点的过载与限流。
+ *
+ * 与上游 `executor/dsh.ts:44-55` **逐项相同**——这份判据判错的后果是两头的：
+ * 把配置错误当网络抖动重试三次（白等一分钟），或把抖动当配置错误直接判死。
+ */
+const TRANSIENT_PATTERN = new RegExp(
+  [
+    'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'UND_ERR',
+    'socket hang up', 'fetch failed', 'network error', 'overloaded', 'rate limit',
+    '\\b(?:408|429|50[0-4])\\b',
+  ].join('|'),
+  'i',
+)
+
+/**
+ * 这个错误算不算「过一会儿可能就好」。
+ *
+ * 先看 `status`：错误对象上带 HTTP 状态码时，`408` / `429` / `5xx` 就是临时故障，
+ * 这是最准的一路判据。没有 `status` 才退到错误文本里找连接类关键字——上游也是这个顺序。
+ *
+ * @param error - 任何被抛出来的东西；不假设它是 `Error`
+ */
+export function transient(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status
+  if (typeof status === 'number') return status === 408 || status === 429 || status >= 500
+  const text = error instanceof Error
+    ? `${error.name} ${error.message} ${String((error as { code?: unknown }).code ?? '')}`
+    : String(error)
+  return TRANSIENT_PATTERN.test(text)
+}
+
+/**
  * worker 的报告映射：`turn/end` 的三种收尾原因 → 引擎要的 {@link WorkerReport}。
  *
  * 单拎成纯函数是为了包级测试能直测映射，不必起模型（`tests/executor.test.mjs` 第 4 条）。
