@@ -1,0 +1,269 @@
+/**
+ * @pneuma/subagent 的包级测试：钉 11 条不变量。
+ * 为什么只钉这些：入口只有插件对象，派活要会话与模型；能便宜钉住的是装配面、包形态、入口、
+ * 文档、agent-roles 里那张不落盘的出厂角色表，以及 2026-11-06 并入的共享任务板
+ * （team_task 工具、板子提示段、设置分区里的 board 子开关）装配面。
+ *
+ * 迁移说明：装配行改成 `YAML.parse` 后断言结构；入口直接 import 源码；
+ * 假 ctx 只实现 apply 用到的几个面，传给强类型入口时用 `as unknown as Context`。
+ * @module @pneuma/subagent/tests
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import YAML from 'yaml'
+import { afterAll, expect, test } from 'vitest'
+import { builtinRole, builtinRoleNames } from '../agent-roles.js'
+import { COLLAB_TOOL_NAMES, subagentPlugin } from '../index.js'
+
+/** 按相对本文件的路径读文本。 */
+const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
+
+/** 本包 package.json 里测试用得到的字段。 */
+interface PackageJson {
+  name: string
+  type?: string
+  exports?: Record<string, { default?: string } | string>
+  pneuma?: { library?: boolean; bundle?: { patch?: string } }
+}
+
+/** 装配文件里的一行。 */
+interface PatchRow {
+  id?: string
+  name?: string
+}
+
+/** 工具声明里测试用得到的部分。 */
+interface CapturedTool {
+  name: string
+  description: string
+  risk: string
+  parameters: {
+    properties: Record<string, { type?: string; enum?: string[]; description?: string }>
+    required?: string[]
+  }
+  run: (args: unknown) => unknown
+}
+
+/** 提示段注册项。 */
+interface CapturedPrompt {
+  id: string
+  render: () => string
+}
+
+/** 设置分区里测试用得到的部分。 */
+interface CapturedSection {
+  id: string
+  groups?: Array<{ id: string }>
+  fields: () => Array<{ key: string; group?: string; action?: string }>
+  values: () => Record<string, unknown>
+  action?: unknown
+}
+
+// 临时 HOME + DSC_HOME：apply 会铺出厂角色、读插件配置，真实 ~/.dsc 一个字节都不许动。
+// 必须在 import 源码之前设好——DSC_HOME 与 homedir() 都在模块加载时取一次。
+const home = mkdtempSync(join(tmpdir(), 'numa-subagent-test-'))
+const savedEnv = {
+  HOME: process.env['HOME'],
+  USERPROFILE: process.env['USERPROFILE'],
+  DSC_HOME: process.env['DSC_HOME'],
+}
+process.env.HOME = home
+process.env.USERPROFILE = home
+process.env.DSC_HOME = join(home, '.dsc')
+mkdirSync(process.env.DSC_HOME, { recursive: true })
+
+const pkg = JSON.parse(read('../package.json')) as PackageJson
+
+/** 还原环境变量：有原值就写回，原本没有就删掉。 */
+function restoreEnv(name: 'HOME' | 'USERPROFILE' | 'DSC_HOME'): void {
+  const before = savedEnv[name]
+  if (before === undefined) delete process.env[name]
+  else process.env[name] = before
+}
+
+afterAll(() => {
+  restoreEnv('HOME')
+  restoreEnv('USERPROFILE')
+  restoreEnv('DSC_HOME')
+})
+
+/**
+ * 假 ctx：apply 只用这几个面；effect 真跑回调、把返回的 disposer 收下，
+ * 否则 syncTools 里的注册根本不会发生，断言无从谈起。
+ */
+function fakeContext(): { ctx: Context; captured: { tools: CapturedTool[]; sections?: CapturedSection; prompts: CapturedPrompt[]; provided: Record<string, unknown> } } {
+  const captured: {
+    tools: CapturedTool[]
+    sections?: CapturedSection
+    prompts: CapturedPrompt[]
+    provided: Record<string, unknown>
+  } = { tools: [], sections: undefined, prompts: [], provided: {} }
+  const ctx = {
+    session: { current: () => ({ meta: { id: 'package-test' } }) },
+    tools: {
+      register: (entry: CapturedTool) => {
+        captured.tools.push(entry)
+        return () => {}
+      },
+      list: () => captured.tools,
+    },
+    prompt: {
+      register: (id: string, render: () => string) => {
+        captured.prompts.push({ id, render })
+        return () => {}
+      },
+    },
+    settings: {
+      about: () => ({ home: process.env.DSC_HOME }),
+      registerSection: (spec: CapturedSection) => {
+        captured.sections = spec
+        return () => {}
+      },
+    },
+    provide: (name: string, service: unknown) => {
+      captured.provided[name] = service
+    },
+    effect: (execute: () => unknown) => {
+      const off = execute()
+      return typeof off === 'function' ? off : () => {}
+    },
+    transcript: { touch: () => {} },
+    llm: {},
+    approval: {},
+    // 队友的会话归属解析登记在 `guards` 上（P0-8 收口）：假 ctx 也要给这两个口，
+    // 否则 apply 里 `ctx.guards.registerSessionResolver` 直接抛，整条装配测不起来。
+    guards: {
+      register: () => () => {},
+      registerSessionResolver: () => () => {},
+      gate: () => ({ action: 'defer' }),
+      observe: () => {},
+    },
+    agent: {},
+    get: () => undefined,
+  }
+  // 假 ctx 只实现测试用到的面；真实 Context 的字段远多于它。
+  return { ctx: ctx as unknown as Context, captured }
+}
+
+test('cordis.patch.yml 的装配行认的是 @pneuma/subagent', () => {
+  const patch = YAML.parse(read('../cordis.patch.yml')) as Array<{ insert?: PatchRow[] }>
+  const row = patch.flatMap((layer) => layer.insert ?? []).find((item) => item.id === 'subagent')
+  // 装配行：id 或 name 写歪了，这个包就永远关不掉、也永远认不对。
+  expect(row, '装配行的 id 必须正好是 subagent').toBeDefined()
+  expect(row?.name, "装配行的 name 必须是 '@pneuma/subagent'").toBe('@pneuma/subagent')
+})
+
+test('package.json 是 ESM 功能包，装配指向 cordis.patch.yml', () => {
+  expect(pkg.type).toBe('module')
+  expect(pkg.exports?.['.'], 'exports 必须有 "."').toBeDefined()
+  expect(pkg.exports?.['./package.json'], 'exports 必须有 "./package.json"').toBeDefined()
+  if (pkg.pneuma?.library === true) {
+    expect(pkg.pneuma?.bundle, '库包不该有 bundle.patch').toBeUndefined()
+  } else {
+    expect(pkg.pneuma?.bundle?.patch).toBe('./cordis.patch.yml')
+  }
+})
+
+test('入口能加载，插件名与 apply 对得上', () => {
+  expect(typeof subagentPlugin).toBe('object')
+  expect(typeof subagentPlugin.name).toBe('string')
+  expect(subagentPlugin.name).toBe(pkg.name.split('/').pop())
+  expect(subagentPlugin.name).toBe('subagent')
+  expect(typeof subagentPlugin.apply).toBe('function')
+})
+
+test('README 的 Model Experience 与 Known Limitations 两段都在', () => {
+  const readme = read('../README.md')
+  expect(readme, '缺 ## Model Experience').toContain('## Model Experience')
+  expect(readme, '缺 ## Known Limitations').toContain('## Known Limitations')
+})
+
+test('出厂角色：四个内置角色，explorer 只有读工具且不许要授权', () => {
+  expect(builtinRoleNames()).toStrictEqual(['critic', 'explorer', 'reviewer', 'writer'])
+  const explorer = builtinRole('explorer')
+  expect(explorer).not.toBeNull()
+  expect(explorer?.builtin).toBe(true)
+  expect(explorer?.tools).toStrictEqual(['read', 'glob', 'grep'])
+  expect(explorer?.approval).toBe('forbid')
+  expect(builtinRole('no-such-role')).toBeNull()
+})
+
+test('apply 注册的 team_task 是只读风险，action 枚举覆盖认领与结项', () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, undefined)
+  const tool = captured.tools.find((entry) => entry.name === 'team_task')
+  // 板子默认开，必须注册 team_task。
+  expect(tool).toBeDefined()
+  expect(tool?.risk).toBe('read')
+  expect(tool?.parameters.required).toStrictEqual(['action'])
+  const actions = tool?.parameters.properties['action']?.enum ?? []
+  for (const action of ['create', 'list', 'claim', 'complete', 'delete', 'set_dependencies']) {
+    expect(actions, 'action 枚举缺 ' + action).toContain(action)
+  }
+  expect(typeof tool?.run).toBe('function')
+})
+
+test('board 关掉后没有 team_task 与板子提示段，subagent 照常', () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, { board: false })
+  expect(captured.tools.some((entry) => entry.name === 'team_task'), 'board=false 不该注册 team_task').toBe(false)
+  expect(captured.tools.some((entry) => entry.name === 'subagent'), 'board=false 不影响派活工具').toBe(true)
+  expect(captured.prompts.map((entry) => entry.id), '只该剩子智能体提示段').toStrictEqual(['subagent'])
+})
+
+test('allowDelegation 关掉后板子仍在（只想要共享待办的用法）', () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, { allowDelegation: false })
+  expect(captured.tools.some((entry) => entry.name === 'subagent'), '派活工具该撤下').toBe(false)
+  expect(captured.tools.some((entry) => entry.name === 'team_task'), '板子该留着').toBe(true)
+  expect(captured.prompts.map((entry) => entry.id)).toStrictEqual(['team'])
+})
+
+test('提示段提 team_task，设置分区仍是 subagent 且带任务板分组', () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, undefined)
+  expect(captured.prompts.map((entry) => entry.id).sort()).toStrictEqual(['subagent', 'team'])
+
+  const subagentPrompt = captured.prompts.find((entry) => entry.id === 'subagent')?.render() ?? ''
+  expect(subagentPrompt, '子智能体提示段必须提一句 team_task').toContain('team_task')
+  const boardPrompt = captured.prompts.find((entry) => entry.id === 'team')?.render() ?? ''
+  expect(boardPrompt, '板子提示段缺标题').toContain('# 共享任务板')
+
+  const section = captured.sections
+  expect(section).toBeDefined()
+  expect(section?.id).toBe('subagent')
+  expect((section?.groups ?? []).map((group) => group.id)).toStrictEqual(['board'])
+  const fields = section?.fields() ?? []
+  const boardField = fields.find((field) => field.key === 'board')
+  expect(boardField, '缺 board 子开关').toBeDefined()
+  expect(boardField?.group).toBe('board')
+  expect(fields.some((field) => field.action === 'clear-board'), '清空任务板按钮要跟着搬过来').toBe(true)
+  expect(section?.values()['board'], '板子默认开').toBe(true)
+  expect(typeof section?.action).toBe('function')
+
+  // 分组标题中文是「任务板」：design 里点名的那一条，直接读本包的界面字典钉住。
+  const zh = JSON.parse(read('../locale/ui.zh.json')) as Record<string, string>
+  expect(zh['group.board.title']).toBe('任务板')
+})
+
+test('协作工具豁免表包含 team_task，且不夹带文件类工具', () => {
+  expect(COLLAB_TOOL_NAMES).toContain('team_task')
+  for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
+    expect(COLLAB_TOOL_NAMES, `${name} 不该进协作工具豁免表`).not.toContain(name)
+  }
+})
+
+test('subagent 工具有 keep 开关，缺省留用，描述里讲清一次性是什么', () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, undefined)
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')
+  expect(tool, '派活工具默认开').toBeDefined()
+  const keep = tool?.parameters.properties['keep']
+  expect(keep, 'spawn 要能选一次性（keep 参数）').toBeDefined()
+  expect(keep?.type).toBe('boolean')
+  expect(keep?.description, 'keep 的描述要说出「一次性」三个字').toContain('一次性')
+  expect((tool?.parameters.required ?? []).includes('keep'), 'keep 不填默认留用，不能必填').toBe(false)
+  expect(tool?.description, '工具描述要讲清 keep=false 的后果').toContain('一次性')
+})
