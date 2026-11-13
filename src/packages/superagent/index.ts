@@ -36,6 +36,8 @@ import { clampInt } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { openStore, type DscStore } from './adapters/store.js'
+import { createGithubApi } from './adapters/github/api.js'
+import { createGithubSource } from './adapters/github/source.js'
 import { superagentScope } from './adapters/scope.js'
 import { defaultSettings, normalizeGithubAccount, type GithubAccount } from './adapters/settings.js'
 import { registerCommands } from './commands.js'
@@ -84,6 +86,15 @@ const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
 
 /** 泵的间隔：设计文档 §6.3 写的是 2 秒。 */
 const PUMP_INTERVAL_MS = 2000
+
+/**
+ * GitHub 轮询间隔：30 秒。
+ *
+ * 上游是 60 秒一拍（`sources/poll.ts:33-39`），这里略密一点是因为 DSC 的泵本来就 2 秒一拍、
+ * 顺手判断一次不花钱；真正的约束是接口配额——30 秒一次对一个仓库足够，再密也换不来更快的
+ * 响应（上游的 60 秒是给多个仓库留的余量）。
+ */
+const GITHUB_POLL_INTERVAL_MS = 30_000
 
 /** 会话目录的清扫间隔：启动时扫一次，之后每天一次。 */
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -361,6 +372,61 @@ export function apply(ctx: Context, passed?: unknown): void {
    *   - `recover()`：上次崩溃留下的 `running` 起新分配接续、`pending` 重新入队；
    *   - `sweep()`：删掉已结束超过 30 天的会话目录。
    */
+  /**
+   * 建好的 GitHub 来源；`null` = 没配、拿不到令牌、或建失败。
+   *
+   * `busy` 是「上一拍还没回来」：轮询是网络活，慢的时候会比间隔长，不设这道闸就会在
+   * 同一个账号上越堆越多请求——配额打满之后症状是「突然一条评论都收不到了」。
+   */
+  let github: { source: ReturnType<typeof createGithubSource>; lastAt: number; busy: boolean } | null = null
+
+  /**
+   * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
+   *
+   * 三种没建起来的情况都只记一行日志、不抛：来源是可选件，缺了它插件其余部分照常工作。
+   * 令牌只从环境变量读、绝不落盘——写进 `plugins.json` 就等于把它交给任何能读那台机器的人。
+   */
+  function startGithub(target: SuperagentRuntime): void {
+    const account = githubAccount()
+    if (account === undefined || store === null) return
+    const variable = config().githubTokenEnv
+    const token = (process.env[variable] ?? '').trim()
+    if (token === '') {
+      console.warn(`[superagent] GitHub 来源没启动：环境变量 ${variable} 里没有令牌`)
+      return
+    }
+    try {
+      github = {
+        source: createGithubSource({
+          api: createGithubApi({ token, repository: account.repository, log: (line) => { console.warn(line) } }),
+          repository: account.repository,
+          login: account.login,
+          engine: target.sourceBridge(),
+          store,
+          now: () => new Date().toISOString(),
+          log: (line) => { console.warn(line) },
+        }),
+        lastAt: 0,
+        busy: false,
+      }
+      console.warn(`[superagent] GitHub 来源已启动：${account.repository}，每 ${String(GITHUB_POLL_INTERVAL_MS / 1000)} 秒一拍`)
+    } catch (error) {
+      console.warn(`[superagent] GitHub 来源没建起来：${errorText(error)}`)
+    }
+  }
+
+  /** 泵的一拍里顺手推一次：到点、且上一拍没在飞才发。 */
+  function pollGithub(): void {
+    if (github === null || github.busy) return
+    const now = Date.now()
+    if (now - github.lastAt < GITHUB_POLL_INTERVAL_MS) return
+    github.lastAt = now
+    github.busy = true
+    void github.source.tick()
+      .catch((error: unknown) => { console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`) })
+      .finally(() => { if (github !== null) github.busy = false })
+  }
+
   function ensure(): SuperagentRuntime | null {
     if (runtime !== null) return runtime
     if (Date.now() < retryAt) return null
@@ -399,6 +465,8 @@ export function apply(ctx: Context, passed?: unknown): void {
       } catch (error) {
         console.warn(`[superagent] 会话清理失败（插件照常可用）：${errorText(error)}`)
       }
+      // 来源最后建：它要拿运行期已经装好的引擎，且失败不该影响「插件已经能用」。
+      startGithub(opened)
       return runtime
     } catch (error) {
       const reason = errorText(error)
@@ -447,6 +515,8 @@ export function apply(ctx: Context, passed?: unknown): void {
       if (runtime === null) return
       try {
         service.tick()
+        // GitHub 轮询挂在泵上（不自带定时器）：时间到了、上一拍也没在飞才发。
+        pollGithub()
       } catch (error) {
         // 单拍失败只记日志，不中断下一拍（§5.4「泵任务抛错：记日志，不中断下一轮」）。
         console.warn(`[superagent] 泵失败：${errorText(error)}`)
@@ -465,6 +535,8 @@ export function apply(ctx: Context, passed?: unknown): void {
       clearInterval(timer)
       clearInterval(sweeper)
       offCommands()
+      // 来源先丢：它持有 HTTP 客户端与运行期的桥，留着只会在停用后继续发请求。
+      github = null
       // 先关运行期（它只释放自己的队列），再关库（库归本文件所有）。
       runtime?.close()
       runtime = null
