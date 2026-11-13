@@ -72,7 +72,7 @@ test('装起来之后 health 服务与 /doctor 命令都在', () => {
       },
     },
   }
-  const dispose = doctorPlugin.apply(ctx as never) as unknown
+  const dispose = doctorPlugin.apply(ctx as never, {} as never) as unknown
   expect(typeof services['health']?.run).toBe('function')
   expect(typeof services['health']?.register).toBe('function')
   expect(commands).toContain('doctor')
