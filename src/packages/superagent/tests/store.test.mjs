@@ -79,7 +79,7 @@ function outboxRows(dbPath) {
   )
 }
 
-/** 期望的表：原文 9 张 + 本适配层补的 3 张。名单写死，不跟着 DDL 自动变——否则改了 DDL 测试也跟着绿。 */
+/** 期望的表：原文 9 张 + 本适配层补的 3 张 + 候选收件箱（G1）。名单写死，不跟着 DDL 自动变——否则改了 DDL 测试也跟着绿。 */
 const EXPECTED_TABLES = [
   'kv',
   'trigger',
@@ -93,9 +93,10 @@ const EXPECTED_TABLES = [
   'meta',
   'event',
   'assignment',
+  'candidate',
 ]
 
-/** 期望的索引：原文 4 个 + 新增 3 个。 */
+/** 期望的索引：原文 4 个 + 新增 3 个 + 候选收件箱 1 个。 */
 const EXPECTED_INDEXES = [
   'trigger_at',
   'trigger_thread_at',
@@ -104,6 +105,7 @@ const EXPECTED_INDEXES = [
   'event_ticket_seq',
   'assignment_ticket',
   'assignment_agent_state',
+  'candidate_state_at',
 ]
 
 function assertTables(dbPath) {
@@ -317,6 +319,34 @@ test('崩溃恢复：库里的 sending 行在重开 store 后变回 pending', ()
     assert.deepEqual(second.claimOutbox().map((item) => item.id), ['stuck'], '恢复之后要能被重新认领')
   } finally {
     second.close()
+  }
+  passed += 1
+})
+
+// 候选收件箱（G1）：推断候选不直接建工单，先落在这里等人点头。
+// 钉四件事：写进去读得出来、重复写同一 id 不出两行、只列 pending、定过结论的不再改。
+test('候选收件箱：写入 / 重写 / 只列 pending / 结论幂等', () => {
+  const dbPath = join(tempRoot('candidate'), 'orchestrator.sqlite')
+  const db = store.openStore(dbPath)
+  try {
+    const value = { outcome: { kind: 'accept', title: '改文案' }, title: '改文案', reason: '命中规则', scope: 'docs/', source: 'github' }
+    db.saveCandidate('eval-1', 'trigger-1', 'github:1', value)
+    db.saveCandidate('eval-2', 'trigger-2', 'github:2', { ...value, title: '第二张' })
+    assert.deepEqual(db.listCandidates().map((item) => item.id).sort(), ['eval-1', 'eval-2'], '两条都要在')
+    assert.equal(db.getCandidate('eval-1').value.title, '改文案', 'value 要原样读回来')
+
+    // 同一个 id 重写：不出第二行，状态回到 pending（Eval 超时重排会再判一次）。
+    db.saveCandidate('eval-1', 'trigger-1', 'github:1', { ...value, title: '改文案（重判）' })
+    assert.equal(db.listCandidates().length, 2, '同一个 id 重写不该多出一行')
+    assert.equal(db.getCandidate('eval-1').value.title, '改文案（重判）', '重写要覆盖 value')
+
+    // 定结论：接单之后它不再出现在待确认里，再定一次返回 false。
+    assert.equal(db.settleCandidate('eval-1', 'accepted'), true)
+    assert.deepEqual(db.listCandidates().map((item) => item.id), ['eval-2'], '定过结论的不该再列出来')
+    assert.equal(db.settleCandidate('eval-1', 'ignored'), false, '已经定过结论的不该被改第二次')
+    assert.equal(db.getCandidate('eval-1').state, 'accepted', '状态保持第一次的结论')
+  } finally {
+    db.close()
   }
   passed += 1
 })

@@ -23,7 +23,7 @@ import type { EffectRow } from './effects.js'
 import { orchestratorDbPath, orchestratorLockPath } from '../paths.js'
 
 /** 当前代码认识的 schema 版本。加表 / 改列时加一，并在 `MIGRATIONS` 里补一段。 */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /** 第一版的结构就写在 `SCHEMA_STATEMENTS` 里，不占迁移表；迁移表只放 v1 之后的增量。 */
 const BASE_VERSION = 1
@@ -47,6 +47,29 @@ const MIGRATIONS: readonly { readonly version: number; readonly statements: read
    * `DEFAULT 'pending'` 让老库里已有的行升级后立刻能被发送泵认领，不需要额外的回填语句。
    */
   { version: 2, statements: ["ALTER TABLE outbox ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'"] },
+  /*
+   * v3：候选收件箱（backlog G1）。
+   *
+   * 一张 `inferred` 强度的候选被判定为 accept 时，不直接建工单，而是先落在这里等人点头
+   * （`state = 'pending'`）。人点了「接单」才走 `Engine.decide`，点「忽略」就标成
+   * `ignored`。为什么不在内存里等：候选要跨重启活着——用户可能关了宿主明天再看。
+   *
+   * `value` 里放判定结果（`AssessmentOutcome` 的 JSON）与渲染卡片要的几项，与其它表
+   * 同一个取舍：业务对象一律 JSON 进 `value`，加字段不迁移。
+   */
+  {
+    version: 3,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS candidate (
+         id TEXT PRIMARY KEY,
+         trigger TEXT NOT NULL,
+         thread TEXT NOT NULL,
+         state TEXT NOT NULL,
+         at TEXT NOT NULL,
+         value TEXT NOT NULL);`,
+      'CREATE INDEX IF NOT EXISTS candidate_state_at ON candidate(state, at);',
+    ],
+  },
 ]
 
 /**
@@ -127,6 +150,8 @@ export type StoreErrorCode =
   | 'event_invalid'
   | 'outbox_invalid'
   | 'outbox_corrupt'
+  | 'candidate_invalid'
+  | 'candidate_not_found'
 
 /** 存储层的错误。`code` 是契约的一部分，别只靠 message 匹配。 */
 export class StoreError extends Error {
@@ -139,8 +164,43 @@ export class StoreError extends Error {
   }
 }
 
-/** 执行器起工作树要用的三元组（设计文档 §6.2 的 `ticket.execution.name`）。 */
-export interface TicketExecution {
+/**
+ * 写一条候选时要给的字段（backlog G1 的候选收件箱）。
+ *
+ * 为什么把判定结果整份存下来：人点「接单」时要把模型那份判定原样交给 `Engine.decide`，
+ * 由核心再校验一遍（方向、规则命中、intent_evidence）。在这里拆开存，等于把核心的
+ * 校验搬一份到适配层，两份迟早分叉。
+ */
+export interface NewCandidate {
+  /** 判定结果（`AssessmentOutcome` 的 JSON），点「接单」时原样交给引擎。 */
+  outcome: unknown
+  /** 卡片标题。 */
+  title: string
+  /** 模型给的理由：为什么它被判成可以接。 */
+  reason: string
+  /** 工单范围。 */
+  scope: string
+  /** 来源（`github` / `feishu` / `manual`）。 */
+  source: string
+}
+
+/** 一条等人拍板的候选。 */
+export interface CandidateRecord {
+  /** 候选 id（就是 Eval 的 id：同一个 Eval 重复判定只留一条）。 */
+  id: string
+  /** 触发它的那条消息。 */
+  triggerId: string
+  /** 它的主线程。 */
+  threadKey: string
+  /** pending = 等人点；accepted / ignored = 已经有结论。 */
+  state: 'pending' | 'accepted' | 'ignored'
+  /** 判定出来的时间。 */
+  at: string
+  /** 判定结果与卡片要的字段。 */
+  value: NewCandidate
+}
+
+/** 执行器起工作树要用的三元组（设计文档 §6.2 的 `ticket.execution.name`）。 */export interface TicketExecution {
   /** 工作树目录名（`worktreesDir()` 下的一级子目录）。 */
   name: string
   /** 源仓库根。 */
@@ -467,6 +527,63 @@ export class DscStore {
       record.updatedAt = nowIso()
       this.db.prepare('UPDATE ticket SET value = ? WHERE id = ?').run(JSON.stringify(record), id)
     })
+  }
+
+  /**
+   * 写一条等人拍板的候选。
+   *
+   * 同一个 id 已存在就更新 value、状态回到 pending：模型版判定器可能因为 Eval 超时
+   * 重排再判一次，那一次不该在界面上多出一行。
+   */
+  saveCandidate(id: string, triggerId: string, threadKey: string, value: NewCandidate): void {
+    if (id === '' || triggerId === '') throw new StoreError('candidate_invalid', '候选的 id 与 trigger 不能为空')
+    this.atomic(() => {
+      this.db
+        .prepare(
+          `INSERT INTO candidate (id, trigger, thread, state, at, value) VALUES (?, ?, ?, 'pending', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET trigger = excluded.trigger, thread = excluded.thread,
+             state = 'pending', at = excluded.at, value = excluded.value`,
+        )
+        .run(id, triggerId, threadKey, nowIso(), JSON.stringify(value))
+    })
+  }
+
+  /** 等着的候选，新的在前。 */
+  listCandidates(): CandidateRecord[] {
+    const rows = this.db
+      .prepare("SELECT id, trigger, thread, state, at, value FROM candidate WHERE state = 'pending' ORDER BY at DESC")
+      .all()
+    return rows.map((row) => ({
+      id: String(row.id),
+      triggerId: String(row.trigger),
+      threadKey: String(row.thread),
+      state: String(row.state) as CandidateRecord['state'],
+      at: String(row.at),
+      value: JSON.parse(String(row.value)) as NewCandidate,
+    }))
+  }
+
+  /** 一条候选；没有就是 undefined。 */
+  getCandidate(id: string): CandidateRecord | undefined {
+    const row = this.db.prepare('SELECT id, trigger, thread, state, at, value FROM candidate WHERE id = ?').get(id)
+    if (row === undefined) return undefined
+    return {
+      id: String(row.id),
+      triggerId: String(row.trigger),
+      threadKey: String(row.thread),
+      state: String(row.state) as CandidateRecord['state'],
+      at: String(row.at),
+      value: JSON.parse(String(row.value)) as NewCandidate,
+    }
+  }
+
+  /**
+   * 给一条候选定结论。
+   * @returns true = 改成了；false = 它已经不是 pending（别人先点了，或者早被处理过）。
+   */
+  settleCandidate(id: string, state: 'accepted' | 'ignored'): boolean {
+    const result = this.db.prepare("UPDATE candidate SET state = ? WHERE id = ? AND state = 'pending'").run(state, id)
+    return Number(result.changes) > 0
   }
 
   /** 入队一条出站消息，返回它的 id。新行一律 `pending`，等着发送泵来认领。 */
