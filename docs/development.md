@@ -12,6 +12,10 @@
 | 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
 | 三家对标产品的功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
 | 怎么写一个插件 | [plugin-development.md](plugin-development.md) |
+| **测试怎么写、为什么这么写** | [testing-101.md](testing-101.md) |
+| 测试体系的目标、对齐基线、分几层、要多久 | [testing-design.md](testing-design.md) |
+| 测试设施的落地细节（vitest 配置、harness、迁移配方） | [testing-detailed-design.md](testing-detailed-design.md) · [testing-migration-playbook.md](testing-migration-playbook.md) |
+| **哪些决定和设计不一样、测试照出了哪些源码问题** | [testing-deviations.md](testing-deviations.md) · [testing-findings.md](testing-findings.md) |
 
 ## 1. 一张图看懂运行时
 
