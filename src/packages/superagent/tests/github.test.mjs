@@ -1,7 +1,7 @@
 /**
  * @pneuma/superagent 的 GitHub 来源适配器测试：离线、不联网、不读用户真实的 `~/.dsc`。
  *
- * 十二个用例，每个只钉一件「改错了不会报错、只会静默漏事件」的事：
+ * 十六个用例，每个只钉一件「改错了不会报错、只会静默漏事件」的事：
  *   1. Issue 正文的 Trigger 逐字段（id 公式、meta 形状、addressed）；
  *   2. 行内 review 评论的 Trigger 逐字段（diff 片段进 text、inReplyTo 进 meta）；
  *   3. review 结论（APPROVED）没有正文也要进 text；
@@ -13,7 +13,12 @@
  *   9. 410 = 永久删除：不进 failures、不动重试表、游标照常前进；
  *  10. 404 = 可重试：进重试表、这一拍报失败；304 = 静默返回；
  *  11. 403 + locked = 永久不可回复；403 不锁 = 可重试；
- *  12. 游标：两拍之间回退 5 秒、ETag 只在 since 未变时发送、14 天视野夹到整点、自己发的事件跳过。
+ *  12. 游标：两拍之间回退 5 秒、ETag 只在 since 未变时发送、14 天视野夹到整点、自己发的事件跳过；
+ *  13. 订阅线程：两张工单各跟一张 PR，每个 PR 的评论只读一次（backlog S2）；
+ *  14. 订阅线程：一条读失败不影响另一条，失败的那条不推进游标；
+ *  15. 订阅线程：游标推进后，上一拍已读的评论不会第二次变成 Trigger；
+ *  16. `subscribedThreads`：只给 GitHub 线程、ci 线程与别的来源都不进来、isPr 从话题属性或
+ *      话题上最新一条 Trigger 里取。
  *
  * 时钟由 `now` 注入，库在 `tmpdir()` 下的临时 `DSC_HOME` 里；`paths.ts` 每次都重读
  * `DSC_HOME`，所以每个用例一份新库。
@@ -34,6 +39,8 @@ const previousHome = process.env['DSC_HOME']
 process.env['DSC_HOME'] = home
 
 const { openStore } = await import('../../../../lib/packages/superagent/adapters/store.js')
+const { StoreRepositories } = await import('../../../../lib/packages/superagent/adapters/repositories.js')
+const { SuperagentRuntime } = await import('../../../../lib/packages/superagent/runtime.js')
 const { createGithubApi, GithubError } = await import('../../../../lib/packages/superagent/adapters/github/api.js')
 const { GITHUB_KEYS } = await import('../../../../lib/packages/superagent/adapters/github/state.js')
 const {
@@ -575,5 +582,202 @@ test('14 天视野夹到整点：游标太旧时 since 取视野，且不发条�
     assert.equal(request.headers['if-none-match'], undefined)
     // 只收视野之内、且晚于本拍开始那一秒重叠窗口之后的那条：第二条在 STARTED，第一条在视野外。
     assert.deepEqual(received.map((trigger) => trigger.meta.commentId), [2])
+  })
+})
+
+// ── 订阅线程：工单跟着的 PR / Issue 上，事件流之外的新评论（backlog S2）──────────────
+
+/** 一张 PR 的 API 响应体；字段照 `PullSchema`（`github/pull.ts:25-30`）填全。 */
+function pullJson(number, state = 'open') {
+  return {
+    title: `PR ${number}`,
+    state,
+    html_url: `https://github.com/acme/widgets/pull/${number}`,
+    user: { login: 'agent-bot', type: 'User' },
+    body: 'body',
+    created_at: '2026-09-09T00:00:00Z',
+    head: { sha: 'abc', ref: `agent/ticket-${number}`, repo: { full_name: 'acme/widgets' } },
+  }
+}
+
+/** 会话里的一条评论（`issues/<n>/comments` 的响应体）。 */
+function threadComment(id, login, updatedAt, number) {
+  return {
+    id,
+    body: `comment ${id}`,
+    user: { login, type: 'User' },
+    html_url: `https://github.com/acme/widgets/issues/${number}#issuecomment-${id}`,
+    created_at: updatedAt,
+    updated_at: updatedAt,
+  }
+}
+
+/** 一条话题行；`subscribedThreads` 只读 `key` 与 `meta`，其余按 `Thread` 的形状填。 */
+function threadRow(source, id, meta) {
+  return {
+    key: `${source}:${id}`,
+    ref: { source, id },
+    createdAt: STARTED,
+    subscriptions: [],
+    correlated: [],
+    pending: [],
+    meta,
+  }
+}
+
+/** 让一张工单跟上一个 GitHub 线程，等价于来源调 `engine.bindThread` 之后 `ticket.follows` 里那一行。 */
+function follow(repos, ticketId, number, own = true) {
+  const ticket = repos.tickets.get(ticketId)
+  repos.tickets.save({ ...ticket, follows: [{ thread: `github:${number}`, own }] })
+}
+
+/** 一张工单（真的走 `publish`，免得后面拿一个假 id 断言）；`publish` 建不出来就整条用例作废。 */
+function twoTickets(runtime, repos) {
+  const first = runtime.publish({ title: '改登录页文案', body: '把提示改成中文' })
+  const second = runtime.publish({ title: '修 CI', body: '把测试修好' })
+  assert.ok(repos.tickets.get(first) && repos.tickets.get(second), '前提：publish 要真建出两张工单')
+  return [first, second]
+}
+
+test('订阅线程：两张工单各跟一张 PR，每个 PR 的评论只读一次', async () => {
+  await withStore(async (store) => {
+    const runtime = new SuperagentRuntime(store, { now: () => STARTED, log: () => {} })
+    const repos = new StoreRepositories(store.handle)
+    try {
+      const [first, second] = twoTickets(runtime, repos)
+      follow(repos, first, 7)
+      follow(repos, second, 9)
+      // 话题属性由来源写（真实链路上这里是 GitHub 来源没有的那一格 `threads.patch`）。
+      repos.threads.save(threadRow('github', '7', { isPr: true }))
+      repos.threads.save(threadRow('github', '9', { isPr: true }))
+      // 清单就是 `index.ts` 交给 `pollThreads` 的那一份：运行期从两张工单的 follows 算出来。
+      const subscribed = runtime.subscribedThreads()
+      assert.deepEqual(subscribed.sort((a, b) => a.number - b.number), [
+        { number: 7, isPr: true },
+        { number: 9, isPr: true },
+      ])
+
+      const { calls, fetch } = fakeFetch(async (url) => {
+        const number = /\/(\d+)$/.exec(url)?.[1]
+        if (number !== undefined && url.includes('/pulls/')) return json(pullJson(Number(number)))
+        if (url.includes('/issues/7/comments')) return json([threadComment(70, 'alice', STARTED, 7)])
+        if (url.includes('/issues/9/comments')) return json([threadComment(90, 'bob', STARTED, 9)])
+        return json([])
+      })
+      const { source, received } = makeSource(store, fetch)
+      await source.pollThreads(subscribed)
+
+      // 每个 PR 的会话评论各读一次：按编号分别计数，串了或读两遍都会露出来。
+      assert.equal(along(calls, '/issues/7/comments').length, 1)
+      assert.equal(along(calls, '/issues/9/comments').length, 1)
+      assert.deepEqual(received.map((trigger) => trigger.meta.number).sort((a, b) => a - b), [7, 9])
+      assert.deepEqual(received.map((trigger) => trigger.meta.isPr), [true, true])
+      assert.deepEqual(
+        Object.fromEntries(received.map((trigger) => [trigger.meta.number, trigger.actor.id])),
+        { 7: 'alice', 9: 'bob' },
+      )
+    } finally {
+      runtime.close()
+    }
+  })
+})
+
+test('订阅线程：一条读失败，另一条照常读完，失败的不推进游标', async () => {
+  await withStore(async (store) => {
+    const { fetch } = fakeFetch(async (url) => {
+      // 7 号整条线程读不通（读 PR 这一步就 500）；9 号照常。
+      if (url.includes('/pulls/7')) return json({ message: 'Server Error' }, { status: 500 })
+      if (url.includes('/pulls/9') && !url.includes('/comments') && !url.includes('/reviews')) return json(pullJson(9))
+      if (url.includes('/issues/7/comments')) return json([threadComment(70, 'alice', STARTED, 7)])
+      if (url.includes('/issues/9/comments')) return json([threadComment(90, 'bob', STARTED, 9)])
+      return json([])
+    })
+    const { source, received } = makeSource(store, fetch)
+    // 不抛：接线方后面还有绑 PR 与 CI，一条线程读不通不该让整拍停下。
+    await source.pollThreads([{ number: 7, isPr: true }, { number: 9, isPr: true }])
+
+    assert.deepEqual(received.map((trigger) => trigger.meta.number), [9])
+    // 失败的那条游标不动：下一拍还会从原处重读，不会把失败期间的评论永久跳过。
+    assert.equal(kv(store, GITHUB_KEYS.cursor(7)), undefined)
+    assert.equal(kv(store, GITHUB_KEYS.cursor(9)), cursorAt(STARTED))
+    assert.match(source.status().lastError, /#7/)
+  })
+})
+
+test('订阅线程：游标推进后，上一拍已读的评论不会第二次变成 Trigger', async () => {
+  await withStore(async (store) => {
+    // 上一拍（或通知读取）留下的游标：从 STARTED 之后读。
+    seed(store, GITHUB_KEYS.cursor(7), STARTED)
+    const comment = threadComment(70, 'alice', '2026-09-10T00:00:30.000Z', 7)
+    const { calls, fetch } = fakeFetch(async (url) => {
+      if (url.includes('/issues/7/comments')) {
+        // 跟 GitHub 一样按 since 过滤：这一条只在请求的 since 早于它时返回。
+        const since = new URL(url).searchParams.get('since')
+        return json(Date.parse(comment.updated_at) > Date.parse(since) ? [comment] : [])
+      }
+      if (url.includes('/pulls/7') && !url.includes('/comments') && !url.includes('/reviews')) return json(pullJson(7))
+      return json([])
+    })
+    const { source, received, setClock } = makeSource(store, fetch, { started: LATER })
+    // 第一拍：since 是种下的 STARTED，00:00:30 那条落在窗口里。
+    await source.pollThreads([{ number: 7, isPr: true }])
+    assert.equal(received.length, 1)
+    // 读完把游标推到「本拍开始 = LATER」，往前让 5 秒（`poll.ts:29`）。
+    assert.equal(kv(store, GITHUB_KEYS.cursor(7)), cursorAt(LATER))
+
+    // 第二拍：游标已经越过那条评论，服务端不再返回它，于是没有第二条 Trigger。
+    setClock(LATER_STILL)
+    const from = calls.length
+    await source.pollThreads([{ number: 7, isPr: true }])
+    assert.equal(received.length, 1)
+    const second = along(callsIn(calls, from), '/issues/7/comments')
+    assert.equal(second.length, 1)
+    // 请求带的是上一拍写下的游标，不是 STARTED：游标没推进这条断言就挂。
+    assert.equal(new URL(second[0].url).searchParams.get('since'), cursorAt(LATER))
+  })
+})
+
+test('subscribedThreads：只给 GitHub 线程，isPr 从话题属性或线程上最新 Trigger 取', async () => {
+  await withStore(async (store) => {
+    const runtime = new SuperagentRuntime(store, { now: () => STARTED, log: () => {} })
+    const repos = new StoreRepositories(store.handle)
+    try {
+      const [first, second] = twoTickets(runtime, repos)
+      // 第一张跟三样：带属性的 PR 话题、没有属性但线程上最新 Trigger 说这是 PR 的话题、CI 话题。
+      repos.tickets.save({
+        ...repos.tickets.get(first),
+        follows: [
+          { thread: 'github:7', own: true },
+          { thread: 'github:9', own: false },
+          { thread: 'github:ci:main', own: false },
+        ],
+      })
+      // 第二张跟第一张同一个 PR（去重）、一个 Issue、一个别的来源的话题（不该进来）。
+      repos.tickets.save({
+        ...repos.tickets.get(second),
+        follows: [
+          { thread: 'github:7', own: false },
+          { thread: 'github:12', own: false },
+          { thread: 'feishu:oc_1:om_1', own: false },
+        ],
+      })
+      repos.threads.save(threadRow('github', '7', { isPr: true }))
+      repos.threads.save(threadRow('github', '9', {}))
+      repos.threads.save(threadRow('github', '12', { isPr: false }))
+      // 9 号话题没有属性：身份落在它上面最新那条 Trigger 的 meta 里（来源自己写的）。
+      repos.triggers.save({
+        id: 'github-comment-9-1', source: 'github', threads: [{ source: 'github', id: '9' }],
+        actor: { source: 'github', id: 'alice' }, human: true, at: STARTED, text: '看看这张',
+        meta: { number: 9, isPr: true, commentId: 1, kind: 'conversation' },
+      })
+
+      assert.deepEqual(runtime.subscribedThreads().sort((a, b) => a.number - b.number), [
+        { number: 7, isPr: true },
+        { number: 9, isPr: true },
+        { number: 12, isPr: false },
+      ])
+    } finally {
+      runtime.close()
+    }
   })
 })

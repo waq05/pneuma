@@ -29,7 +29,7 @@ import { manualScope, manualTrigger, type ManualRequest } from './adapters/manua
 import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
 import { StoreOutbox } from './adapters/outbox.js'
 import { StoreRepositories } from './adapters/repositories.js'
-import { defaultSettings } from './adapters/settings.js'
+import { defaultSettings, GITHUB_SOURCE } from './adapters/settings.js'
 import type { DscStore } from './adapters/store.js'
 import { removeWorktree, slugOf } from './adapters/worktree.js'
 import { sessionsDir, worktreesDir } from './paths.js'
@@ -189,6 +189,23 @@ export interface SourceBridge {
 /** 把未知异常压成一行可读文本，日志用。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** GitHub 线程键的前缀。与 `github/trigger.ts:39` 的 `${SOURCE}:${number}` 同一处拼法。 */
+const GITHUB_THREAD_PREFIX = `${GITHUB_SOURCE}:`
+
+/**
+ * 线程键 `github:<number>` 里的那个编号；不是本来源、或者解析不出正整数（`github:ci:main`）
+ * 时给 `undefined`。
+ *
+ * 为什么在运行期就丢掉解析不出的键：默认分支的 CI 线程没有 Issue / PR 可读
+ * （上游 `github.ts:441-442` 在来源里跳过它），而本接口只交编号，`github:ci:main` 交过去
+ * 只能变成 `issues/NaN/comments` 这种请求。丢在知道「这是 CI 线程」的这一侧，比让来源猜单号干净。
+ */
+function githubNumber(thread: string): number | undefined {
+  if (!thread.startsWith(GITHUB_THREAD_PREFIX)) return undefined
+  const number = Number(thread.slice(GITHUB_THREAD_PREFIX.length))
+  return Number.isInteger(number) && number > 0 ? number : undefined
 }
 
 /**
@@ -354,6 +371,52 @@ export class SuperagentRuntime {
   openTickets(): Ticket[] {
     this.assertOpen()
     return this.repos.tickets.open()
+  }
+
+  /**
+   * 还开着的工单订阅的 GitHub 线程，只用编号与「是不是 PR」两样（上游 `github.ts:430-459`
+   * 的 `pollThreads` 需要的那张清单）。
+   *
+   * 为什么由运行期算而不是来源自己扫：来源只拿到一个仓库的客户端，「哪张工单还跟着哪个
+   * PR / Issue」只有工单的 `follows` 记着（`core/model.ts:314`）；来源要是自己去读话题表，
+   * 就变成「订阅了哪些话题」这件事有两个主。
+   *
+   * 只认 `github:<number>` 形状的线程键：本来源的线程键就是「来源名 + 编号」
+   * （`github/trigger.ts:39`、`github/bind.ts:82`），编号解析不出来的（`github:ci:main` 这类
+   * 默认分支 CI 线程）在这一步丢掉，理由见 {@link githubNumber}。
+   *
+   * **`isPr` 的取法**：`Follow` 里没有这个字段（`core/model.ts:314` 只有 `thread` / `own` /
+   * `closed`，它记的是「跟没跟、关没关」，不是「这是什么」），所以只能看话题。话题上的
+   * `meta` 是模型给来源放原生属性的那一格（`core/model.ts:177-181`），先读 `meta.isPr`。
+   * 但 DSC 里只有飞书来源会写它（`feishuThreads().patch`），GitHub 来源没有 `threads.patch`
+   * 出口（`github/source.ts:22-26` 的「没搬的三段」），所以真查起来 `meta.isPr` 常常是
+   * `undefined`。退路取同一条话题上**最新一条 Trigger 的 `meta.isPr`**：那个字段由 GitHub
+   * 来源自己写（`github/trigger.ts:164/192/203`），准入与观察也按它判，是线程身份的事实来源。
+   * 两条都没有时按 Issue 处理——Issue 的会话评论接口对 PR 返回的也是同一批会话评论，漏的只是
+   * 行内 review 与 review 结论；反过来把 Issue 当 PR 去读 `pulls/<n>/comments` 会拿不到，
+   * 还可能整个请求 404、让这一拍白失败。
+   *
+   * 同一张 PR 被多张工单跟着只回一条：一张 PR 每拍读一次评论就够，重复读只会白发请求。
+   */
+  subscribedThreads(): { number: number; isPr: boolean }[] {
+    this.assertOpen()
+    // Map 同时做去重与「任一工单认定是 PR 就算 PR」的合并。
+    const threads = new Map<number, boolean>()
+    for (const ticket of this.repos.tickets.open()) {
+      for (const follow of ticket.follows ?? []) {
+        const number = githubNumber(follow.thread)
+        if (number === undefined) continue
+        threads.set(number, threads.get(number) === true || this.threadIsPull(follow.thread))
+      }
+    }
+    return [...threads].map(([number, isPr]) => ({ number, isPr }))
+  }
+
+  /** 一条 GitHub 话题是不是 PR：先看话题属性，再看话题上最新一条 Trigger 的 `meta.isPr`（理由见 `subscribedThreads`）。 */
+  private threadIsPull(thread: string): boolean {
+    const meta = this.repos.threads.get(thread)?.meta
+    if (typeof meta?.['isPr'] === 'boolean') return meta['isPr']
+    return this.repos.triggers.latestOn(thread)?.meta['isPr'] === true
   }
 
   /**

@@ -1,9 +1,13 @@
 /**
- * GitHub 来源的对外入口：一个 `tick()` 跑一拍，一个 `status()` 报上一拍的结果。
+ * GitHub 来源的对外入口：`tick()` 跑一拍，`pollThreads()` 补读工单订阅的线程，`status()` 报上一拍的结果。
  *
  * 一拍做三件事，顺序与上游 `pollRound`（`sources/github.ts:280-296`）一致：
  * 通知 → 全仓库事件流 → 默认分支 CI。每件事各自失败、各自记录，最后一起报：一次网络抖动不该
  * 让同一拍里已经读到的通知也丢掉。
+ *
+ * `pollThreads()` 是同一拍之后的第四件事（接线方按「事件流 → 订阅线程 → 绑 PR → CI」的顺序调）：
+ * 全仓库事件流只报新出现的条目，工单跟着的 PR / Issue 上后来才有的对话不在其中，这一步用每个
+ * 编号自己的游标把它们读出来（上游 `github.ts:430-459`）。
  *
  * **不做定时**：没有 `setInterval`、也没有 `pause()`。上游的 `watch()`（`github.ts:127-146`）与
  * `pause()`（`sources/poll.ts:33-40`）留在接线方，因为「多久一拍、失败几次才报错」是设置问题，
@@ -19,9 +23,9 @@
  * - `pollTicketPulls`（`github.ts:404-413`）：轮询未结束工单的 PR。要 `ctx.tickets.open()` 给出
  *   编号清单。缺了它，PR 的 CI 不会随拍子上报——接线方对每张 PR 调一次本文件导出的
  *   `pollPullChecks` 即可补上（基线、指纹、`revision` 都在那里）。
- * - `pollThreads`（`github.ts:430-439`）：轮询订阅话题。要 `ctx.threads.subscribed()` 与
- *   `ctx.threads.patch`。缺了它，只在通知里出现过、后来没人再提的 Issue 上的新评论读不到。
- *   这是本适配器最大的一个缺口：核心没给「订阅了哪些话题」这个出口，硬猜就会变成全仓库扫。
+ * - `pollThreads` 的**订阅清单**（`github.ts:430-439`）：上游从 `ctx.threads.subscribed()` 拿
+ *   「哪些话题还被人跟着」。本适配器看不到话题表，清单由接线方算好交进来
+ *   （`runtime.ts` 的 `subscribedThreads`：工单的 `follows` + 线程键），本文件只负责读。
  * - `nameThread`（`github.ts:425-428`）：给话题写标题与事实。要 `ctx.threads.patch/describe`；
  *   缺了它只影响界面展示（话题没有标题、没有 CI 事实），不影响事件与准入。
  *
@@ -87,6 +91,20 @@ export interface GithubObserve {
   pulls?: boolean
   comments?: boolean
   ci?: boolean
+}
+
+/**
+ * 一条该读新评论的订阅线程。
+ *
+ * 是接线方（`runtime.ts` 的 `subscribedThreads`）从工单的 `follows` 算出来的：来源只拿得到
+ * 一个仓库的客户端，看不到「哪张工单还跟着哪个 PR / Issue」。上游这张清单来自
+ * `ctx.threads.subscribed()`（`github.ts:431`），本适配器没有那个端口，所以只收编号与身份。
+ */
+export interface GithubSubscribedThread {
+  /** `github:<number>` 线程键里的编号。 */
+  number: number
+  /** 是不是 PR：PR 才要读行内评论与 review（`github.ts:387`）。 */
+  isPr: boolean
 }
 
 /** `createGithubSource` 的入参。 */
@@ -188,10 +206,12 @@ export async function pollPullChecks(options: GithubChecksOptions, number: numbe
  * 造一个 GitHub 来源。
  *
  * @param options - 客户端、仓库、机器人登录名、核心的三个动作、持久层与时钟
- * @returns `tick()` 跑一拍（失败会抛，`status()` 里留原因），`status()` 读上一拍
+ * @returns `tick()` 跑一拍（失败会抛，`status()` 里留原因），`pollThreads()` 补读工单订阅的
+ *          线程（失败只记账不抛），`status()` 读上一拍
  */
 export function createGithubSource(options: GithubSourceOptions): {
   tick(): Promise<void>
+  pollThreads(threads: readonly GithubSubscribedThread[]): Promise<void>
   status(): { lastPollAt: string | null; lastError: string | null }
 } {
   const { api, repository, login, engine, now, log } = options
@@ -282,6 +302,33 @@ export function createGithubSource(options: GithubSourceOptions): {
       await intakeComments(round, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since)
     }
     state.set(GITHUB_KEYS.cursor(number), cursorAt(round.started))
+  }
+
+  /**
+   * 读一条订阅线程：按它自己的游标读评论，**读成功之后才推进游标**（`github.ts:440-459`）。
+   *
+   * `isPr` 由接线方给定（运行期从话题属性 / 线程上最新 Trigger 算好，见 `runtime.ts` 的
+   * `subscribedThreads`）：上游是在这里读一次 `issues/<number>` 补上并写回话题属性
+   * （`github.ts:446-451`），本适配器没有 `threads.patch` 出口，补了也无处可写，所以身份由
+   * 调用方交进来，这里不再多读一次 `issues/<number>`。
+   */
+  async function pollThread(round: Round, number: number, isPr: boolean): Promise<void> {
+    const checkpoint = GITHUB_KEYS.cursor(number)
+    // 首拍没有游标：从本拍开始读。
+    // 上游拿话题的 `createdAt`（它上面第一条 Trigger 的时刻，`github.ts:453`）当起点，本适配器
+    // 只收到编号、拿不到那个时刻。用「本拍开始」代替的代价只有「订阅到首拍之间（不超过一个
+    // 轮询间隔）的评论读不到」；换成从头读一遍会把整段老对话当成新事件灌进工单。
+    const since = state.get<string>(checkpoint) ?? round.started
+    if (isPr) {
+      // PR 还要网页地址与作者（进 Trigger 的 channel / meta），顺手观察它关没关。
+      const pr = await pull(round, number)
+      await intakeComments(round, { number, isPr: true, url: pr.html_url, prAuthor: pr.user.login }, since)
+    } else {
+      await intakeComments(round, { number, isPr: false }, since)
+    }
+    // 失败时不写：推进游标等于把那一段评论永久跳过，报错的那几条再也不会变成 Trigger。
+    // `cursorAt` 往前挪 5 秒是给服务端索引延迟留的重叠，重复读到的由 Trigger.id 去重。
+    state.set(checkpoint, cursorAt(round.started))
   }
 
   /**
@@ -472,6 +519,60 @@ export function createGithubSource(options: GithubSourceOptions): {
     },
     status(): { lastPollAt: string | null; lastError: string | null } {
       return { lastPollAt, lastError }
+    },
+    /**
+     * 读订阅线程里游标之后的新评论（上游 `pollThreads`，`github.ts:430-459` 的可搬部分）。
+     *
+     * 为什么必须是单独一步：全仓库事件流只报「新出现的通知 / 新评论」，没人再提的 Issue 与
+     * 工单跟着的 PR 上后来才有的对话不在其中（`github.ts:22-24`）。工单跟着一张 PR 时，只有
+     * 合并会经 `threadClosed` 报进来，中间的问答全漏——这一段补的就是它。
+     *
+     * 三条与上游一致的行为：
+     * - 一条线程一个游标（`GITHUB_KEYS.cursor(number)`，键名照 `kv.ts` 的 `github-cursor:<n>`）；
+     * - 游标只在读成功之后推进，失败那一轮不推，否则失败期间的评论会被永久跳过；
+     * - 逐条线程各自 try/catch，一条读失败不影响其他线程，也不打断接线方的下一件事。
+     *
+     * 失败只进 `status().lastError` 与日志，**不抛**：`index.ts` 接在这一步后面的是绑 PR 与 CI
+     * 轮询，它们不该因为某个订阅线程读不通就整拍跳过。本方法自己不抛任何错——唯一的例外是
+     * 调用方在 `.then` 里现场调用 `subscribedThreads()` 时它抛了（运行期已关），那由接线方
+     * 那一层的 catch 兜住。
+     */
+    async pollThreads(threads: readonly GithubSubscribedThread[]): Promise<void> {
+      const started = now()
+      const round: Round = { started, pulls: new Map(), failures: [], dropped: [], abandoned: [] }
+      const read = new Set<number>()
+      for (const thread of threads) {
+        const number = thread.number
+        // 上游在这里跳过 `ci:<branch>` 线程（`github.ts:441-444`）：默认分支的 CI 没有 Issue / PR
+        // 可读。这种线程在运行期就被丢掉了（线程键解析不出编号），到这里只剩「编号本身不合法」
+        // 这一种可能——手写的清单、将来别的调用方传坏值。记一条失败并跳过，别拿 NaN 去拼路径。
+        if (!Number.isInteger(number) || number <= 0) {
+          round.failures.push(`#${String(number)}: subscribed thread has no issue or PR number`)
+          continue
+        }
+        // 多张工单跟同一张 PR：一轮只读一次评论。
+        if (read.has(number)) continue
+        read.add(number)
+        try {
+          await pollThread(round, number, thread.isPr)
+        } catch (error) {
+          // 410 是会话被删了：它不会自己好起来，单独记，别混进「这一轮读失败了」。
+          if (deleted(error)) round.dropped.push(number)
+          else round.failures.push(`#${String(number)}: ${String(error)}`)
+        }
+      }
+      const dropped = round.dropped.length
+        ? `; deleted on GitHub: ${round.dropped.map((number) => `#${String(number)}`).join(', ')}`
+        : ''
+      if (round.failures.length > 0) {
+        const message = `${String(round.failures.length)} subscribed GitHub thread reads failed: `
+          + `${round.failures.slice(0, 3).join('; ')}${dropped}`
+        lastError = message
+        log(`github: ${message}`)
+        return
+      }
+      // 成功这一轮不清 `lastError`：`tick()` 那一拍可能刚记下别的失败，那是两件事。
+      if (dropped !== '') log(`github: subscribed threads polled at ${started}${dropped}`)
     },
   }
 }

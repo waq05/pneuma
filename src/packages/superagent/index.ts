@@ -667,8 +667,19 @@ export function apply(ctx: Context, passed?: unknown): void {
     if (now - github.lastAt < GITHUB_POLL_INTERVAL_MS) return
     github.lastAt = now
     github.busy = true
-    void github.source.tick()
+    // 先把两个活对象抓在手里：`github` / `runtime` 都是可变的 `let`，停用插件时会被置空，
+    // 而 `.then` 里的回调是几十毫秒之后才跑的，回调里再读就可能读到 null。
+    const source = github.source
+    const target = runtime
+    void source.tick()
       .catch((error: unknown) => { console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`) })
+      // 顺序：事件流 → 订阅线程的新评论 → 绑 PR → 看 CI。
+      // 订阅线程要单独读（工单跟着的 PR / Issue 不在事件流里，只有合并且会经 threadClosed 报进来）；
+      // 订阅清单从运行期拿（工单的 follows 只有它知道），运行期没起来就跳过这一步。
+      // 这一步失败只记日志：`pollThreads` 自己已经逐线程兜住，这里再兜一层「取清单就抛了」的情况，
+      // 不让它挡住后面的绑 PR 与 CI。
+      .then(() => source.pollThreads(target?.subscribedThreads() ?? []))
+      .catch((error: unknown) => { console.warn(`[superagent] GitHub 订阅线程轮询失败：${errorText(error)}`) })
       // 事件流看完再看 PR 的 CI：两件事的失败互不影响，所以各有各的 catch。
       // 先认领 PR（智能体自己开的那张），再看已认领的 CI——顺序反了会白等一拍。
       .then(() => bindPulls())
