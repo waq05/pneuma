@@ -1068,6 +1068,44 @@ PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exi
 
 超时语义没有跟着改：见 §9.4，`waiting` 在本适配器里没有出口，保留 `failed`。
 
+### 第 10 步：与上游对齐的补齐轮次（已完成）
+
+第 9 步之后，`docs/superagent/backlog.md` 记下了「上游有而当前没有」的项。这一轮按编号
+逐项补齐，每项先读上游原码、小步提交、跑门禁。
+
+| 项 | 做了什么 | 与上游的差异 |
+| --- | --- | --- |
+| G2 持久化 effect 队列 | `adapters/effects.ts` 照上游 `app/effects.ts` 移植：`launch` / `delivery` 两种 kind，`seq` / `generation` / `attempts` / `due` 语义逐项对齐 | 上游 6 种 kind，这里只有 2 种——`assessment` / `relay` / `notice` 依赖主会话（G1 不做），`reply` 由发送泵承担 |
+| G4 准备命令 | 设置项 `prepareCommand`，建树后执行、10 分钟超时、失败判 failed 不重试 | 上游跑在工单目录的父目录（目录由 prepare 建）；这里目录由 git worktree 建好，跑在树里 |
+| G5 临时故障重试 | `transient()` 判据 + 3 次重试（15/30/60 秒），同一会话投「继续」 | 上游投完等 `whenIdle`；`MiniAgent` 没有可等待的 idle 事件，用 `retryPending` 标记让故障回合先不报 |
+| G7 报告语义 | `superagent_report` 工具（state / summary / question），工具报的状态覆盖回合默认的 `ready` | 上游叫 `orchestrator_report`，另有 `question_for_trigger_id` / `pr_number` / `reply_to_trigger_id` 三个参数；DSC 没有对应链路，去掉了 |
+| G8 提示词外置 | `prompts/worker.md` + 构建脚本拷两个落点 + 运行时读文件缓存 + 内置兜底 | 上游 15 个 md；这里只有 worker 一个（主会话提示词随 G1 不做） |
+| S1 线程上下文 | `threadWindow` 逐行同构，`runtime.threadContext()` 读窗口，判定器提示词加一节 | 上游分页用游标，GitHub 是页码；行内 review 评论不在窗口里 |
+| S2 订阅线程轮询 | `subscribedThreads()` + `source.pollThreads()`，每线程独立游标 | 首拍起点用「本拍开始」而不是 `thread.createdAt`（接口只交编号） |
+| S3 飞书群发现 | `+chat-list` 每轮刷新，开机后新出现的群并进补收 | 上游靠长连接事件；补收侧这里只补「开机后出现的群」，不补历史 |
+| S6 飞书准入 | 飞书来源接进 `policy.sources` + 设置项 `feishuAllowed` | 上游 SETUP 里让用户填名单；这里同样必须填，否则消息全判 `not_a_member` |
+| O1 安装引导 | `repoPath` 为空时快照面返回 `repo_missing`，界面画一条不挡页面的警告 | 上游有完整的 `SETUP.md` 向导；这里只有一条提示 |
+| O2 机器校验 | 体检项 `superagent/dependencies`：git / lark-cli 各跑一次 `--version` | 上游 `deployment.ts` 校验更多依赖 |
+| O3 全链路门禁 | `scripts/superagent-e2e-test.mjs`：假模型 + 真宿主 / 工具 / worktree / git，24 条断言 | 上游没有等价探针 |
+| O4 outbox 状态列 | `state`（pending / sending）+ `claimOutbox` + 开库时把残留 `sending` 改回 pending | 上游 `Effects` 管副作用、`Outbox` 只管入队；DSC 的发送泵自己带队列语义 |
+| U1 停用复位 | `ui-sessions` 对任意整页判断「启动图里还有没有人报名」 | 上游没有这个界面 |
+| U2 转录自动刷新 | 详情页在 `working` / `idle` 时每 5 秒静默重读 | 上游没有这个界面 |
+| U4 概览页 | 四页签，概览是三格计数 + 最近动态 + 空态 | 上游 `overview.tsx` 四段；只搬了两段，其余在快照面没有字段 |
+| U5 来源状态 | 契约加 `sources?`，概览页底部一块显示两个来源的轮询状态 | 上游 `source.tsx` 是完整设置卡；这里只做状态可见性 |
+
+**没做的两项，理由写在清单里**：G1（常驻主会话编排器）——DSC 没有常驻编排会话，做等价物
+要么污染用户会话、要么新造一套架构；G3 / G6（后台任务、子智能体）——依赖内核是否暴露对应能力。
+
+**这一轮的验收**：
+
+```
+pnpm run build                     # exit 0
+node scripts/package-tests.mjs     # 91 包 / 121 用例 / 688 断言 / 0 失败
+node scripts/superagent-e2e-test.mjs  # 24/24 通过
+pnpm run check:plugin              # exit 0
+node scripts/check-core.mjs        # 123/123 通过
+```
+
 ### 实施中修正的设计
 
 | 原设计 | 实际 | 为什么 |
