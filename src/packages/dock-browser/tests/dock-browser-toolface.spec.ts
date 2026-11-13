@@ -30,6 +30,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { tempHome } from '../../../../tests/harness.js'
 import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS } from '../../../core/dock-browser.js'
 import { HOST_BROWSER_SERVICE } from '../../../core/host-browser-link.js'
+import { defaultSurface, makeTab, openBrowserTab } from '../../ui-dockkit/ui/dock-model.js'
 
 /** 临时主目录（`tempHome` 一个文件只能调一次）。 */
 const home = tempHome('dsc-dock-tool-')
@@ -265,7 +266,47 @@ describe('② 地址闸门：云元数据与 file:// 在进审批之前就挡掉
   })
 })
 
-describe('③ open 要等页面真的落到目标地址（回归）', () => {
+describe('④ 壳侧页签模型：同 id 只聚焦，不新建、不换地址', () => {
+  /** 一张布局里的浏览器页签（别的种类不参与断言）。 */
+  const browserTabs = (surface: ReturnType<typeof defaultSurface>): Array<{ id: string; path?: string; label?: string }> =>
+    surface.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === 'browser')
+
+  test('makeTab 支持第三个可选 id，给了就用它', () => {
+    expect(makeTab('browser', 'https://example.com/', 'agent-9').id).toBe('agent-9')
+    expect(makeTab('browser', 'https://example.com/').id).not.toBe('agent-9')
+    expect(makeTab('browser', undefined, 'agent-10').id).toBe('agent-10')
+  })
+
+  test('openBrowserTab 用指定 id 建页签并带上地址与标题', () => {
+    const tabs = browserTabs(openBrowserTab(defaultSurface(), 'https://example.com/', '标题', 'agent-9'))
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]?.id).toBe('agent-9')
+    expect(tabs[0]?.path).toBe('https://example.com/')
+    expect(tabs[0]?.label).toBe('标题')
+  })
+
+  test('同 id 重开只聚焦不新建（页签数不变）', () => {
+    const base = openBrowserTab(defaultSurface(), 'https://example.com/', '标题', 'agent-9')
+    const again = openBrowserTab(base, 'https://other.example.com/', undefined, 'agent-9')
+    expect(browserTabs(again)).toHaveLength(1)
+  })
+
+  test('同 id 重开不换地址（只聚焦）', () => {
+    const base = openBrowserTab(defaultSurface(), 'https://example.com/', '标题', 'agent-9')
+    const again = openBrowserTab(base, 'https://other.example.com/', undefined, 'agent-9')
+    // 壳若顺手改地址，工具面里 open 那句「同 id 重开只聚焦、不会换地址」的承诺就是假的。
+    expect(browserTabs(again)[0]?.path).toBe('https://example.com/')
+    expect(again.panes.some((pane) => pane.activeTabId === 'agent-9')).toBe(true)
+  })
+
+  test('不同 id 正常新开一张（去重不误伤）', () => {
+    const base = openBrowserTab(defaultSurface(), 'https://example.com/', '标题', 'agent-9')
+    const again = openBrowserTab(base, 'https://other.example.com/', undefined, 'agent-9')
+    expect(browserTabs(openBrowserTab(again, 'https://third.example.com/', undefined, 'agent-11'))).toHaveLength(2)
+  })
+})
+
+describe('⑤ open 要等页面真的落到目标地址（回归）', () => {
   /** 目标地址：桩前三次都报 about:blank。 */
   const TARGET = 'https://example.com/landed'
   /** `Runtime.evaluate` 被读了几次（证明是轮询，不是读一次就返回）。 */
