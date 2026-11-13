@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { readSessionJsonl, tempHome } from './harness.js'
+import { fakeLLM, readSessionJsonl, tempHome, type FakeLLM } from './harness.js'
 
 /** 清理栈：每条用例自己登记，红了也照样在 afterEach 里执行。 */
 const cleanups: Array<() => void> = []
@@ -44,6 +44,46 @@ beforeEach(() => {
     rmSync(work, { recursive: true, force: true })
   })
 })
+
+/** 解析 SSE 文本里的 `data:` 帧，`[DONE]` 不算一帧。 */
+function ssePayloads(text: string): Array<Record<string, unknown>> {
+  return text
+    .split('\n\n')
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith('data: '))
+    .map((block) => block.slice('data: '.length))
+    .filter((data) => data !== '[DONE]')
+    .map((data) => JSON.parse(data) as Record<string, unknown>)
+}
+
+/** 从 SSE 帧里拼出正文增量。 */
+function textOf(text: string): string {
+  return ssePayloads(text)
+    .flatMap((payload) => (payload.choices as Array<{ delta?: { content?: string } }> | undefined) ?? [])
+    .map((choice) => choice.delta?.content ?? '')
+    .join('')
+}
+
+/** 从 SSE 帧里取出第一个工具调用增量。 */
+function toolCallOf(text: string): { id?: string; function: { name: string; arguments: string } } | undefined {
+  const calls = ssePayloads(text).flatMap(
+    (payload) =>
+      (payload.choices as
+        | Array<{ delta?: { tool_calls?: Array<{ id?: string; function: { name: string; arguments: string } }> } }>
+        | undefined) ?? [],
+  )
+  return calls.flatMap((choice) => choice.delta?.tool_calls ?? [])[0]
+}
+
+/** 发一次 OpenAI 兼容的流式请求；返回状态与完整 SSE 文本。 */
+async function postChat(fake: FakeLLM, messages: unknown[]): Promise<{ status: number; text: string }> {
+  const response = await fetch(`${fake.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'm', messages, stream: true }),
+  })
+  return { status: response.status, text: await response.text() }
+}
 
 describe('tempHome', () => {
   test('把 HOME 与 USERPROFILE 同时指向新建的临时目录', () => {
@@ -106,6 +146,132 @@ describe('readSessionJsonl', () => {
   test('路径不是非空字符串时拒绝', () => {
     expect(() => readSessionJsonl('')).toThrow(/非空字符串/)
     expect(() => readSessionJsonl(undefined as never)).toThrow(/非空字符串/)
+  })
+})
+
+describe('fakeLLM', () => {
+  test('纯文本轮按探针的 SSE 形状应答：content 增量 + finish_reason + usage + [DONE]', async () => {
+    // 这四段照抄 scripts/todo-reminder-test.mjs:154-163；少任何一段都会被真内核放大成
+    // 超时或用量恒 0，所以逐段钉住，而不是只断言「响应里出现了你好」。
+    const fake = await fakeLLM({ turns: ['你好'] })
+    cleanups.push(() => void fake.close())
+    const response = await postChat(fake, [{ role: 'user', content: '在吗' }])
+    expect(response.status).toBe(200)
+    expect(response.text.trimEnd().endsWith('data: [DONE]')).toBe(true)
+    const payloads = ssePayloads(response.text)
+    expect(payloads[0]).toEqual({ choices: [{ delta: { content: '你好' } }] })
+    expect(payloads.some((payload) => (payload.choices as Array<{ finish_reason?: string }>)[0]?.finish_reason === 'stop')).toBe(true)
+    expect(payloads.find((payload) => (payload.choices as unknown[]).length === 0)?.usage).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 20,
+    })
+    expect(fake.bodies).toEqual([[{ role: 'user', content: '在吗' }]])
+    expect(fake.requestCount).toBe(1)
+  })
+
+  test('工具调用轮：parameters 以 JSON 字符串上线、finish_reason 是 tool_calls', async () => {
+    const fake = await fakeLLM({ turns: [{ toolCall: { name: 'read', args: { path: 'a.txt' } } }] })
+    cleanups.push(() => void fake.close())
+    const response = await postChat(fake, [{ role: 'user', content: '读文件' }])
+    const call = toolCallOf(response.text)
+    expect(call?.id).toBe('call_fake_1')
+    expect(call?.function.name).toBe('read')
+    // 线上协议里 arguments 是字符串，不是对象；写成对象真内核会当作坏块。
+    expect(call?.function.arguments).toBe('{"path":"a.txt"}')
+    expect(JSON.parse(call!.function.arguments)).toEqual({ path: 'a.txt' })
+    expect(
+      ssePayloads(response.text).some(
+        (payload) => (payload.choices as Array<{ finish_reason?: string }>)[0]?.finish_reason === 'tool_calls',
+      ),
+    ).toBe(true)
+  })
+
+  test('剧本用完后继续用最后一条', async () => {
+    const fake = await fakeLLM({ turns: ['第一轮'] })
+    cleanups.push(() => void fake.close())
+    await postChat(fake, [{ role: 'user', content: 'a' }])
+    const second = await postChat(fake, [{ role: 'user', content: 'b' }])
+    expect(textOf(second.text)).toBe('第一轮')
+    expect(fake.requestCount).toBe(2)
+  })
+
+  test('标题请求单独应答：不占轮次、不记进 bodies', async () => {
+    // 判据抄自 scripts/todo-reminder-test.mjs:183-190。这类请求若吃掉一轮剧本，
+    // 后面所有轮次错位，失败会看起来「随机」。
+    const fake = await fakeLLM({ turns: ['真实回答'] })
+    cleanups.push(() => void fake.close())
+    const title = await postChat(fake, [{ role: 'system', content: '你是会话标题生成器。根据对话起标题。' }])
+    expect(textOf(title.text)).toBe('测试会话标题')
+    expect(fake.requestCount).toBe(0)
+    expect(fake.bodies).toHaveLength(0)
+
+    const convo = await postChat(fake, [{ role: 'user', content: '真实对话' }])
+    expect(textOf(convo.text)).toBe('真实回答')
+    expect(fake.requestCount).toBe(1)
+  })
+
+  test('onRequest 收到原始请求体与轮次：标题请求是 0，会话请求从 1 起', async () => {
+    const seen: Array<{ turn: number; count: number }> = []
+    const fake = await fakeLLM({
+      turns: ['a', 'b'],
+      onRequest: (body, turn) => {
+        seen.push({ turn, count: (body as { messages: unknown[] }).messages.length })
+      },
+    })
+    cleanups.push(() => void fake.close())
+    await postChat(fake, [{ role: 'system', content: '你是会话标题生成器。' }])
+    await postChat(fake, [{ role: 'user', content: '第一句' }])
+    await postChat(fake, [{ role: 'user', content: '第二句' }])
+    // count 也一起断言：钩子拿到的是「原始请求体」，不是被裁过的 messages。
+    expect(seen).toEqual([
+      { turn: 0, count: 1 },
+      { turn: 1, count: 1 },
+      { turn: 2, count: 1 },
+    ])
+  })
+
+  test('自定义 isTitleRequest 替换默认判据（不是叠加）', async () => {
+    const fake = await fakeLLM({
+      turns: ['走对话'],
+      isTitleRequest: (body) => JSON.stringify(body).includes('TITLE-MARK'),
+    })
+    cleanups.push(() => void fake.close())
+    // 默认判据认的这句提示词，在自定义判据下必须被当成普通会话请求。
+    const response = await postChat(fake, [{ role: 'system', content: '你是会话标题生成器。' }])
+    expect(fake.requestCount).toBe(1)
+    expect(textOf(response.text)).toBe('走对话')
+  })
+
+  test('turns 为空 / 轮次形状错误 / 参数不可序列化时，起服务前就报可读的错', async () => {
+    await expect(fakeLLM({ turns: [] })).rejects.toThrow(/turns 不能为空/)
+    await expect(fakeLLM({ turns: [42 as never] })).rejects.toThrow(/第 1 轮/)
+    await expect(fakeLLM({ turns: [{ toolCall: { args: {} } } as never] })).rejects.toThrow(/name/)
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    await expect(fakeLLM({ turns: [{ toolCall: { name: 'x', args: circular } }] })).rejects.toThrow(/序列化/)
+  })
+
+  test('两个端点各自随机端口，并行不会撞端口', async () => {
+    const first = await fakeLLM({ turns: ['a'] })
+    const second = await fakeLLM({ turns: ['b'] })
+    cleanups.push(() => void first.close())
+    cleanups.push(() => void second.close())
+    expect(first.baseUrl).not.toBe(second.baseUrl)
+    expect(first.baseUrl.startsWith('http://127.0.0.1:')).toBe(true)
+  })
+
+  test('close 可重复调用；钩子抛错会让 close 抛错，不静默放过', async () => {
+    const fake = await fakeLLM({
+      turns: ['a'],
+      onRequest: () => {
+        throw new Error('钩子里的断言失败')
+      },
+    })
+    const response = await postChat(fake, [{ role: 'user', content: 'x' }])
+    // 400 而不是 500：500 会被内核的可重试清单接住，重试三次只是把同一错误拖长。
+    expect(response.status).toBe(400)
+    await expect(fake.close()).rejects.toThrow(/没有被正常应答/)
+    await expect(fake.close()).rejects.toThrow(/没有被正常应答/)
   })
 })
 

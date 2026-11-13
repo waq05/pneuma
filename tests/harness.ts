@@ -129,6 +129,335 @@ export function tempHome(prefix = 'dsc-test-'): { home: string; restore: () => v
   return { home, restore }
 }
 
+// ── 6.2 fakeLLM ──────────────────────────────────────────────────────────────
+
+/** `fakeLLM` 的剧本与钩子。 */
+export interface FakeLLMOptions {
+  /** 每轮返回什么：字符串 = 纯文本回复；对象 = 一次工具调用。 */
+  turns: Array<string | { toolCall: { name: string; args: unknown } }>
+  /** 每次请求到达时的钩子，用于断言请求体；标题请求的 turn 是 0。 */
+  onRequest?: (body: unknown, turn: number) => void
+  /** 自定义「这是标题请求」的判据；给了就**替换**默认判据，而不是叠加。 */
+  isTitleRequest?: (body: unknown) => boolean
+}
+
+/** 假 LLM 端点的对外形态。 */
+export interface FakeLLM {
+  /** `http://127.0.0.1:<系统分配的端口>`。 */
+  baseUrl: string
+  /** 每次会话请求的 `messages`，按到达顺序；标题请求不记录也不占轮次。 */
+  bodies: unknown[]
+  /** 已到达的会话请求数；标题请求不计。 */
+  requestCount: number
+  /** 关服务；失败（录制校验不通过等）在这里抛出，不静默。 */
+  close(): Promise<void>
+}
+
+/** 一条 SSE 增量；与 `src/core/llm.ts:660-677` 认的线上形状一一对应。 */
+interface SseChunk {
+  content?: string
+  reasoning?: string
+  toolCall?: { id: string; name: string; args: unknown }
+}
+
+/** 剧本校验后的内部形状：字符串轮直接摊平成正文增量。 */
+type NormalizedTurn = { content: string } | { toolCall: { name: string; args: unknown } }
+
+/**
+ * SSE 帧。协议逐字节照抄 `scripts/todo-reminder-test.mjs:154-163` 的抓包：
+ * 正文/工具增量 → `finish_reason` → usage 空 choices 块 → `data: [DONE]`。
+ *
+ * 为什么末尾三帧一条都不能省：`src/core/llm.ts:694-709` 靠 `finish_reason` 判回合形态、
+ * 靠 usage 块记 token、靠 `[DONE]` 结束流。少 `[DONE]` 时流会挂到空闲超时，用例不是红，
+ * 是卡满 60 秒；少 usage 则用量断言恒为 0，把一个真 bug 放成绿。
+ */
+function frame(payload: unknown): string {
+  return `data: ${JSON.stringify(payload)}\n\n`
+}
+
+/** 把若干增量拼成一次完整的 SSE 应答。 */
+function sseBody(chunks: readonly SseChunk[]): string {
+  let body = ''
+  for (const chunk of chunks) {
+    if (chunk.reasoning !== undefined) {
+      body += frame({ choices: [{ delta: { reasoning_content: chunk.reasoning } }] })
+    }
+    if (chunk.content !== undefined) {
+      body += frame({ choices: [{ delta: { content: chunk.content } }] })
+    }
+    if (chunk.toolCall !== undefined) {
+      body += frame({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: chunk.toolCall.id,
+                  type: 'function',
+                  function: { name: chunk.toolCall.name, arguments: stringifyArgs(chunk.toolCall.args) },
+                },
+              ],
+            },
+          },
+        ],
+      })
+    }
+  }
+  const finishReason = chunks.some((chunk) => chunk.toolCall !== undefined) ? 'tool_calls' : 'stop'
+  body += frame({ choices: [{ delta: {}, finish_reason: finishReason }] })
+  body += frame({ choices: [], usage: { prompt_tokens: 100, completion_tokens: 20 } })
+  body += 'data: [DONE]\n\n'
+  return body
+}
+
+/**
+ * 工具参数在线上是 JSON **字符串**（见 `src/core/llm.ts:46`）。
+ *
+ * 提前序列化而不是等请求到达：`args` 里塞了循环引用或 BigInt 时，应该在 `fakeLLM()`
+ * 调用处就报错并指向第几轮，而不是第一个请求进来时返回 500、让内核报一句
+ * 「HTTP 500」再重试三次。错误的定位点差着三层调用栈。
+ */
+function stringifyArgs(args: unknown, where = 'SSE 工具调用'): string {
+  let text: string | undefined
+  try {
+    text = JSON.stringify(args ?? {})
+  } catch (error) {
+    throw new Error(`${where}：工具参数不能序列化成 JSON（${errorText(error)}）`)
+  }
+  if (text === undefined) {
+    throw new Error(`${where}：工具参数序列化后是 undefined，检查 args 是不是函数或 undefined`)
+  }
+  return text
+}
+
+/** 默认的标题请求判据，形状同探针：system 正文里含标题生成器提示词。 */
+function isTitleRequestByPrompt(body: unknown): boolean {
+  if (body === null || typeof body !== 'object') return false
+  const messages = (body as { messages?: unknown }).messages
+  if (!Array.isArray(messages)) return false
+  return messages.some((message) => {
+    if (message === null || typeof message !== 'object') return false
+    const { role, content } = message as { role?: unknown; content?: unknown }
+    return role === 'system' && typeof content === 'string' && content.includes(TITLE_PROMPT_NEEDLE)
+  })
+}
+
+/** 校验剧本；错在第几轮、错在哪一项都要能直接读到。 */
+function normalizeTurns(input: unknown): NormalizedTurn[] {
+  if (!Array.isArray(input)) {
+    throw new TypeError('fakeLLM：turns 必须是数组')
+  }
+  if (input.length === 0) {
+    // 空剧本配「用完续用最后一条」没有定义：请求会永远拿不到应答，表现为用例挂满超时。
+    throw new Error('fakeLLM：turns 不能为空（至少给一轮，假模型不会自己编）')
+  }
+  return input.map((turn, index) => {
+    const where = `fakeLLM：第 ${index + 1} 轮`
+    if (typeof turn === 'string') return { content: turn }
+    if (turn !== null && typeof turn === 'object' && 'toolCall' in turn) {
+      const call = (turn as { toolCall?: unknown }).toolCall
+      if (call === null || typeof call !== 'object') {
+        throw new Error(`${where} 的 toolCall 必须是对象 { name, args }`)
+      }
+      const name = (call as { name?: unknown }).name
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new Error(`${where} 的 toolCall.name 必须是非空字符串`)
+      }
+      const args = (call as { args?: unknown }).args
+      stringifyArgs(args, where)
+      return { toolCall: { name, args } }
+    }
+    throw new Error(`${where} 既不是字符串，也不是 { toolCall: { name, args } }`)
+  })
+}
+
+/** 一个假端点服务端：fakeLLM 与 replayLLM 共用这套收发与记录逻辑。 */
+interface FakeServerOptions {
+  /** 报错前缀：红的时候要能一眼看出是哪个假端点。 */
+  label: string
+  /** 是否标题请求；为真时不应答剧本、不占轮次。 */
+  isTitleRequest: (body: unknown) => boolean
+  /** 请求到达钩子。 */
+  onRequest?: (body: unknown, turn: number) => void
+  /** 给出这一轮的应答；返回错误形态表示「这次请求不该被正常应答」。 */
+  respond: (body: unknown, turn: number) => SseChunk[] | { status: number; message: string }
+}
+
+/**
+ * 起一个假端点。端口用 `listen(0, '127.0.0.1')`：随机端口避免并行用例与开发机上别的
+ * 进程撞端口；只绑回环地址，测试不会意外对局域网开放一个「谁来都答」的模型端点。
+ *
+ * `close()` 会先销毁连接再关服务：`server.close()` 只等已有连接自己结束，浏览器/客户端
+ * 的 keep-alive 会让它一直等，表现为 vitest 跑完不退出。销毁连接是让「关」这个动作
+ * 真的立刻生效，而不是等 OS 超时。
+ */
+async function startFakeServer(options: FakeServerOptions): Promise<FakeLLM> {
+  const bodies: unknown[] = []
+  /** 需要让 close() 抛出的失败：不能让「录制对不上」随着请求结束被忘掉。 */
+  const failures: Error[] = []
+  const sockets = new Set<Socket>()
+  let requestCount = 0
+  let closed = false
+
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => {
+      chunks.push(chunk)
+    })
+    request.on('end', () => {
+      const fail = (status: number, message: string): void => {
+        response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+        response.end(JSON.stringify({ error: message }))
+      }
+      let body: unknown
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      } catch (error) {
+        fail(400, `${options.label}：请求体不是合法 JSON（${errorText(error)}）`)
+        return
+      }
+      const messages = (body as { messages?: unknown } | null)?.messages
+      if (!Array.isArray(messages)) {
+        // 内核发的请求一定有 messages；这里收到别的形状说明请求组装被改坏了，
+        // 必须让调用方看到 400，而不是拿一个空轮次继续。
+        fail(400, `${options.label}：请求体里没有 messages 数组`)
+        return
+      }
+
+      if (options.isTitleRequest(body)) {
+        try {
+          options.onRequest?.(body, 0)
+        } catch (error) {
+          failures.push(error instanceof Error ? error : new Error(errorText(error)))
+          fail(400, `${options.label}：onRequest 在标题请求上抛错（${errorText(error)}）`)
+          return
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(sseBody([{ content: TITLE_REPLY }]))
+        return
+      }
+
+      requestCount += 1
+      const turn = requestCount
+      // 会话请求体只记录 messages：这既是模型真正看到的那一份，也是 requestHash 的输入。
+      bodies.push(messages)
+      try {
+        options.onRequest?.(body, turn)
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error(errorText(error)))
+        fail(400, `${options.label}：onRequest 在第 ${turn} 轮抛错（${errorText(error)}）`)
+        return
+      }
+
+      let reply: SseChunk[] | { status: number; message: string }
+      try {
+        reply = options.respond(body, turn)
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error(errorText(error)))
+        fail(400, `${options.label}：第 ${turn} 轮应答时抛错（${errorText(error)}）`)
+        return
+      }
+      if (!Array.isArray(reply)) {
+        // 非 2xx 都是「这次请求不该通过」：录制校验失败必须让内核侧也失败，
+        // 不能悄悄回一段正常 SSE 让用例绿着。
+        const failure = new Error(reply.message)
+        failures.push(failure)
+        fail(reply.status, reply.message)
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(sseBody(reply))
+    })
+  })
+  server.on('connection', (socket: Socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+
+  await new Promise<void>((resolveListen, rejectListen) => {
+    const onError = (error: Error): void => {
+      rejectListen(new Error(`${options.label}：假端点起不来（${error.message}）`))
+    }
+    server.once('error', onError)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', onError)
+      resolveListen()
+    })
+  })
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    server.close()
+    throw new Error(`${options.label}：listen 后拿不到端口`)
+  }
+
+  const close = async (): Promise<void> => {
+    if (!closed) {
+      closed = true
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>((resolveClose) => {
+        server.close(() => {
+          resolveClose()
+        })
+      })
+    }
+    if (failures.length > 0) {
+      // 关的时候再抛一次：即便调用方没检查某一轮的应答，录制对不上也不能随 close 消失。
+      throw new AggregateError(failures, `${options.label}：${failures.length} 次请求没有被正常应答`)
+    }
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    bodies,
+    get requestCount(): number {
+      return requestCount
+    },
+    close,
+  }
+}
+
+/**
+ * 起一个 OpenAI 兼容的假模型端点，按轮返回剧本。
+ *
+ * 协议不是自己编的：`SseChunk` 的四段应答逐字节照抄 `scripts/todo-reminder-test.mjs`
+ * 的 `sseText` / `sseToolCall`（第 154-163 行），标题请求判据照抄同文件第 183-190 行。
+ * 24 条探针都这么起服务，说明这是内核真正认的形状；换一种「看起来等价」的写法
+ * （比如省掉 usage 块）在探针里可能也绿，但会悄悄改变被观察的行为。
+ */
+export async function fakeLLM(options: FakeLLMOptions): Promise<FakeLLM> {
+  const turns = normalizeTurns(options?.turns)
+  if (options.onRequest !== undefined && typeof options.onRequest !== 'function') {
+    throw new TypeError('fakeLLM：onRequest 必须是函数')
+  }
+  if (options.isTitleRequest !== undefined && typeof options.isTitleRequest !== 'function') {
+    throw new TypeError('fakeLLM：isTitleRequest 必须是函数')
+  }
+  const isTitleRequest = options.isTitleRequest ?? isTitleRequestByPrompt
+  return startFakeServer({
+    label: 'fakeLLM',
+    isTitleRequest,
+    ...(options.onRequest === undefined ? {} : { onRequest: options.onRequest }),
+    respond(_body, turn) {
+      // 用完继续用最后一条：探针里大多数回合是同一句「收到」，逐个列出来只会淹没重点。
+      const turnIndex = Math.min(turn - 1, turns.length - 1)
+      const scripted = turns[turnIndex]!
+      if ('content' in scripted) return [{ content: scripted.content }]
+      return [
+        {
+          toolCall: {
+            // 每轮一个唯一 id：同一 id 重复出现时，会话层的「同 callId 只留首条」
+            // 会替测试兜掉重复结果，断言就看不出「工具被调了两次」。
+            id: `call_fake_${turn}`,
+            name: scripted.toolCall.name,
+            args: scripted.toolCall.args,
+          },
+        },
+      ]
+    },
+  })
+}
+
 // ── 6.5 readSessionJsonl ─────────────────────────────────────────────────────
 
 /**
