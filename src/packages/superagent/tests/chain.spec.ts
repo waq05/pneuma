@@ -13,29 +13,37 @@
  * 执行器用假的：本用例要证的是「工单建出来了」，不是「worker 会改代码」——后者在
  * `_sa-resume-e2e.mjs` 里用真宿主跑过。
  *
+ * 迁移说明：原文件跑的是构建产物、先手工 build；现在直接 import
+ * 源码，环境变量在动态 import 之前设好。
+ *
  * @module @pneuma/superagent/tests/chain
  */
-import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { after, test } from 'node:test'
+import { afterAll, expect, test } from 'vitest'
+import type { Trigger } from '../core/model.js'
+import type { DscStore } from '../adapters/store.js'
+import type { SuperagentRuntime as RuntimeInstance } from '../runtime.js'
 
 const home = mkdtempSync(join(tmpdir(), 'superagent-chain-home-'))
 process.env['DSC_HOME'] = home
 
-const { openStore } = await import('../../../../lib/packages/superagent/adapters/store.js')
-const { SuperagentRuntime } = await import('../../../../lib/packages/superagent/runtime.js')
-const { defaultSettings } = await import('../../../../lib/packages/superagent/adapters/settings.js')
-const { superagentScope } = await import('../../../../lib/packages/superagent/adapters/scope.js')
+const { openStore } = await import('../adapters/store.js')
+const { SuperagentRuntime } = await import('../runtime.js')
+const { defaultSettings } = await import('../adapters/settings.js')
+const { superagentScope } = await import('../adapters/scope.js')
 
-after(() => { rmSync(home, { recursive: true, force: true }) })
+afterAll(() => { rmSync(home, { recursive: true, force: true }) })
 
 /** 配好的一套：仓库 `owner/repo`，名单只有 alice。 */
 const ACCOUNT = { repository: 'owner/repo', login: 'pneuma-bot', allowed: ['alice'] }
 
 /** 造一条来自 GitHub 的「人对机器人说的话」。 */
-function githubTrigger({ actor = 'alice', repository = 'owner/repo', text = '@pneuma-bot 把 README 里的错别字改掉' } = {}) {
+function githubTrigger(
+  { actor = 'alice', repository = 'owner/repo', text = '@pneuma-bot 把 README 里的错别字改掉' }:
+  { actor?: string; repository?: string; text?: string } = {},
+): Trigger {
   const at = new Date().toISOString()
   return {
     id: `trg-gh-${actor}-${String(Math.random()).slice(2, 8)}`,
@@ -51,17 +59,24 @@ function githubTrigger({ actor = 'alice', repository = 'owner/repo', text = '@pn
   }
 }
 
+/** 一次假执行器的派工记录。 */
+interface StartCall { ticketId: string; assignmentId: string }
+
 /**
  * 装一套运行期：默认设置里带上 GitHub 来源与名单，来源范围也认这个仓库。
  *
  * @param work - 拿到 runtime 与 store 之后做什么
  */
-function withRuntime(work) {
+function withRuntime(work: (context: {
+  runtime: RuntimeInstance
+  store: DscStore
+  calls: { start: StartCall[] }
+}) => void): void {
   const previous = process.env['DSC_HOME']
   const root = mkdtempSync(join(tmpdir(), 'superagent-chain-run-'))
   process.env['DSC_HOME'] = root
   const store = openStore()
-  const calls = { start: [] }
+  const calls: { start: StartCall[] } = { start: [] }
   const runtime = new SuperagentRuntime(store, {
     log: () => {},
     worker: { repo: () => join(root, 'repo') },
@@ -74,7 +89,7 @@ function withRuntime(work) {
     },
   })
   try {
-    return work({ runtime, store, calls })
+    work({ runtime, store, calls })
   } finally {
     runtime.close()
     store.close()
@@ -87,15 +102,15 @@ function withRuntime(work) {
 test('全链路：名单里的人 @ 机器人 → 准入通过 → 泵一拍建出工单', () => {
   withRuntime(({ runtime, calls }) => {
     const received = runtime.sourceBridge().receive(githubTrigger())
-    assert.equal(received, 'stored', 'Trigger 应当入库，而不是被过滤掉')
+    expect(received, 'Trigger 应当入库，而不是被过滤掉').toBe('stored')
 
     runtime.pump()
 
     const tickets = runtime.list()
-    assert.equal(tickets.length, 1, '泵的一拍里判定器应当接单')
-    assert.equal(tickets[0].title, '改 README 的错别字', '标题取自 meta.title')
-    assert.equal(calls.start.length, 1, '建单之后立刻派工给执行器')
-    assert.equal(calls.start[0].ticketId, tickets[0].id)
+    expect(tickets.length, '泵的一拍里判定器应当接单').toBe(1)
+    expect(tickets[0].title, '标题取自 meta.title').toBe('改 README 的错别字')
+    expect(calls.start.length, '建单之后立刻派工给执行器').toBe(1)
+    expect(calls.start[0].ticketId).toBe(tickets[0].id)
   })
 })
 
@@ -103,8 +118,8 @@ test('全链路：名单外的人 @ 机器人 → 不建单，且不是「悄悄
   withRuntime(({ runtime, calls }) => {
     runtime.sourceBridge().receive(githubTrigger({ actor: 'mallory' }))
     runtime.pump()
-    assert.deepEqual(runtime.list(), [], '名单外的人不该建出工单')
-    assert.equal(calls.start.length, 0)
+    expect(runtime.list(), '名单外的人不该建出工单').toStrictEqual([])
+    expect(calls.start.length).toBe(0)
   })
 })
 
@@ -115,7 +130,7 @@ test('全链路：同一条 Trigger 收到两次只建一张单', () => {
     runtime.pump()
     const again = runtime.sourceBridge().receive(trigger)
     runtime.pump()
-    assert.equal(again, 'duplicate', '重复投递应当被判重复')
-    assert.equal(runtime.list().length, 1, '去重键就是 Trigger.id，这个不能被适配层改')
+    expect(again, '重复投递应当被判重复').toBe('duplicate')
+    expect(runtime.list().length, '去重键就是 Trigger.id，这个不能被适配层改').toBe(1)
   })
 })
