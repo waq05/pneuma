@@ -50,12 +50,21 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: 编译（src/ 全量，--noEmit）
         run: pnpm typecheck
+      # 测试文件被根 tsconfig 排除（不进主构建、不随包发布），所以它们唯一的类型检查入口
+      # 就是这条。少了它，Vitest 只用 esbuild 剥类型、不校验类型，夹具里把字段写错
+      # 也不会有人发现，直到某天本地跑一次。
+      - name: 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
+        run: pnpm run typecheck:spec
       - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
         run: pnpm run check:style
-      # 单元与界面测试：78 条，四秒级（本地量 3.9s）。它只解析 src/**，不 import lib/，
-      # 所以不需要先 build，可以就放在这道一分钟级的门里。
+      # 单元 19 + 界面 44 + 集成 15 = 78 条，本地 4 秒级。
+      # integration 也放这道门（设计文档原本把它排在夜跑）：它只解析 src/**、不 import lib/，
+      # 不需要先 build；15 条守的正是「同一 callId 两条工具结果让网关 400」那个线上事故，
+      # 隔夜才发现太慢。等 P2 把存量集成探针迁过来、这条超过两分钟，再移去 probe job。
       - name: 单元与界面测试
         run: pnpm test
+      - name: 集成测试
+        run: pnpm run test:int
 
   ui:
     name: 界面壳编译

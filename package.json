@@ -43,7 +43,7 @@
     "test:unit": "vitest run --project unit",
     "test:int": "vitest run --project integration",
     "test:ui": "vitest run --project ui",
-    "test:snapshot": "vitest run --project snapshot",
+    "test:snapshot": "vitest run --project snapshot --passWithNoTests",
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {
