@@ -927,7 +927,7 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 | `statusbar-test.mjs` | unit | `src/packages/tui/statusbar.spec.ts` | 纯投影 |
 | `command-policy-test.mjs` | unit | `src/core/command-policy.spec.ts` | 纯逻辑 |
 | `env-facts-test.mjs` | unit | `src/core/env-facts.spec.ts` | 纯逻辑 |
-| `path-symlink-test.mjs` | unit | `src/core/path-symlink.spec.ts` | 平台门控 |
+| `path-symlink-test.mjs` | unit | `src/core/path-policy.spec.ts` | 落在被测模块同名文件；junction 在 POSIX 可用目录软链，**不需要平台门控** |
 | `mention-multi-root-test.mjs` | unit | `src/core/mention.spec.ts` | 纯逻辑 |
 | `repeat-reminder-test.mjs` | unit | `src/core/repeat-reminder.spec.ts` | 纯逻辑 |
 | `session-activity-time-test.mjs` | unit | `src/core/session-activity.spec.ts` | 纯逻辑 |

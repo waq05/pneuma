@@ -35,6 +35,9 @@
 | B18 | P2-H / `boot-notices` | 「首次有『沙箱已就绪』提示、第二次抑制」 | 当时 harness 默认关沙箱，这趟根本不产生沙箱提示。**已复测：开沙箱能正常跑（6.7s，服务在位）**，所以这条可补 | 补进 `src/core/boot-notices.int.spec.ts`，预置 `plugins.json` 打开沙箱 |
 | B19 | P2-H / `empty-session` | 「选 read-only 后 `permissions.sandbox === 'read-only'`」 | 同上，沙箱停用时预设的沙箱半部落不了地 | 同上 |
 | B20 | P2-H / `compacting-status` | 壳按 `compactingSince` 画状态行（`ui.tsx` 源码正则） | 要渲组件 | ui project |
+| B21 | P2-Q / `dock-browser` 第 1、3 节 | 桌面主进程：五道闸门齐/有序/fail-closed、`guests.set` 唯一入账口、`sendWithTimeout` 超时文案、hello 版本比对、诊断行 | 全在 `desktop/electron/main/`，宿主侧的测试只能读源码文本 | 桌面主进程测试通道。与 B13 是**同一条欠账**，P7 一起收 |
+| B22 | P2-Q / `dock-browser` 第 7、8、9 节 | 壳侧：`ui.tsx` 事件名与锚点、`dock-state.ts` 形参顺序、settle 帧数与 `cancelAnimationFrame` | 要渲染壳组件 | ui project |
+| B23 | P2-Q / `dock-browser` 第 9③ 与 `OPEN_SETTLE_MS` | 常量数值本身 | 上限已有**行为**断言（open 在 250ms~5s 内落地），常量没有独立行为 | 不补（与 B17 同类） |
 
 ## 三、永远留在 Node 侧（不是欠账，是设计）
 
