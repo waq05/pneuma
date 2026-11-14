@@ -74,6 +74,11 @@ function resolveKey(config: WebSearchConfig): string {
   return config.apiKey
 }
 
+/** 带着请求头才出得了门（F11）：tavily 与 bocha 走 Bearer，serper 走 X-API-KEY。 */
+function authHeaders(provider: SearchProvider, key: string): Record<string, string> {
+  return provider === 'serper' ? { 'X-API-KEY': key } : { authorization: `Bearer ${key}` }
+}
+
 /** 带超时与打断的 POST（20 秒够搜索 API 回话了）。 */
 async function postJson(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal): Promise<unknown> {
   const controller = new AbortController()
@@ -129,12 +134,13 @@ async function search(
   maxResults: number,
   signal: AbortSignal,
   domains?: { include: string[]; exclude: string[] },
+  headers: Record<string, string> = {},
 ): Promise<SearchHit[]> {
   if (provider === 'tavily') {
     // T46：tavily 原生的 include/exclude_domains 直通（其它提供方没有等价参数，不硬凑）
     const body = (await postJson(
       'https://api.tavily.com/search',
-      {},
+      headers,
       {
         query,
         max_results: maxResults,
@@ -153,7 +159,7 @@ async function search(
     // 博查（Bochaai）：国内可直连的付费搜索 API
     const body = (await postJson(
       'https://api.bochaai.com/v1/web-search',
-      {},
+      headers,
       { query, count: maxResults, summary: true },
       signal,
     )) as unknown
@@ -163,7 +169,7 @@ async function search(
       : []
   }
   // serper：Google 结果的代理 API
-  const body = (await postJson('https://google.serper.dev/search', {}, { q: query, num: maxResults }, signal)) as unknown
+  const body = (await postJson('https://google.serper.dev/search', headers, { q: query, num: maxResults }, signal)) as unknown
   const list = pick(body, 'organic')
   return Array.isArray(list)
     ? list.slice(0, maxResults).map((entry) => toHit(entry, 'title', 'link', 'snippet'))
@@ -219,16 +225,11 @@ export const webSearchPlugin: Plugin.Object = {
                   '选提供方并填 key，或把 key 放进 apiKeyEnv 指向的环境变量',
               )
             }
-            const headers =
-              current.provider === 'tavily'
-                ? { authorization: `Bearer ${key}` }
-                : current.provider === 'bocha'
-                  ? { authorization: `Bearer ${key}` }
-                  : { 'X-API-KEY': key }
+            const headers = authHeaders(current.provider, key)
             const hits =
               include.length > 0 || exclude.length > 0
-                ? await search(current.provider, query, current.maxResults, runCtx.signal, { include, exclude })
-                : await search(current.provider, query, current.maxResults, runCtx.signal)
+                ? await search(current.provider, query, current.maxResults, runCtx.signal, { include, exclude }, headers)
+                : await search(current.provider, query, current.maxResults, runCtx.signal, undefined, headers)
             if (hits.length === 0) return `「${query}」没有搜到结果。换个更具体的关键词再试。`
             // 搜索结果里出现的「指令」不是命令：包一层围栏，模型只能把它当资料读。
             const text = wrapUntrusted(
@@ -362,7 +363,7 @@ export const webSearchPlugin: Plugin.Object = {
         if (name === 'test') {
           const key = resolveKey(config)
           if (key === '') throw new Error('还没有可用的 key：先填 apiKeyEnv 或直接填 key')
-          const hits = await search(config.provider, 'Pneuma', 3, new AbortController().signal)
+          const hits = await search(config.provider, 'Pneuma', 3, new AbortController().signal, undefined, authHeaders(config.provider, key))
           return hits.length === 0
             ? t('action.empty')
             : t('action.ok', { provider: config.provider, count: String(hits.length), title: hits[0]!.title })

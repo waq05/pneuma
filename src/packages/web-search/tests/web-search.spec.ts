@@ -200,10 +200,10 @@ test('空 query 直接报错，不发请求', async () => {
 
 // 第 6 条：请求组装——URL、份数，以及 tavily 原生的 include/exclude_domains。
 //
-// 注意：这里**没有**断言 authorization 头。源码里 run() 算出了 headers 却没交给 search()
-// （`search()` 内部 `postJson(url, {}, …)`），也就是说 key 目前根本发不出去。这是迁移时发现
-// 的源码缺陷，不在本批可写白名单里，故不在此处替它写成「预期行为」，只如实钉住实际组装的 body。
-test('请求组装：tavily 的地址与域名过滤原样进 body', async () => {
+// F11（2026-11-14 修）：run() 算出的 headers 曾从没交给 search()（内部 postJson 一律空
+// headers），真 API 一律 401，联网搜索一次都没成功过。现在 authorization 头是**预期行为**，
+// 必须断言：头不在，key 就发不出去。
+test('请求组装：tavily 的地址、认证头与域名过滤原样进请求', async () => {
   writeConfig({ provider: 'tavily', apiKey: 'test-key', maxResults: 2 })
   const calls = stubFetch({ results: [] })
   const tool = webSearchTool(applyPlugin())
@@ -217,6 +217,7 @@ test('请求组装：tavily 的地址与域名过滤原样进 body', async () =>
   expect(call.url).toBe('https://api.tavily.com/search')
   expect(call.init.method).toBe('POST')
   expect((call.init.headers as Record<string, string>)['content-type']).toBe('application/json')
+  expect((call.init.headers as Record<string, string>)['authorization']).toBe('Bearer test-key')
   expect(JSON.parse(String(call.init.body))).toStrictEqual({
     query: 'pneuma',
     max_results: 2,
@@ -224,6 +225,20 @@ test('请求组装：tavily 的地址与域名过滤原样进 body', async () =>
     include_domains: ['example.com'],
     exclude_domains: ['bad.com'],
   })
+})
+
+test('F11：serper 走 X-API-KEY，bocha 走 Bearer（三家认证头各有其形）', async () => {
+  writeConfig({ provider: 'serper', apiKey: 'test-key' })
+  const serperCalls = stubFetch({ organic: [] })
+  const tool = webSearchTool(applyPlugin())
+  await tool.run({ query: 'pneuma' }, scope)
+  expect((serperCalls[0]!.init.headers as Record<string, string>)['X-API-KEY']).toBe('test-key')
+
+  writeConfig({ provider: 'bocha', apiKey: 'test-key' })
+  const bochaCalls = stubFetch({ data: { webPages: { value: [] } } })
+  const tool2 = webSearchTool(applyPlugin())
+  await tool2.run({ query: 'pneuma' }, scope)
+  expect((bochaCalls[0]!.init.headers as Record<string, string>)['authorization']).toBe('Bearer test-key')
 })
 
 // 第 7 条：响应解析——三家字段名不同，这里按 tavily 的 title/url/content 归一；
