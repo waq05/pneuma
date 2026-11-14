@@ -238,3 +238,33 @@ test('判定超时：defaultSettings 第四参把秒数传进 eval 块', async (
   assert.equal(defaultSettings().eval.timeoutSeconds, 120)
   assert.equal(defaultSettings(undefined, undefined, undefined, 300).eval.timeoutSeconds, 300)
 })
+
+// ── 8. 设置变更历史：save 包装只在「写盘且值真的变了」时记 ────────────────────
+
+test('设置历史：record 只在保存成功且值变了时被调，校验被拒不记', () => {
+  // 前面的用例把 evalMode 留在了别的值上：先用一个不记历史的分区清回缺省，
+  // 否则这条的「从什么改到什么」会跟着跑测试的顺序漂。
+  createSettingsSection().save('evalMode', 'observe')
+  const recorded = []
+  const section = createSettingsSection(undefined, (change) => recorded.push(change))
+  section.save('evalMode', 'auto')
+  assert.deepEqual(recorded.at(-1), { key: 'evalMode', from: 'observe', to: 'auto' }, '值变了要记')
+  section.save('evalMode', 'auto')
+  assert.equal(recorded.length, 1, '重写同一个值不记')
+  section.save('githubRepository', 'not-a-repo')
+  assert.equal(recorded.length, 1, '被校验拦下的保存不记')
+  section.save('githubRepository', 'owner/repo')
+  assert.deepEqual(recorded.at(-1), { key: 'githubRepository', from: '', to: 'owner/repo' }, '新键记「从空到有」')
+  section.save('workerBlockedCommands', 'npm publish, docker push')
+  assert.deepEqual(
+    recorded.at(-1),
+    { key: 'workerBlockedCommands', from: [], to: ['npm publish', 'docker push'] },
+    '名单字段按数组记（展示层自己拼逗号）',
+  )
+})
+
+test('设置历史：不给 record 时不记、行为与原来一致', () => {
+  const section = createSettingsSection()
+  section.save('evalMode', 'auto')
+  assert.equal(readSuperagentConfig().evalMode, 'auto', '保存照常生效')
+})

@@ -209,7 +209,8 @@ function PageBody(): ReactNode {
             <div className="plugins-empty">{t('superagent.state.missing')}</div>
           ) : tab === 'settings' ? (
             // 设置分区在 `apply` 里就登记了，运行期没起来也能改（改仓库路径正是为了让它能起来）。
-            <SettingsPage />
+            // surface 传进去是为了「最近变更」块：历史数据在快照面，设置分区本身给不了它。
+            <SettingsPage surface={surface} />
           ) : surface.ready !== true ? (
             <div className="settings-note error">
               {surface.problem === null

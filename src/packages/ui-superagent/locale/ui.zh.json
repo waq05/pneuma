@@ -100,5 +100,9 @@
   "superagent.settings.saveFailed": "保存失败：{message}",
   "superagent.settings.actionFailed": "操作失败：{message}",
   "superagent.settings.noFields": "这个分区现在没有可改的项。",
-  "superagent.settings.unknown": "当前值不在选项里：{value}"
+  "superagent.settings.unknown": "当前值不在选项里：{value}",
+  "superagent.settings.history.title": "最近变更",
+  "superagent.settings.history.empty": "还没有变更记录——保存成功且值真的变了才会记一条。",
+  "superagent.settings.history.row": "{at}　{label}：{from} → {to}",
+  "superagent.settings.history.unset": "（未设置）"
 }

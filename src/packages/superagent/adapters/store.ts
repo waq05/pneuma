@@ -23,7 +23,7 @@ import type { EffectRow } from './effects.js'
 import { orchestratorDbPath, orchestratorLockPath } from '../paths.js'
 
 /** 当前代码认识的 schema 版本。加表 / 改列时加一，并在 `MIGRATIONS` 里补一段。 */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /** 第一版的结构就写在 `SCHEMA_STATEMENTS` 里，不占迁移表；迁移表只放 v1 之后的增量。 */
 const BASE_VERSION = 1
@@ -68,6 +68,27 @@ const MIGRATIONS: readonly { readonly version: number; readonly statements: read
          at TEXT NOT NULL,
          value TEXT NOT NULL);`,
       'CREATE INDEX IF NOT EXISTS candidate_state_at ON candidate(state, at);',
+    ],
+  },
+  {
+    /**
+     * 设置变更历史（backlog：上游 `app/settings-history.ts` 的等价物）。
+     *
+     * 一次字段保存记一行：`key` 是设置键，`from_value` / `to_value` 是该字段改前/改后的
+     * JSON 序列化值（标量与数组都按 JSON 存，读出来由展示层决定怎么拼）。`version`
+     * 自增——上游按「设置版本快照」存全量再算 diff，DSC 的保存本来就是逐字段的，
+     * 每字段一行省掉全量快照与重算，读的时候直接就是 diff。
+     *
+     * 行数在写入侧裁剪（保留最近 30 条）：这是给人看的历史，不是审计账本。
+     */
+    version: 4,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS settings_history (
+         version INTEGER PRIMARY KEY AUTOINCREMENT,
+         at TEXT NOT NULL,
+         key TEXT NOT NULL,
+         from_value TEXT,
+         to_value TEXT);`,
     ],
   },
 ]
@@ -198,6 +219,33 @@ export interface CandidateRecord {
   at: string
   /** 判定结果与卡片要的字段。 */
   value: NewCandidate
+}
+
+/** 设置历史保留的条数：给人看的历史，不是审计账本，新的挤掉旧的。 */
+export const SETTINGS_HISTORY_KEEP = 30
+
+/** 一条设置变更记录（`settings_history` 表的一行）。 */
+export interface SettingsChangeRecord {
+  /** 自增序号，新的在前。 */
+  version: number
+  /** 改动时间（ISO）。 */
+  at: string
+  /** 设置键（与设置分区的字段键同名）。 */
+  key: string
+  /** 改前值（JSON 反序列化；`undefined` = 该键此前没有）。 */
+  from?: unknown
+  /** 改后值（JSON 反序列化；`undefined` = 被删掉，回到缺省）。 */
+  to?: unknown
+}
+
+/** 历史列里的 JSON 值读回来；`null`（列空）与坏 JSON 都按「原本没有」处理。 */
+function parseColumn(value: unknown): unknown {
+  if (typeof value !== 'string' || value === '') return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /** 执行器起工作树要用的三元组（设计文档 §6.2 的 `ticket.execution.name`）。 */export interface TicketExecution {
@@ -584,6 +632,39 @@ export class DscStore {
   settleCandidate(id: string, state: 'accepted' | 'ignored'): boolean {
     const result = this.db.prepare("UPDATE candidate SET state = ? WHERE id = ? AND state = 'pending'").run(state, id)
     return Number(result.changes) > 0
+  }
+
+  /**
+   * 记一条设置变更（设置页保存成功且值真的变了才调）。
+   *
+   * `from_value` / `to_value` 是 JSON 序列化的前后值（`undefined` = 该键此前不存在，
+   * 存 `null`——列可空，读出来 `undefined` 与 `null` 都按「原本没有」展示）。
+   * 写完顺手把行数裁到 {@link SETTINGS_HISTORY_KEEP}：历史只进不删，不裁会一直涨。
+   */
+  recordSettingsChange(change: { key: string; from?: unknown; to?: unknown }, at: string): void {
+    this.atomic(() => {
+      this.db
+        .prepare('INSERT INTO settings_history (at, key, from_value, to_value) VALUES (?, ?, ?, ?)')
+        .run(at, change.key, change.from === undefined ? null : JSON.stringify(change.from),
+          change.to === undefined ? null : JSON.stringify(change.to))
+      this.db
+        .prepare('DELETE FROM settings_history WHERE version NOT IN (SELECT version FROM settings_history ORDER BY version DESC LIMIT ?)')
+        .run(SETTINGS_HISTORY_KEEP)
+    })
+  }
+
+  /** 设置变更历史，新的在前（最多 `limit` 条）。 */
+  settingsHistory(limit = SETTINGS_HISTORY_KEEP): SettingsChangeRecord[] {
+    const rows = this.db
+      .prepare('SELECT version, at, key, from_value, to_value FROM settings_history ORDER BY version DESC LIMIT ?')
+      .all(limit)
+    return rows.map((row) => ({
+      version: Number((row as { version: unknown }).version),
+      at: String((row as { at: unknown }).at),
+      key: String((row as { key: unknown }).key),
+      from: parseColumn((row as { from_value: unknown }).from_value),
+      to: parseColumn((row as { to_value: unknown }).to_value),
+    }))
   }
 
   /** 入队一条出站消息，返回它的 id。新行一律 `pending`，等着发送泵来认领。 */

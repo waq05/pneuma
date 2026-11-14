@@ -37,7 +37,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValue, SettingsValues, SuperagentSourceView } from '@pneuma/runtime/contract.js'
-import type { HealthService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import type { HealthService, MaybePromise, SettingsMutationOk, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
@@ -406,16 +406,27 @@ export function workerTargetOf(config: SuperagentConfig): { provider: string; mo
 }
 
 /**
+ * 设置变更的记录口：save 成功且值真的变了时调一次。装配处把它接进编排库的
+ * `settings_history` 表；不传 = 不记历史（测试或运行期没起来的场景）。
+ */
+export type SettingsHistoryRecorder = (change: { key: string; from?: unknown; to?: unknown }) => void
+
+/**
  * 建设置分区：执行器三字段 + GitHub 四字段 + 飞书四字段 + 判定模型，`values()` 现读磁盘、
  * `save()` 真落盘。
  *
  * 单独导出而不是在 `apply` 里内联，是为了包级测试能直接验「保存 → 读回 → 重开还在」，
  * 不必为一个设置分区造一整套 cordis 上下文。`apply` 用的就是这一个函数，没有第二份。
  *
+ * `record` 给了就包一层 save：写盘前后各读一次配置，值真的变了才记一条（被校验拦下、
+ * 或重写同一个值都不记）。记录逻辑收在这一层而不是散进每个 case——15 个 case 各自
+ * 记一遍迟早漏一处。
+ *
  * @param passed - 装配时传进来的行配置；与 `apply` 收到的是同一个
+ * @param record - 设置变更的记录口；缺省不记历史
  */
-export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
-  return {
+export function createSettingsSection(passed?: unknown, record?: SettingsHistoryRecorder): SettingsSectionSpec {
+  const section: SettingsSectionSpec = {
     id: CONFIG_KEY,
     title: t('section.title'),
     subtitle: t('section.subtitle'),
@@ -728,6 +739,21 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
       }
     },
   }
+  // 记录历史用包装而不是在每个 case 里记：save 的 case 有提前 return（校验失败不落盘），
+  // 散着写迟早漏一处。包装只在「写盘前后配置真的变了」时记一条，校验被拒、重写同值都自然不记。
+  if (record === undefined) return section
+  return {
+    ...section,
+    save(key: string, value: SettingsValue): MaybePromise<string | void | SettingsMutationOk> {
+      const before = readSuperagentConfig(passed) as unknown as Record<string, unknown>
+      // 接口把 save 声明成可选方法（有的分区只读），本分区必带——非空断言对应构造处的那一行。
+      const notice = section.save!(key, value)
+      const after = readSuperagentConfig(passed) as unknown as Record<string, unknown>
+      if (JSON.stringify(before[key]) === JSON.stringify(after[key])) return notice
+      record({ key, from: before[key], to: after[key] })
+      return notice
+    },
+  }
 }
 
 /**
@@ -769,7 +795,17 @@ export function apply(ctx: Context, passed?: unknown): void {
     return normalizeFeishuAccount({ allowed: current.feishuAllowed })
   }
 
-  const offSection = ctx.settings.registerSection(createSettingsSection(passed))
+  // 设置变更历史：save 成功且值变了就记进编排库的 settings_history 表。运行期还没起来
+  // （懒建，`store` 还是 null）时改的设置不记——历史从插件跑起来那刻开始记。
+  const offSection = ctx.settings.registerSection(createSettingsSection(passed, (change) => {
+    if (store === null) return
+    try {
+      store.recordSettingsChange(change, new Date().toISOString())
+    } catch (error) {
+      // 记历史失败不该让保存本身失败：设置已经写进 plugins.json 了，丢的只是一行 diff。
+      console.warn(`[superagent] 设置变更没记进历史：${errorText(error)}`)
+    }
+  }))
   ctx.effect(() => offSection, 'superagent: settings.registerSection')
 
   // ── 运行期：懒建 / 泵 / 命令 ────────────────────────────────────────────────

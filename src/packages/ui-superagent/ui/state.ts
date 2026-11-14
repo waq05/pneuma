@@ -114,6 +114,13 @@ export interface SuperagentView {  ready: boolean
    * `undefined` 与空数组是两件事：前者整块不画，后者画一句「暂时没有待确认」。
    */
   candidates?: readonly SuperagentCandidate[]
+  /**
+   * 设置变更历史，新的在前（最多 30 条，宿主裁）。
+   *
+   * **可选**：旧宿主没有这一格时设置页整块不画。保存成功且值真的变了才记一条，
+   * 空数组 = 记起之后还没改过设置。
+   */
+  settingsHistory?: readonly SuperagentSettingsChange[]
 }
 
 /** 空清单常量：字段缺席时共用一份，相等判断与重渲染判据都靠它（照 `readGit` 的常量兜底）。 */
@@ -121,6 +128,21 @@ const EMPTY_TICKETS: readonly SuperagentTicket[] = Object.freeze([])
 const EMPTY_RECENT: readonly { at: string; text: string }[] = Object.freeze([])
 const EMPTY_SOURCES: readonly SuperagentSource[] = Object.freeze([])
 const EMPTY_CANDIDATES: readonly SuperagentCandidate[] = Object.freeze([])
+const EMPTY_SETTINGS_HISTORY: readonly SuperagentSettingsChange[] = Object.freeze([])
+
+/** 一条设置变更给界面看的形状（字段名由 locale 的 `field.<key>.label` 拼进行文案）。 */
+export interface SuperagentSettingsChange {
+  /** 自增序号，新的在前。 */
+  version: number
+  /** 改动时间（ISO，显示时截到分钟）。 */
+  at: string
+  /** 设置键（设置分区字段键）。 */
+  key: string
+  /** 改前值的显示形态；`undefined` = 该键此前没有。 */
+  from?: string
+  /** 改后值的显示形态；`undefined` = 回到了缺省。 */
+  to?: string
+}
 
 /** 阶段能进哪一组：左侧栏徽标只认 `needsYou`，列表按这三组分。 */
 export type SuperagentTicketGroup = 'person' | 'working' | 'ended'
@@ -313,6 +335,31 @@ function candidatesOf(value: unknown): readonly SuperagentCandidate[] | undefine
 }
 
 /**
+ * 设置变更历史。整格缺席返回 `undefined`（旧宿主，设置页整块不画）；
+ * 有格但空返回空数组（画「还没有变更记录」）。
+ */
+function settingsHistoryOf(value: unknown): readonly SuperagentSettingsChange[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: SuperagentSettingsChange[] = []
+  for (const item of value) {
+    const record = item === null || typeof item !== 'object' ? {} : (item as Record<string, unknown>)
+    const version = Number(record['version'])
+    if (!Number.isFinite(version)) continue
+    const key = typeof record['key'] === 'string' ? record['key'] : ''
+    if (key === '') continue
+    const change: SuperagentSettingsChange = {
+      version,
+      at: typeof record['at'] === 'string' ? record['at'] : '',
+      key,
+      ...(typeof record['from'] === 'string' ? { from: record['from'] } : {}),
+      ...(typeof record['to'] === 'string' ? { to: record['to'] } : {}),
+    }
+    out.push(change)
+  }
+  return out.length === 0 ? EMPTY_SETTINGS_HISTORY : out
+}
+
+/**
  * 从快照里取 Super Agent 那一格。 *
  * @param snapshot - `useHostSnapshot()` 的快照（可能还没来第一帧）
  * @returns 面板视图；`null` = 这一格整个缺席（宿主插件没开），界面按「未启动」画
@@ -343,6 +390,7 @@ export function readSuperagent(snapshot: HostSnapshot | null): SuperagentView | 
   const detail = typeof rawProblem?.['detail'] === 'string' ? rawProblem['detail'] : ''
   const sources = sourcesOf(surface['sources'])
   const candidates = candidatesOf(surface['candidates'])
+  const settingsHistory = settingsHistoryOf(surface['settingsHistory'])
   return {
     ready: surface['ready'] === true,
     problem: code === '' && detail === '' ? null : { code, detail },
@@ -352,6 +400,7 @@ export function readSuperagent(snapshot: HostSnapshot | null): SuperagentView | 
     // 只有读到了才带上这一项：`undefined` 是「旧快照没有这一格」，概览页据此整块不画。
     ...(sources === undefined ? {} : { sources }),
     ...(candidates === undefined ? {} : { candidates }),
+    ...(settingsHistory === undefined ? {} : { settingsHistory }),
   }
 }
 
@@ -398,6 +447,16 @@ function candidatesFingerprint(candidates: readonly SuperagentCandidate[] | unde
 }
 
 /**
+ * 设置变更历史的指纹：最新一条的 `version / key / to` 就够——历史只进不删，最新一条变了
+ * 就是有新变更。缺席与空数组给不同前缀（同一条理由）。
+ */
+function settingsHistoryFingerprint(history: readonly SuperagentSettingsChange[] | undefined): string {
+  if (history === undefined) return '\u0002absent'
+  const latest = history[0]
+  return latest === undefined ? '\u0002empty' : `${String(latest.version)}\u0000${latest.key}\u0000${latest.to ?? ''}`
+}
+
+/**
  * 面板视图的相等判断：内容没变就不重渲染。
  *
  * 快照每帧都会换引用，不给比较函数的话这一页会跟着整棵快照逐帧重画。
@@ -415,6 +474,8 @@ export function sameSuperagent(left: SuperagentView | null, right: SuperagentVie
   if (sourcesFingerprint(left.sources) !== sourcesFingerprint(right.sources)) return false
   // 候选进出一条，页面上多/少一行卡片，同样要重画。
   if (candidatesFingerprint(left.candidates) !== candidatesFingerprint(right.candidates)) return false
+  // 设置历史进一条，设置页的「最近变更」多一行，同样要重画。
+  if (settingsHistoryFingerprint(left.settingsHistory) !== settingsHistoryFingerprint(right.settingsHistory)) return false
   if (
     left.counts.needsYou !== right.counts.needsYou ||
     left.counts.running !== right.counts.running ||

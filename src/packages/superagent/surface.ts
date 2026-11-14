@@ -74,6 +74,8 @@ export function buildSurface(runtime: SuperagentRuntime): SuperagentSurface {
     // 「先等我确认」关着时不给这一格：`undefined` 表示这个功能没开，空数组表示
     // 「开了但没人等」——界面按前者整块不画，按后者画一句「暂时没有待确认」。
     ...(runtime.confirmingInferred() ? { candidates: runtime.candidates().map(toCandidateView) } : {}),
+    // 设置变更历史：无条件给（写成功且值变了才记，空 = 记起之后还没改过）。
+    settingsHistory: runtime.settingsHistory(),
   }
 }
 

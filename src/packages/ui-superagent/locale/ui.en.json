@@ -100,5 +100,9 @@
   "superagent.settings.saveFailed": "Save failed: {message}",
   "superagent.settings.actionFailed": "Action failed: {message}",
   "superagent.settings.noFields": "This section has nothing to change right now.",
-  "superagent.settings.unknown": "The current value is not in the list: {value}"
+  "superagent.settings.unknown": "The current value is not in the list: {value}",
+  "superagent.settings.history.title": "Recent changes",
+  "superagent.settings.history.empty": "No changes recorded yet - a change is recorded when a save succeeds and the value actually differs.",
+  "superagent.settings.history.row": "{at}  {label}: {from} -> {to}",
+  "superagent.settings.history.unset": "(not set)"
 }

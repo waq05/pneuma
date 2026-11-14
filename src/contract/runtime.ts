@@ -323,6 +323,23 @@ export interface SuperagentCandidateView {
   at: string
 }
 
+/**
+ * 一条设置变更（设置页「最近变更」块的一行）。对应上游管理面板的设置修订历史
+ * （`app/settings-history.ts`），按 DSC 逐字段的保存方式裁成一行一字段。
+ */
+export interface SuperagentSettingsChangeView {
+  /** 自增序号，新的在前。 */
+  version: number
+  /** 改动时间（ISO）。 */
+  at: string
+  /** 设置键（与设置分区的字段键同名；界面按 locale 的 `field.<key>.label` 显示）。 */
+  key: string
+  /** 改前值的显示形态（数组已拼成逗号分隔；缺省 = 该键此前没有）。 */
+  from?: string
+  /** 改后值的显示形态；缺省 = 回到了缺省（键被删）。 */
+  to?: string
+}
+
 export interface SuperagentSurface {
   /** 运行期是否可用：false = 还没启动（懒建）或建库失败，看 `problem`。 */
   ready: boolean
@@ -351,6 +368,13 @@ export interface SuperagentSurface {
    * 「暂时没有待确认的候选」。
    */
   candidates?: SuperagentCandidateView[]
+  /**
+   * 设置变更历史，新的在前（最多 30 条，写入侧裁剪）。
+   *
+   * **可选**：旧快照没有这一格时界面整块不画。设置页保存成功且值真的变了才记一条，
+   * 所以空数组 = 「记起之后还没改过设置」，不是「功能没做」。
+   */
+  settingsHistory?: SuperagentSettingsChangeView[]
 }
 
 /** 发布一张工单的入参（`superagentPublish` 的唯一实参）。 */

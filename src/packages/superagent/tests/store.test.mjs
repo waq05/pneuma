@@ -79,7 +79,7 @@ function outboxRows(dbPath) {
   )
 }
 
-/** 期望的表：原文 9 张 + 本适配层补的 3 张 + 候选收件箱（G1）。名单写死，不跟着 DDL 自动变——否则改了 DDL 测试也跟着绿。 */
+/** 期望的表：原文 9 张 + 本适配层补的 3 张 + 候选收件箱（G1）+ 设置历史。名单写死，不跟着 DDL 自动变——否则改了 DDL 测试也跟着绿。 */
 const EXPECTED_TABLES = [
   'kv',
   'trigger',
@@ -94,6 +94,7 @@ const EXPECTED_TABLES = [
   'event',
   'assignment',
   'candidate',
+  'settings_history',
 ]
 
 /** 期望的索引：原文 4 个 + 新增 3 个 + 候选收件箱 1 个。 */
@@ -345,6 +346,33 @@ test('候选收件箱：写入 / 重写 / 只列 pending / 结论幂等', () => 
     assert.deepEqual(db.listCandidates().map((item) => item.id), ['eval-2'], '定过结论的不该再列出来')
     assert.equal(db.settleCandidate('eval-1', 'ignored'), false, '已经定过结论的不该被改第二次')
     assert.equal(db.getCandidate('eval-1').state, 'accepted', '状态保持第一次的结论')
+  } finally {
+    db.close()
+  }
+  passed += 1
+})
+
+// 设置变更历史（上游 settings-history 的等价物）：一行一字段，新的在前，写满裁掉最旧的。
+test('设置历史：写入 / 读回 / 只留最近 30 条', () => {
+  const dbPath = join(tempRoot('settings-history'), 'orchestrator.sqlite')
+  const db = store.openStore(dbPath)
+  try {
+    db.recordSettingsChange({ key: 'evalMode', from: 'observe', to: 'auto' }, '2026-11-14T10:00:00.000Z')
+    db.recordSettingsChange({ key: 'workerModel', to: 'acme/claude' }, '2026-11-14T10:01:00.000Z')
+    const history = db.settingsHistory()
+    assert.equal(history.length, 2, '两条都在')
+    assert.deepEqual(history.map((item) => item.key), ['workerModel', 'evalMode'], '新的在前')
+    assert.equal(history[1].from, 'observe', '改前值原样读回')
+    assert.equal(history[1].to, 'auto', '改后值原样读回')
+    assert.equal(history[0].from, undefined, '没有改前值（新键）时读回 undefined')
+    // 裁剪：灌 35 条，只剩最新 30 条。
+    for (let index = 0; index < 35; index += 1) {
+      db.recordSettingsChange({ key: 'maxWorkers', from: 2, to: index }, '2026-11-14T10:02:00.000Z')
+    }
+    const trimmed = db.settingsHistory()
+    assert.equal(trimmed.length, 30, '裁到 30 条')
+    assert.equal(trimmed[0].to, 34, '留下的是最新的')
+    assert.equal(trimmed.some((item) => item.key === 'evalMode'), false, '最早的被挤掉')
   } finally {
     db.close()
   }

@@ -15,6 +15,7 @@ import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@pneuma/runtime/core/session.js'
+import type { SuperagentSettingsChangeView } from '@pneuma/runtime/contract.js'
 import { Engine, latestAssignment, latestReport, ticketStage, type AssessmentOutcome, type ChannelRef, type DomainEvent,
   type Executor, type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage,
   type Trigger, type WorkerReport } from './core/index.js'
@@ -228,6 +229,11 @@ export interface SourceBridge {
 /** 把未知异常压成一行可读文本，日志用。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 历史值 → 显示形态：数组拼逗号分隔（与设置面 `values()` 同一口径），其余 `String()`。 */
+function shownValue(value: unknown): string {
+  return Array.isArray(value) ? value.map((item) => String(item)).join(', ') : String(value)
 }
 
 /** GitHub 线程键的前缀。与 `github/trigger.ts:39` 的 `${SOURCE}:${number}` 同一处拼法。 */
@@ -725,6 +731,22 @@ export class SuperagentRuntime {
   /** 推断候选要不要先等人点头（backlog G1）；界面据此决定画不画「待确认」那一块。 */
   confirmingInferred(): boolean {
     return this.confirmInferred
+  }
+
+  /**
+   * 设置变更历史（上游 `app/settings-history.ts` 的等价物），新的在前。
+   *
+   * 存储层给的是 JSON 反序列化的前后值；这里统一成界面要的显示形态——数组拼成
+   * 逗号分隔（与设置面 `values()` 的展示口径一致），其余 `String()`，没有就是缺省。
+   */
+  settingsHistory(limit = 30): SuperagentSettingsChangeView[] {
+    return this.store.settingsHistory(limit).map((record) => ({
+      version: record.version,
+      at: record.at,
+      key: record.key,
+      ...(record.from === undefined ? {} : { from: shownValue(record.from) }),
+      ...(record.to === undefined ? {} : { to: shownValue(record.to) }),
+    }))
   }
 
   /**

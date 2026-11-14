@@ -24,6 +24,7 @@ import {
 } from '@dsc/ui'
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
+import type { SuperagentView } from './state'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
@@ -31,8 +32,8 @@ const t = createT({ zh, en })
 /** 宿主登记的分区 id（与 `packages/superagent/index.ts:78` 同一把钥匙）。 */
 const SECTION_ID = 'superagent'
 
-/** 设置页：找分区 → 读值 → 画字段。 */
-export function SettingsPage(): ReactNode {
+/** 设置页：找分区 → 读值 → 画字段 → 底部一条「最近变更」。 */
+export function SettingsPage({ surface }: { surface: SuperagentView | null }): ReactNode {
   const channel = useHostChannel()
   /** `undefined` = 还在读；`null` = 没有这个分区（宿主插件没开）。 */
   const [section, setSection] = useState<SettingsSectionView | null | undefined>(undefined)
@@ -159,8 +160,48 @@ export function SettingsPage(): ReactNode {
       {note === null ? null : (
         <div className={`settings-note${note.tone === 'error' ? ' error' : ''}`}>{note.text}</div>
       )}
+      <HistoryBlock surface={surface} />
     </div>
   )
+}
+
+/**
+ * 「最近变更」块：设置页保存成功且值真的变了才记一条（宿主 `settings_history` 表），
+ * 新的在前，最多 30 条。对应上游管理面板的设置修订历史（`app/settings-history.ts`）。
+ *
+ * 数据从快照面来（`surfaces.superagent.settingsHistory`），不是设置分区自己给的——
+ * 运行期没起来（快照缺席）或旧宿主（格缺席）时整块不画，别画成空占位。
+ */
+function HistoryBlock({ surface }: { surface: SuperagentView | null }): ReactNode {
+  if (surface === null || surface.ready !== true) return null
+  const history = surface.settingsHistory
+  if (history === undefined) return null
+  const rows = history.slice(0, 8)
+  return (
+    <div className="settings-group-title">
+      {t('superagent.settings.history.title')}
+      {rows.length === 0 ? (
+        <div className="settings-empty">{t('superagent.settings.history.empty')}</div>
+      ) : (
+        rows.map((change) => (
+          <div key={change.version} className="settings-note">
+            {t('superagent.settings.history.row', {
+              at: change.at.slice(0, 19).replace('T', ' '),
+              label: fieldLabel(change.key),
+              from: change.from ?? t('superagent.settings.history.unset'),
+              to: change.to ?? t('superagent.settings.history.unset'),
+            })}
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
+/** 变更行的字段名：按设置键取 locale 的 `field.<key>.label`，没有的字段显示键名本身。 */
+function fieldLabel(key: string): string {
+  const label = t(`field.${key}.label`, undefined)
+  return label === '' || label.startsWith('field.') ? key : label
 }
 
 /** 一行控件：按 `SettingsField` 的四种可写类型 + info / button 各画一套。 */
