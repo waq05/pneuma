@@ -15,12 +15,13 @@
  * 还带着「恢复会话时先重放历史」这一串前置动作。少了真内核，验不到「第二次启动时
  * 同一条会话的横幅真的没被写进去」。
  *
- * ## 迁移时收窄的一条
+ * ## 迁移时收窄的一条（2026-11-14 已补回）
  *
  * 原探针还钉「首次启动有『沙箱已就绪』提示、第二次被抑制」。harness 默认把 sandbox 插件
- * 关掉（台账 D16：它在 Windows 上启动时要 spawn PowerShell 体检，实测会挂住测试 worker），
- * 这一趟根本不产生沙箱提示。硬留着只能靠打开沙箱换一个不退出进程，不值；这里保留
- * 「横幅」这条同机制的端到端，沙箱那条按 D16 记为未覆盖。
+ * 关掉（台账 D16），这一趟根本不产生沙箱提示——所以先只保留「横幅」这条同机制的端到端。
+ * D16 复测订正后（开沙箱能正常起、能正常退，见台账），这一条以 describe ③ 补回：
+ * 预置开启沙箱的 `plugins.json`，起两次内核，验「沙箱已就绪」只说一次
+ * （`sandbox/index.ts` 挂载时经 `bootNoticeOnce('sandbox.ready', …)` 落这句话）。
  *
  * @module dsc/core/boot-notices.int.spec
  */
@@ -187,5 +188,65 @@ describe('② 真内核：恢复同一条会话，第二次启动的横幅被抑
   test('第二次启动仍然把历史重放进转录（抑制提示不等于抑制会话）', () => {
     // 恢复会话本身要走 replayHistory；只盯横幅容易被「整段启动都没跑」冒充通过。
     expect(secondTexts.some((text) => text.includes('你好'))).toBe(true)
+  })
+})
+
+describe('③ 沙箱已就绪：开沙箱时首次说、第二次被抑制', () => {
+  /** 两次启动各自看到的系统正文。 */
+  let firstTexts: string[] = []
+  let secondTexts: string[] = []
+  /** 两次启动的异常：放进用例里报。 */
+  let bootError: unknown
+
+  beforeAll(() => {
+    // 覆盖 harness 预置的 plugins.json：去掉 sandbox 的 disabled，其余两条保持关
+    // （prepareIsolatedHome 只在文件不存在时写，这里的覆盖就是给沙箱开的唯一入口）。
+    // ①② 已经带着默认清单跑完，这里改清单不影响它们；`.dsc` 目录建一下，不依赖先后顺序。
+    mkdirSync(dscHome, { recursive: true })
+    writeFileSync(
+      join(dscHome, 'plugins.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          entries: [
+            { file: 'memory', config: { enabled: false } },
+            { file: 'session-title', disabled: true },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+  })
+
+  /** 起一次内核，等转录里出现（或确认没有）沙箱提示，返回全部系统正文。 */
+  async function bootWithSandbox(): Promise<string[]> {
+    llm ??= await fakeLLM({ turns: ['收到'] })
+    const kernel = await bootKernel({ providerBaseUrl: llm.baseUrl, resumeSessionPath: null })
+    kernels.push(kernel)
+    // 提示由沙箱插件在挂载时写进转录；等一拍再读，别跟写流抢。
+    await new Promise((resolveTick) => setTimeout(resolveTick, 300))
+    const texts = systemTexts(kernel)
+    await kernel.dispose()
+    return texts
+  }
+
+  test('两次启动都正常收尾', async () => {
+    try {
+      firstTexts = await bootWithSandbox()
+      secondTexts = await bootWithSandbox()
+    } catch (error) {
+      bootError = error
+    }
+    expect(bootError).toBeUndefined()
+  })
+
+  test('首次启动有「沙箱已就绪」提示', () => {
+    expect(firstTexts.some((text) => text.includes('沙箱已就绪'))).toBe(true)
+  })
+
+  test('第二次启动被抑制（同文不再说）', () => {
+    expect(secondTexts.some((text) => text.includes('沙箱已就绪'))).toBe(false)
   })
 })

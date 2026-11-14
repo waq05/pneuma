@@ -72,6 +72,26 @@ let startup: SessionView
 beforeAll(async () => {
   for (const dir of [WORK, WORK2]) mkdirSync(dir, { recursive: true })
   core = await import('../../core/session.js')
+  // 预置 plugins.json：把沙箱打开（memory / session-title 维持 harness 默认的关）。
+  // prepareIsolatedHome 只在文件不存在时写，这份预置就是沙箱唯一的开启入口；
+  // ④ 里 B19 那条 read-only 断言靠它才落得了地（台账 D16 复测后解禁）。
+  // `.dsc` 目录此刻还不存在（bootKernel 里才建），先建再写。
+  mkdirSync(join(home.home, '.dsc'), { recursive: true })
+  writeFileSync(
+    join(home.home, '.dsc', 'plugins.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        entries: [
+          { file: 'memory', config: { enabled: false } },
+          { file: 'session-title', disabled: true },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
   llm = await fakeLLM({ turns: ['收到'] })
   kernel = await bootKernel({
     providerBaseUrl: llm.baseUrl,
@@ -274,10 +294,10 @@ describe('④ 发消息前选过的权限与模型：不建文件，但首条消
   test('选完权限与模型后磁盘上仍然没有文件', async () => {
     await services.session.open(undefined, WORK2)
     picked = services.session.current()
-    // 为什么选 `auto-review` 而不是探针里的 `read-only`：harness 默认停用沙箱插件（台账 D16），
-    // 预设里「沙箱档位」那一半落不了地；`read-only` 另一半分（policy）又与默认值相同，
-    // 于是切过去在会话状态上一个字节都不变，断言就失去了对象。`auto-review` 换的是
+    // 为什么选 `auto-review` 而不是探针里的 `read-only`：`read-only` 的 policy 半与默认值
+    // 相同，切过去在会话状态上一个字节都不变，断言就失去了对象。`auto-review` 换的是
     // 审阅者（user → auto-review）与策略（auto-edit → full-access），两样都能观察。
+    // read-only 的「沙箱半」由本 describe 末尾的 B19 那条单独钉（沙箱插件已在本文件预置打开）。
     services.permissionPresets.use('auto-review')
     services.llm.setModel('test', 'm2')
     expect(existsSync(picked.filePath)).toBe(false)
@@ -304,6 +324,19 @@ describe('④ 发消息前选过的权限与模型：不建文件，但首条消
     try {
       expect(restored.state('permissions')?.['reviewer']).toBe('auto-review')
       expect(restored.state('model')?.['model']).toBe('m2')
+    } finally {
+      restored.close()
+    }
+  })
+
+  test('B19：沙箱开着时选 read-only，沙箱档位落进会话状态并随重放恢复', () => {
+    // 探针原有的一条（补自 backlog B19）：预设的「沙箱半」在沙箱插件停用时不落地（D16），
+    // 插件打开后切 read-only 必须能看到 permissions.sandbox === 'read-only'。
+    services.permissionPresets.use('read-only')
+    expect(picked.state('permissions')?.['sandbox']).toBe('read-only')
+    const restored = core.Session.load(picked.filePath, true, { lease: false })
+    try {
+      expect(restored.state('permissions')?.['sandbox']).toBe('read-only')
     } finally {
       restored.close()
     }
