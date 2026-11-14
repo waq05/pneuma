@@ -748,12 +748,21 @@ export interface BootKernelOptions {
   /** 覆盖默认配置的顶层字段（providers 要整份给，不做深合并）。 */
   config?: Record<string, unknown>
   /**
-   * 从一份已有会话接着起（对应 createKernel 的 esumeSessionPath）。
+   * 从一份已有会话接着起（对应 createKernel 的 resumeSessionPath）。
    *
    * 给「启动回填」这类用例用：不传就是新建会话，session.resumedStartup 永远是 false，
    * 那条路径根本走不到。传了才验得到启动时读旧会话的行为。
    */
   resumeSessionPath?: string | null
+  /**
+   * 界面形态（对应 createKernel 的 surface）；不传 = 'none'，`SURFACE_ROW_SKIPS.none`
+   * 会把 tui / host-stdio / remote 三行整个跳过。
+   *
+   * 默认值是刻意选的：绝大多数用例不需要这三行（tui 起 ink、host-stdio 抢 stdio、
+   * remote 起监听端口），跳过它们进程才收得住。要验 remote 行本身的用例
+   * （如 plugin-hmr-dispose）显式传 'headless'——它只跳 tui，探针用的正是这个。
+   */
+  surface?: 'tui' | 'headless' | 'none'
 }
 
 /** 起好的真内核。 */
@@ -1003,9 +1012,17 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
   // 说明符带 `.js` 是 NodeNext 的要求；`tsconfig.spec.json` 的 include 里有整棵 `src`，
   // 所以 cordis 的 `Context` 声明合并也在程序里，这里不需要任何类型绕过。
   const kernelModule = (await import('@pneuma/runtime/host/kernel.js')) as {
-    createKernel: (bootOptions: { config: DscCoreConfig; resumeSessionPath: string | null }) => Promise<unknown>
+    createKernel: (bootOptions: {
+      config: DscCoreConfig
+      resumeSessionPath: string | null
+      surface?: 'tui' | 'headless' | 'none'
+    }) => Promise<unknown>
   }
-  const ctx = await kernelModule.createKernel({ config, resumeSessionPath: options.resumeSessionPath ?? null })
+  const ctx = await kernelModule.createKernel({
+    config,
+    resumeSessionPath: options.resumeSessionPath ?? null,
+    surface: options.surface,
+  })
   const surface = ctx as unknown as KernelSurface
   const missing = [
     typeof surface.on === 'function' ? undefined : 'ctx.on',
