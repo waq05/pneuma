@@ -89,7 +89,8 @@ export interface FeishuAccount {
  *   只在 auto 下才会落进收件箱等人点头（`core/policy.ts:67`），observe 下降级成
  *   `would_accept` 记录了事。
  */
-export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount, evalMode?: Settings['eval']['mode']): Settings {
+export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount, evalMode?: Settings['eval']['mode'],
+  evalTimeoutSeconds?: number): Settings {
   const account = normalizeGithubAccount(github)
   const chat = normalizeFeishuAccount(feishu)
   return SettingsSchema.parse({
@@ -112,7 +113,7 @@ export function defaultSettings(github?: GithubAccount, feishu?: FeishuAccount, 
         ...(chat === undefined ? {} : { [FEISHU_SOURCE]: { allowed: chat.allowed.map((id) => ({ id })) } }),
       },
     },
-    eval: { mode: evalMode ?? 'observe' },
+    eval: { mode: evalMode ?? 'observe', ...(evalTimeoutSeconds === undefined ? {} : { timeoutSeconds: evalTimeoutSeconds }) },
   })
 }
 

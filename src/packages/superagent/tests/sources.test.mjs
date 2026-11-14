@@ -220,3 +220,21 @@ test('接单模式：defaultSettings 第三参把模式传进 eval 块', async (
   assert.equal(defaultSettings(undefined, undefined, 'auto').eval.mode, 'auto')
   assert.equal(defaultSettings(undefined, undefined, 'off').eval.mode, 'off')
 })
+
+test('判定超时：缺省 120，存 300 读回 300，夹在 30–600', () => {
+  const section = createSettingsSection()
+  assert.equal(readSuperagentConfig().evalTimeoutSeconds, 120, '不配 = schema 默认 120')
+  section.save('evalTimeoutSeconds', 300)
+  assert.equal(readSuperagentConfig().evalTimeoutSeconds, 300)
+  section.save('evalTimeoutSeconds', 5)
+  assert.equal(readSuperagentConfig().evalTimeoutSeconds, 30, '低于下限夹回 30')
+  section.save('evalTimeoutSeconds', 9999)
+  assert.equal(readSuperagentConfig().evalTimeoutSeconds, 600, '高于上限夹回 600')
+  assert.match(String(section.save('evalTimeoutSeconds', 'abc')), /判定超时/)
+})
+
+test('判定超时：defaultSettings 第四参把秒数传进 eval 块', async () => {
+  const { defaultSettings } = await import('../../../../lib/packages/superagent/adapters/settings.js')
+  assert.equal(defaultSettings().eval.timeoutSeconds, 120)
+  assert.equal(defaultSettings(undefined, undefined, undefined, 300).eval.timeoutSeconds, 300)
+})

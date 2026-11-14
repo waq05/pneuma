@@ -12,6 +12,8 @@
   "field.evalMode.option.observe": "Observe (record only)",
   "field.evalMode.option.auto": "Automatic (accepted candidates go to the pending list or start work)",
   "field.evalMode.option.off": "Off (inferred candidates are dropped)",
+  "field.evalTimeoutSeconds.label": "Assessment timeout (seconds)",
+  "field.evalTimeoutSeconds.help": "How long a pending inferred candidate may wait for its assessment (a model call) before it is recorded as unavailable. 30-600, default 120. Takes effect on the next pump tick; no restart needed.",
   "field.maxWorkers.label": "Maximum tickets running at once",
   "field.maxWorkers.help": "Concurrency limit, 1-16, default 2. Extra tickets queue for a free slot; save it and restart the host for it to take effect.",
   "field.ticketTimeoutSeconds.label": "Per-ticket timeout (seconds)",
@@ -45,5 +47,6 @@
   "save.prepareCommandTooLong": "The prepare command is too long (4000 characters at most)",
   "save.githubRepositoryBad": "The repository must look like owner/name",
   "save.evalModeBad": "The assessment mode must be one of: observe, automatic, off",
+  "save.evalTimeoutBad": "The assessment timeout must be a number (30-600)",
   "save.unknownKey": "Unknown setting \"{key}\""
 }

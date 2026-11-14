@@ -12,6 +12,8 @@
   "field.evalMode.option.observe": "观察（只记不做）",
   "field.evalMode.option.auto": "自动（判定通过的进收件箱或开工）",
   "field.evalMode.option.off": "关闭（推断候选一律不收）",
+  "field.evalTimeoutSeconds.label": "判定超时（秒）",
+  "field.evalTimeoutSeconds.help": "一条推断候选等人判定（调模型）最多等多久，超时按「判定器不可用」记。30–600，默认 120。改完下一拍生效，不必重启。",
   "field.maxWorkers.label": "同时最多几个工单在跑",
   "field.maxWorkers.help": "并发上限，1–16，默认 2。超出的工单排队等空位；改完保存，重开宿主后生效。",
   "field.ticketTimeoutSeconds.label": "单工单超时（秒）",
@@ -45,5 +47,6 @@
   "save.prepareCommandTooLong": "准备命令太长了（最多 4000 字）",
   "save.githubRepositoryBad": "仓库要写成 owner/name 的样子",
   "save.evalModeBad": "判定模式只认：观察、自动、关闭三档",
+  "save.evalTimeoutBad": "判定超时要填数字（30–600）",
   "save.unknownKey": "未知设置项「{key}」"
 }

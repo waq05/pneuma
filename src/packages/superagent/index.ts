@@ -115,6 +115,14 @@ const CONFIRM_INFERRED_KEY = 'confirmInferred'
  * 也等不到候选。缺省 `observe`（与上游同一条默认）：不显式打开，行为与收件箱做出之前一致。
  */
 const EVAL_MODE_KEY = 'evalMode'
+
+/**
+ * 判定超时秒数（30–600，默认 120），对应上游 `settings/eval` 块的 `timeoutSeconds`。
+ *
+ * 核心消费点在 Eval 的截止时间（`core/evals.ts` 的 `deadline`）与 policyVersion 指纹
+ * （`core/policy.ts:129`）——超时改了，等判定中的 Eval 按新截止时间重排。现读，改完下一拍生效。
+ */
+const EVAL_TIMEOUT_KEY = 'evalTimeoutSeconds'
 /** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
 const GITHUB_REPOSITORY_KEY = 'githubRepository'
 const GITHUB_LOGIN_KEY = 'githubLogin'
@@ -300,6 +308,8 @@ export interface SuperagentConfig {
   assessorModel: string
   /** 接单模式；候选收件箱只在 `auto` 下有内容。 */
   evalMode: Settings['eval']['mode']
+  /** 判定超时秒数（30–600）。 */
+  evalTimeoutSeconds: number
   /** worker 用模型（`provider/model`）；空 = 跟随宿主当前选路。 */
   workerModel: string
   /** worker 额外禁用的命令名单（已按逗号拆开、去空、去重）；空 = 只有内置限制。 */
@@ -362,6 +372,7 @@ export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
     // 枚举只认三值：手改 JSON 写成别的字符串不算——设置面下拉给什么这里就收什么，
     // 但库文件用户能手改，读路径不能信它的形状（与本函数其它的「类型不对用缺省」同一条）。
     evalMode: raw[EVAL_MODE_KEY] === 'off' || raw[EVAL_MODE_KEY] === 'auto' ? raw[EVAL_MODE_KEY] : 'observe',
+    evalTimeoutSeconds: clampInt(raw[EVAL_TIMEOUT_KEY], LIMITS.evalTimeoutSeconds.min, LIMITS.evalTimeoutSeconds.max, 120),
     workerModel: textOf(raw[WORKER_MODEL_KEY]),
     // 名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。
     workerBlockedCommands: [...new Set(
@@ -462,6 +473,15 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
             { value: 'auto', label: t('field.evalMode.option.auto') },
             { value: 'off', label: t('field.evalMode.option.off') },
           ],
+        },
+        {
+          type: 'number',
+          key: EVAL_TIMEOUT_KEY,
+          label: t('field.evalTimeoutSeconds.label'),
+          min: LIMITS.evalTimeoutSeconds.min,
+          max: LIMITS.evalTimeoutSeconds.max,
+          step: 30,
+          help: t('field.evalTimeoutSeconds.help'),
         },
         {
           type: 'text',
@@ -567,6 +587,7 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
         [PREPARE_COMMAND_KEY]: config.prepareCommand,
         [CONFIRM_INFERRED_KEY]: config.confirmInferred,
         [EVAL_MODE_KEY]: config.evalMode,
+        [EVAL_TIMEOUT_KEY]: config.evalTimeoutSeconds,
         [GITHUB_REPOSITORY_KEY]: config.githubRepository,
         [GITHUB_LOGIN_KEY]: config.githubLogin,
         // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
@@ -631,6 +652,14 @@ export function createSettingsSection(passed?: unknown): SettingsSectionSpec {
           const mode = String(value)
           if (mode !== 'off' && mode !== 'observe' && mode !== 'auto') return t('save.evalModeBad')
           writePluginConfig(CONFIG_KEY, { [EVAL_MODE_KEY]: mode })
+          return
+        }
+        case EVAL_TIMEOUT_KEY: {
+          const number = Number(value)
+          if (!Number.isFinite(number)) return t('save.evalTimeoutBad')
+          writePluginConfig(CONFIG_KEY, {
+            [EVAL_TIMEOUT_KEY]: clampInt(number, LIMITS.evalTimeoutSeconds.min, LIMITS.evalTimeoutSeconds.max, 120),
+          })
           return
         }
         case GITHUB_REPOSITORY_KEY: {
@@ -1095,7 +1124,7 @@ export function apply(ctx: Context, passed?: unknown): void {
         timeoutSeconds: () => config().ticketTimeoutSeconds,
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
         // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
-        settings: () => defaultSettings(githubAccount(), feishuAccount(), config().evalMode),
+        settings: () => defaultSettings(githubAccount(), feishuAccount(), config().evalMode, config().evalTimeoutSeconds),
         scope: superagentScope(githubAccount, feishuAccount),
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),
