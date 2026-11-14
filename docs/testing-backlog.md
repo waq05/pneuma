@@ -40,6 +40,12 @@
 | B23 | P2-Q / `dock-browser` 第 9③ 与 `OPEN_SETTLE_MS` | 常量数值本身 | 上限已有**行为**断言（open 在 250ms~5s 内落地），常量没有独立行为 | 不补（与 B17 同类） |
 | B24 | P2 尾批 / `ops` | CI 机器上没有 dsh-ops worker 时，`ops-worker.int.spec.ts` 整段 skip——**这一层在无 worker 的 CI 上不设防** | 假 worker 等于测自己的实现（修订锚、diff、表格解析全要仿），比明确 skip 更假；探针语义本来就是「没装就跳过」 | P6 接 CI 时拍板：要么 CI 装 dsh-ops（需要凭据与平台二进制），要么接受这层只在开发机设防。skip 已写明原因（`9d60dc11`），不静默绿 |
 | B25 | P2 尾批 / F13 | `win-token.int.spec.ts` 的 ConPTY Ctrl+C 段（0x03 经 conin 中断子进程） | 当前环境 3/3 稳定红且单跑也红，老探针同红，产品代码未动——环境漂移还是真实回归未判定 | 已 test.skip（`f6042d7e`）。换机或重启后复跑 `-t ConPTY`：绿则撤 skip，红则按 F13 走产品排查 |
+| B26 | P3-B / `ui-process-grid` [1]–[6][7b][8] | 栅格对齐的 CSS 像素级断言（三类行左缘同线、缩进档位） | 纯 CSS 文本钉没有运行期接缝；像素级版面该用截图探针 | 转 `desktop/shots` 截图探针（渲染批后或 P7）。探针已删（行为半在 `tool-summary.spec.ts`） |
+| B27 | P3-B / `ui-think-markdown` [3]–[5] | 思考展开区 markdown 排版的 CSS 文本钉 | 同上 | 渲染批（`@testing-library/react`）落地后改真渲染断言，或销账 |
+| B28 | P3-B / fs-tools 漂移钉 | `ui-transcript-render [4]`：fs-tools 的 import 链与 `MUTATION_CONTENT_FIELDS` 表的漂移 | fs-tools import 链重（node:fs、path-policy、sandbox-args）在 ui 层拉不动；表本体已迁（`tool-args.spec.ts`） | 待拍板：要不要在内核层补 `fs-tools.spec.ts`（P3-B 白名单不含 src/core，未做） |
+| B29 | P3-D / `ui-locale` 整条 | 无硬编码中文 + 字典键集对账 + `t()` 键存在 | 被测对象就是源码文本，AST 扫描闸没有行为等价物（手册 §2 的 A–E 全不适用） | 建议**留 check-ui 长期跑**；若要进 P7，标成「文档闸/发布闸」而非测试。探针保留 |
+| B30 | P3-D / `ui-legacy-compat` [1][3][4] | 全仓禁用新 API 扫描、inset 兜底与产物门、窄屏 CSS | 源码闸与样式钉，同 B29 | 同上，留 check-ui。探针保留 |
+| B31 | P3-D / `ui-plugin-disable` [3][6] | 审计 `lib/ui/plugins/*/client.js` 构建产物（停用后不留残骸） | vitest 主配置明令测试只解析 src；产物语义 vitest 管不了（D28 同类） | 待拍板：比照 D28 长期留 scripts/，或给 ui-shell 产物单开「构建产物层」project。探针保留 |
 
 ## 三、永远留在 Node 侧（不是欠账，是设计）
 
