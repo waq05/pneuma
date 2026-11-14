@@ -26,7 +26,15 @@
 | `054e6d8b` | **D 表第一条验收**：`scripts/superagent-candidate-e2e-test.mjs`，候选收件箱全链路 22 条断言全绿（假 lark-cli 走产品的 `feishuCli` 口子 → 真飞书来源 → 真准入闸 inferred → 真判定器 → 候选落库 → 接单/忽略两颗钮 → 工单交付） |
 | `546ae2c8` | **D 表第二三条验收**：`scripts/superagent-worker-e2e-test.mjs`，后台作业 + 子智能体真 worker 链路 19 条断言全绿（`run_in_background` → 等静默 → 作业完成唤醒 → `job_output` 读到；`subagent spawn` → 队友真回话 → 名册落盘 → 收队友） |
 
-### 2.2 上一轮（13 个 commit，`dd969c67` 起）
+### 2.2 第三轮（`53ba3f26` 起的 3 刀，用户拍板「边缘小项也要补」）
+
+| commit | 内容 |
+| --- | --- |
+| `53ba3f26` | 设置面补判定超时 `evalTimeoutSeconds`（30–600，默认 120；对齐上游 `eval.timeoutSeconds`）——defaultSettings 第四参，现读，下一拍生效 |
+| `7683794f` | 体检项加第四项 `superagent/teammates`：`subagent` 插件启没启用（它默认关，不启用时收队友静默短路）；条目缺失或 disabled 都报 warn 并指路插件中心 |
+| `8fa530e6` | 设置变更历史（对齐上游 `app/settings-history.ts`）：store schema v4 加 `settings_history` 表（一行一字段、写侧裁 30 条）；save 包装成「写盘且值真的变了才记」；快照面加 `settingsHistory?` 可选格；设置页底部「最近变更」块 |
+
+### 2.3 上一轮（13 个 commit，`dd969c67` 起）
 
 | commit | 内容 |
 | --- | --- |
@@ -44,7 +52,7 @@
 | `5ca94c44` | 修既有 flaky：名册用例等过一个 mtime 窗口 |
 | `2c0374ef` | 修既有 flaky：常驻多 agent 用例把 A 的回合拖到 2 秒 |
 
-### 2.3 全部 25 项进度
+### 2.4 全部 25 项进度
 
 `✅` 已补 / `🟡` 补了等价物（换了实现方式）/ `🧭` 设计决定不补 / `⏳` 等真账号（代码已就位）。
 
@@ -76,7 +84,7 @@
 | O4 | 崩溃恢复：出站消息 | ✅ | outbox `state` 列 + `claimOutbox` / `finishOutbox` + 开库把残留 `sending` 改回 `pending` |
 | G9 | worker 模型与禁令名单 | ✅ | 第二轮查漏补出：设置面 `workerModel`（空=跟随选路）与 `workerBlockedCommands`（只进系统提示词）；上游的 worker-bin shim 强制层在 DSC 无对应物（`a4803cdd`） |
 
-### 2.3 backlog 里的逐项做法
+### 2.5 backlog 里的逐项做法
 
 每项的「上游怎么做 / 补的话动哪 / 验收 / 值得补吗」在 [`backlog.md`](backlog.md)，本表只给状态与证据。
 
@@ -96,18 +104,19 @@
 | **G6 队友工具交集** | 孙代理继承 worker 的工具与权限（`app/sessions.ts:303-312`） | 队友工牌来自角色文件，不继承父会话 | 要改共用包 `subagent` 的工具挑选逻辑，影响所有会话 |
 | **U6 手机档** | — | 侧栏收起、56px 窄栏不出现、整页顶掉对话区 | 是 §8.5「整页」范式的代价；要改就得重选界面范式 |
 
-### C 第二轮查漏时确认的边缘差异（都不在 25 项清单里，已定性不补）
+### C 查漏时确认的边缘差异（第二轮定性 6 项，第三轮按用户拍板补掉 3 项）
 
-对照原型 `D:\code\dsh-superagent-prototype` 全量对照 78 个源文件（`src/app` 32 + `src/core` 18 + `src/sources` 15 + 顶层），除 G9 两个设置面缺口（已补）外，其余差异全部定性：
+对照原型 `D:\code\dsh-superagent-prototype` 全量对照 78 个源文件（`src/app` 32 + `src/core` 18 + `src/sources` 15 + 顶层）：
 
-| 项 | 上游怎么做 | 我们怎么做 | 为什么不补 |
-| --- | --- | --- | --- |
-| `app/cache` / `app/links` / `app/resources` | LRU 缓存 + 飞书链接解析 + `orchestrator_read` 分页资源，全是**常驻主会话**的工具面 | 工单文本 + 判定器 `threadContext`（S1）替代 | 依附 G1 有意不做的那一半 |
-| `app/skill-files` 的两个内置 SKILL.md | 教 worker 用 `orchestrator_read` 读 GitHub/飞书源头 | 同上，依附 G1；S1 的上下文渲染覆盖了「worker 知道来龙去脉」的主要场景 | 同上 |
-| prompts 15 个文件按角色拼装 | `shared` / `subscriptions` / `replies` / `handoff/*` / `team/*` 各一段注入两角色 | 并入 `worker.md` 一份定稿（设计文档 §6.2.1） | 文案组织差异，非功能缺口；orchestrator / dispatch / admission 三段依附 G1 |
-| `app/settings-history` + `app/versions` | 管理面板展示设置修订历史 diff | 无 | 管理面板增强，DSC 设置页无此概念；要补单独立项 |
-| 上游 save 时校验角色模型（`resolveRoleModel` 抛 `modelUnavailable`） | 保存设置时就验证 provider/model 存在 | `workerModel` / `assessorModel` save 不校验 | 填错 provider 时 worker 请求在 `routeFor` 当场抛错（回合失败，可归因），判定器退回同步规则；两级兜底都不炸宿主 |
-| `eval.timeoutSeconds` 可配 | 管理面板可调判定超时 | schema 默认 120，未暴露设置面 | 120 秒够用；要补是 minutes 级的活 |
+| 项 | 结果 |
+| --- | --- |
+| `app/settings-history` + `app/versions` | **已补（第三轮 `8fa530e6`）**：按 DSC 逐字段保存裁成一行一字段，快照面 + 设置页「最近变更」块 |
+| `eval.timeoutSeconds` 可配 | **已补（第三轮 `53ba3f26`）**：设置面 `evalTimeoutSeconds`（30–600，默认 120） |
+| subagent 未启用的体检提醒 | **已补（第三轮 `7683794f`）**：体检项 `superagent/teammates`（order 103） |
+| `app/cache` / `app/links` / `app/resources` | 不补：LRU 缓存 + 飞书链接解析 + `orchestrator_read` 分页资源，全是常驻主会话的工具面，依附 G1 有意不做的那一半；DSC 用工单文本 + 判定器 `threadContext`（S1）替代 |
+| `app/skill-files` 的两个内置 SKILL.md | 不补：教 worker 用 `orchestrator_read` 读源头，依附 G1；「读到 ≠ 被授权」的礼仪在 DSC 由准入闸强制 |
+| prompts 15 个文件按角色拼装 | 不补：文案组织差异，并入 `worker.md` 定稿（设计文档 §6.2.1）；orchestrator / dispatch / admission 三段依附 G1 |
+| 上游 save 时校验角色模型（`resolveRoleModel` 抛 `modelUnavailable`） | 不补：填错 provider 时 worker 请求在 `routeFor` 当场抛错（回合失败，可归因），判定器退回同步规则；两级兜底都不炸宿主 |
 
 ### D 第二轮已清空
 
@@ -123,11 +132,12 @@
 5. **`confirmInferred` 默认关**：判定器在构造时就定了形状，改它要重开宿主（与 `assessorModel` 同一条取舍）。`evalMode` 走 `settings()` 回调现读，改完下一拍生效，不必重启。
 6. **`subagent` 插件默认关**：收队友（`ctx.get('team')`）与 spawn 都要求它启用；不启用时执行器那一支静默短路（`hostFromContext` 拿到 undefined），派工照常。e2e 验队友链路要在 `plugins.json` 里显式启用它（`546ae2c8` 的探针就是这么做的）。
 
-## 5 门禁（在本轮最后一次源码改动 `546ae2c8` 上跑过）
+## 5 门禁（在第三轮最后一次源码改动 `8fa530e6` 上跑过）
 
 ```sh
 pnpm run build                     # exit 0，79 个功能包
-node scripts/package-tests.mjs     # 91 包 / 121 用例 / 692 断言 / 0 失败
+node scripts/package-tests.mjs     # 91 包 / 121 用例 / 693 断言 / 0 失败
+pnpm run check:ui                  # 79/79
 pnpm run check:plugin              # 换包 e2e 17 PASS / 0 FAIL
 node scripts/check-core.mjs        # 124/125（816.7s）——唯一失败见下
 node scripts/superagent-e2e-test.mjs           # 24/24
