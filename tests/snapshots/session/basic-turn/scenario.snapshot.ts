@@ -19,7 +19,6 @@
  * @module dsc/tests/snapshots/session/basic-turn
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { bootKernel, readSessionJsonl, replayLLM, tempHome, type BootedKernel, type FakeLLM } from '../../../harness.js'
 import { startRecordProxy } from '../../recorder.js'
@@ -38,6 +37,12 @@ let llm: FakeLLM
 let kernel: BootedKernel
 let proxy: Awaited<ReturnType<typeof startRecordProxy>> | null = null
 let runError: unknown
+
+/** 当前会话文件路径（BootedKernel 只暴露 ctx，会话服务从 ctx 上窄化取）。 */
+function sessionFile(): string {
+  const surface = kernel.ctx as unknown as { session: { current(): { filePath: string } } }
+  return surface.session.current().filePath
+}
 
 beforeAll(async () => {
   if (mode === 'skip') return
@@ -105,7 +110,7 @@ d(`快照场景：单轮问答（${mode === 'skip' ? 'skip：没有录制文件�
   })
 
   test('会话落盘，记录序列是 user → assistant', () => {
-    const sessionPath = kernel.session.current().filePath
+    const sessionPath = sessionFile()
     expect(existsSync(sessionPath)).toBe(true)
     const records = readSessionJsonl(sessionPath)
     const types = records.map((record) => record['type']).filter((type) => type === 'user' || type === 'assistant')
@@ -114,15 +119,13 @@ d(`快照场景：单轮问答（${mode === 'skip' ? 'skip：没有录制文件�
   })
 
   test('assistant 的正文非空（真模型/录制里都有实际回答）', () => {
-    const sessionPath = kernel.session.current().filePath
-    const assistant = readSessionJsonl(sessionPath).find((record) => record['type'] === 'assistant')
+    const assistant = readSessionJsonl(sessionFile()).find((record) => record['type'] === 'assistant')
     expect(typeof (assistant as { text?: unknown } | undefined)?.text).toBe('string')
     expect(String((assistant as { text?: unknown }).text).length).toBeGreaterThan(0)
   })
 
   test('用量计数非零（快照层顺手钉住 token 记账）', () => {
-    const sessionPath = join(kernel.session.current().filePath)
-    const usage = readSessionJsonl(sessionPath).find((record) => record['type'] === 'usage')
+    const usage = readSessionJsonl(sessionFile()).find((record) => record['type'] === 'usage')
     if (mode === 'record') {
       // 录制时真模型回了用量；没有就说明解析层漏记，当场红。
       expect(usage).toBeDefined()
