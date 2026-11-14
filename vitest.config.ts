@@ -1,5 +1,5 @@
 /**
- * Vitest 主配置：四个常驻分层 project（unit / integration / ui / snapshot）。
+ * Vitest 主配置：五个常驻分层 project（unit / integration / ui / snapshot / tui）。
  *
  * ## 只解析 `src/`，不许 import `lib/`
  *
@@ -122,6 +122,12 @@ export default defineConfig({
           retry: 1,
           // 线程池共享端口与全局状态，起真内核的用例会互相踩。
           pool: 'forks',
+          // K4：每个集成文件都要起一次真内核（build 产物 + 全插件装配），默认并行度
+          // （=核数）下同时起十几个内核，机器扛不住——79 个文件全量并行时 hook/runTurn
+          // 撞超时线，单独跑全绿。限到 4：全量 ~6 分钟变 ~8 分钟，换「全量红才算真红」。
+          // 旋钮是 `maxWorkers`（Vitest 4 的用户面字段）；`poolOptions.forks.maxForks`
+          // 在 4.x 的运行时里已经没人读（4.1.12 实测 14 倍并行照跑），别写回那个。
+          maxWorkers: 4,
           // 同一文件内串行，避免两条用例争用同名临时目录。
           sequence: { concurrent: false },
           setupFiles: ['tests/setup/temp-home.ts'],
