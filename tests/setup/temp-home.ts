@@ -35,6 +35,16 @@ const original = {
   USERPROFILE: process.env.USERPROFILE,
 }
 
+/**
+ * 原始主目录透传给用例（`HOME` 已被换成临时目录，这里存换之前的值）。
+ *
+ * 为什么要有它：有些迁移来的用例要找「真实家里装的东西」——如 dsh-ops 的 worker 二进制
+ * 装在 `~/.dsc/plugins` 或 dsh 的 profiles 里，临时 HOME 里当然没有。用例从
+ * `globalThis.__DSC_REAL_HOME__` 读这份值，只读不写，隔离不受影响。
+ */
+;(globalThis as { __DSC_REAL_HOME__?: string }).__DSC_REAL_HOME__ =
+  original.HOME ?? original.USERPROFILE ?? undefined
+
 /** 临时主目录；`mkdtempSync` 自带原子性，同机并发跑多个测试文件不会撞名。 */
 const home = mkdtempSync(join(tmpdir(), 'dsc-int-home-'))
 
