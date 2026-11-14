@@ -92,6 +92,39 @@ test('sk- 后紧跟标点时只吃 token，标点留下', () => {
   expect(redact('token=sk-abcdefgh12345, 然后换行')).toBe('token=sk-***, 然后换行')
 })
 
+test('F10：大写 SK- 开头的密钥也被抹', () => {
+  // 加 i 标志前只认小写 sk-，大写写法的真实密钥漏网。
+  expect(redact('OPENAI_KEY=SK-abcdefghijklmnop1234')).toBe('OPENAI_KEY=sk-***')
+})
+
+test('F10：词边界控制误伤——task-12345678 里的 sk- 不命中', () => {
+  // 加 i 标志会把更多正常文本卷进来；词边界把这层误伤挡回去（这条同时钉住
+  // 「行为收窄」：改前 'sk-12345678' 会被误抹成 'ta'+sk-***，改后原样保留）。
+  expect(redact('task-12345678 已完成')).toBe('task-12345678 已完成')
+})
+
+test('F10：AWS 访问键 ID（AKIA/ASIA + 16 位）被抹，前后正文不动', () => {
+  const out = redact('aws_access_key_id=AKIAIOSFODNN7EXAMPLE aws_session_token=ASIAIOSFODNN7EXAMPLE')
+  expect(out).toBe('aws_access_key_id=*** aws_session_token=***')
+})
+
+test('F10：GitHub token（ghp_ 系）被抹，前缀外形保留', () => {
+  const out = redact('token: ghp_abcdefghijklmnopqrstuvwxyz012345')
+  expect(out).toBe('token: gh***')
+  // 词边界：嵌在词里的 ghp_ 不是 token（highp_…）不该动。
+  expect(redact('highp_abcdefghijklmnopqrstuvwxyz012345 不动')).toBe('highp_abcdefghijklmnopqrstuvwxyz012345 不动')
+})
+
+test('F10：aws_secret_access_key 赋值形态被抹（值里的 / 也算值的一部分）', () => {
+  const out = redact('aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY')
+  expect(out).toBe('aws_secret_access_key=***')
+})
+
+test('F10：裸 JWT（无 Bearer 前缀的三段式）被抹', () => {
+  const out = redact('id_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV')
+  expect(out).toBe('id_token=***')
+})
+
 test('短值不抹：api_key=abc 原样返回', () => {
   // 与 Bearer 的门槛同一条：'abc' 更可能是占位符。这条防的是「宁可多抹」被写到
   // 把正常单词也抹掉的程度。
