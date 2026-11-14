@@ -10,6 +10,11 @@
  * 挂着这个 hook 的卡片（轮尾「文件已更改」卡的接线）在
  * `src/packages/ui-transcript/ui/changes-card.spec.tsx`。
  *
+ * 锚点路（`arm` 的第四参：触发行的锚点名）升级自 `scripts/ui-anchored-test.mjs` 第 [3] 段
+ * 的渲染半（缺口清单 B36「ui-anchored [3]」）——原探针钉的是 `anchorName?: string` 两行
+ * 源码文本；这里行为化：带上第四参 arm，出卡的 state 里就有锚点名（浮层靠它贴位置），
+ * 不带就没有（回退路自己量 rect）。浮层那份样式的行为在 changes-anchor.spec.tsx。
+ *
  * @module dsc-ui-primitives/ui/hover-delay.spec
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -40,8 +45,8 @@ function Probe({ onReady }: { onReady(api: ProbeApi): void }): ReactNode {
 }
 
 interface ProbeApi {
-  hover(): { item: string } | null
-  arm(item: string, anchor: DOMRect, cardWidth?: number): void
+  hover(): { item: string; anchorName?: string } | null
+  arm(item: string, anchor: DOMRect, cardWidth?: number, anchorName?: string): void
   disarm(): void
   keep(): void
   close(): void
@@ -195,5 +200,31 @@ describe('收卡节奏是本壳有意分道的 1s', () => {
       vi.advanceTimersByTime(2000)
     })
     expect(true).toBe(true)
+  })
+})
+
+describe('arm 的第四参：锚点名跟着进卡（ui-anchored [3] 行为化）', () => {
+  test('支持锚点定位时 arm 带上锚点名：出卡的 state 里就是它，浮层拿它贴位置', () => {
+    let api!: ProbeApi
+    render(<Probe onReady={(value) => { api = value }} />)
+    act(() => {
+      api.arm('文件', rect(), 480, '--dsc-anchor-hover-0-ats')
+    })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(api.hover()?.anchorName).toBe('--dsc-anchor-hover-0-ats')
+  })
+
+  test('回退路（不支持锚点）不带第四参：state 里没有锚点名，浮层自己量 rect', () => {
+    let api!: ProbeApi
+    render(<Probe onReady={(value) => { api = value }} />)
+    act(() => {
+      api.arm('文件', rect(), 480)
+    })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(api.hover()?.anchorName).toBeUndefined()
   })
 })
