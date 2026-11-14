@@ -57,7 +57,7 @@ import { defaultSettings, GITHUB_SOURCE, normalizeFeishuAccount, normalizeGithub
 import type { Settings } from './core/policy.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
-import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth } from './health.js'
+import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth, createTeammatesHealth } from './health.js'
 import { SuperagentRuntime } from './runtime.js'
 import { SuperagentService } from './service.js'
 import { registerSurface, withRepoGuide } from './surface.js'
@@ -1244,6 +1244,9 @@ export function apply(ctx: Context, passed?: unknown): void {
       larkCli: () => config().feishuCli || DEFAULT_FEISHU_CLI,
     }))
     ctx.effect(() => offDependenciesHealth, 'superagent: health.register (dependencies)')
+    // 队友能力那一项：subagent 插件启没启用（它默认关，不启用时收队友静默短路）。
+    const offTeammatesHealth = health.register(createTeammatesHealth())
+    ctx.effect(() => offTeammatesHealth, 'superagent: health.register (teammates)')
   }
 
   ctx.effect(() => {

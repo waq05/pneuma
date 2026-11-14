@@ -31,6 +31,7 @@
 import { spawnSync } from 'node:child_process'
 import type { HealthCheck, HealthResult } from '@pneuma/runtime/services/types.js'
 import { resolveExecutable } from '@pneuma/runtime/core/executable.js'
+import { readPluginEntries } from '../../core/plugin-registry.js'
 import { acquireInstanceLock, StoreError, type DscStore } from './adapters/store.js'
 import { orchestratorDbPath } from './paths.js'
 
@@ -359,6 +360,53 @@ export function createDependenciesHealth(probe: SuperagentDependenciesProbe): He
           summary: '依赖探测没跑成',
           detail: describe(error),
           fix: '看 detail 里那句原因；多半是设置文件读不出来，去设置 → Super Agent 存一次再看',
+        }
+      }
+    },
+  }
+}
+
+/**
+ * 建队友能力体检项：`subagent` 插件启没启用。
+ *
+ * 为什么值得单项：收队友与 spawn 都要求 `subagent` 插件在场（执行器 `hostFromContext` 的
+ * `ctx.get('team')`），而它**默认关**（`subagent/cordis.patch.yml:5`）——不启用时那一支
+ * 静默短路，派工照常，症状只是「worker 调 subagent 派不出队友」，日志里翻不到根因。
+ * 缺了只报 warn 不报 fail：不用队友的人关着它该照常用其它功能。
+ *
+ * 判据只有条目树一行：`readPluginEntries()` 里 `file === 'subagent'` 的条目**存在且
+ * `disabled !== true`** 才算开——条目缺失也是关（它默认关，`plugin-registry.ts:499`）。
+ * 只读，不写盘。
+ *
+ * @returns 可以直接 `ctx.health.register(...)` 的一项
+ */
+export function createTeammatesHealth(): HealthCheck {
+  return {
+    id: 'superagent/teammates',
+    title: 'Super Agent 队友能力',
+    // 紧跟在依赖（102）后面：同一插件四项排在一起。
+    order: 103,
+    run(): HealthResult {
+      try {
+        const entries = readPluginEntries()
+        const subagent = entries.find((entry) => entry.file === 'subagent')
+        if (subagent !== undefined && subagent.disabled !== true) {
+          return { status: 'ok', summary: '可用（subagent 插件已启用）' }
+        }
+        return {
+          status: 'warn',
+          summary: 'subagent 插件没启用：worker 派不出队友',
+          detail: subagent === undefined
+            ? 'plugins.json 里没有 subagent 条目——它默认关，没在插件中心动过就是这个状态'
+            : 'plugins.json 里 subagent 条目标着 disabled',
+          fix: '要队友就去插件中心打开 subagent 并重开宿主；不用队友可以不管——派工与其余功能不受影响',
+        }
+      } catch (error) {
+        return {
+          status: 'warn',
+          summary: '队友能力探测没跑成',
+          detail: describe(error),
+          fix: '看 detail 里那句原因；多半是 plugins.json 读不出来，去插件中心确认 subagent 的开关',
         }
       }
     },
