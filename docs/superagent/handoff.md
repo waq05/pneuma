@@ -6,13 +6,27 @@
 
 ## 1 一句话现状
 
-补齐清单 24 项：**18 项已补、1 项补了等价物（G1 换成候选收件箱）、1 项文档过时（G2，实际已补）、
-2 项不补（设计决定）、2 项等用户拍板**。代码侧没有已知缺口，五道门禁全绿。
-剩下的是：两层有意没做的差异、三处「有单测但没跑过真链路」。
+补齐清单（含新增的 G9 共 25 项）：**20 项已补、1 项补了等价物（G1 换成候选收件箱）、
+3 项不补（设计决定）、1 项等真账号（S5，用户已拍板暂缓）**。
+第二轮（`c6c71545` 起的 7 刀）把上一轮遗留的三处「有单测但没跑过真链路」全部在真宿主走通，
+并顺带补出三个设置面缺口（`evalMode` / `workerModel` / `workerBlockedCommands`，见 §2.1 第二轮）。
+剩下的是：B 表三层有意没做的差异、S5 真账号验收（只能人做）。
 
 ## 2 已完成
 
-### 2.1 本轮（13 个 commit，HEAD 往前数）
+### 2.1 第二轮（`c6c71545` 起的 7 刀）
+
+| commit | 内容 |
+| --- | --- |
+| `c6c71545` | docs：backlog G2 状态行回填为已补（上一轮交接 §3-C 指出的文档不一致） |
+| `5cd6e654` | **S4 拍板落地**（用户定：不进运行时依赖清单）：设置页 `feishuCli` help 与体检项 fix 写明装法（`npm install -g @larksuite/cli`）；设计文档 §16.8 与 backlog S4 回填 |
+| `a4803cdd` | **查漏补缺**：对照原型 `dsh-superagent-prototype` 全量对照 78 个文件，发现并补上设置面两个缺口——`workerModel`（对齐上游 `executor.model`；执行器的 `WorkerModel` 路由早已备好、装配处写死 null）与 `workerBlockedCommands`（对齐上游 `executor.blockedCommands`；注入位早已有、装配处不传） |
+| `7ed0f6b2` | docs：backlog 加 G9 条目；G8 补文案组织差异说明 |
+| `e36cb6a9` | **G1 最后一环**：设置面补接单模式 `evalMode`（observe/auto/off）。此前 `defaultSettings` 把 `eval.mode` 写死 observe（P0 时代取舍），候选收件箱做出后配置面没跟上——`confirmInferred` 开了也没有候选进得去（非 auto 下降级成 would_accept） |
+| `054e6d8b` | **D 表第一条验收**：`scripts/superagent-candidate-e2e-test.mjs`，候选收件箱全链路 22 条断言全绿（假 lark-cli 走产品的 `feishuCli` 口子 → 真飞书来源 → 真准入闸 inferred → 真判定器 → 候选落库 → 接单/忽略两颗钮 → 工单交付） |
+| `546ae2c8` | **D 表第二三条验收**：`scripts/superagent-worker-e2e-test.mjs`，后台作业 + 子智能体真 worker 链路 19 条断言全绿（`run_in_background` → 等静默 → 作业完成唤醒 → `job_output` 读到；`subagent spawn` → 队友真回话 → 名册落盘 → 收队友） |
+
+### 2.2 上一轮（13 个 commit，`dd969c67` 起）
 
 | commit | 内容 |
 | --- | --- |
@@ -30,14 +44,14 @@
 | `5ca94c44` | 修既有 flaky：名册用例等过一个 mtime 窗口 |
 | `2c0374ef` | 修既有 flaky：常驻多 agent 用例把 A 的回合拖到 2 秒 |
 
-### 2.2 全部 24 项进度
+### 2.3 全部 25 项进度
 
-`✅` 已补 / `🟡` 补了等价物（换了实现方式）/ `📄` 文档过时（代码已补）/ `🧭` 设计决定不补 / `⏳` 等用户拍板。
+`✅` 已补 / `🟡` 补了等价物（换了实现方式）/ `🧭` 设计决定不补 / `⏳` 等真账号（代码已就位）。
 
 | 编号 | 项 | 状态 | 证据 |
 | --- | --- | --- | --- |
 | G1 | 常驻主会话编排器 | 🟡 | 换成候选收件箱：`093e1569` + `6c2d975e`（表）+ `861b2b3c`（指纹）。**没有造常驻主会话**，与上游的差别见 §3-B |
-| G2 | 持久化 effect 队列 | 📄 | `effects.ts` 418 行已接进执行器与运行期（`runtime.ts:427/457/1134`、`executor.ts:858/871`）。backlog 的状态行忘了改 |
+| G2 | 持久化 effect 队列 | ✅ | `effects.ts` 418 行已接进执行器与运行期（`runtime.ts:427/457/1134`、`executor.ts:858/871`）。状态行已随 `c6c71545` 回填 |
 | G3 | 执行器后台任务 | ✅ | `44e98761`（`ctx.jobs`）+ `833c7fe5`（三件工具）+ `bf33da1b`（等静默） |
 | G4 | 执行器 prepare 命令 | ✅ | 设置项 `prepareCommand` + 建树后执行，10 分钟超时，失败判 failed 不重试 |
 | G5 | 执行器网络抖动重试 | ✅ | `transient()` 判据 + 回合内重试（3 次，15/30/60 秒退避，同一会话继续） |
@@ -48,8 +62,8 @@
 | S2 | GitHub 订阅线程轮询 | ✅ | `runtime.subscribedThreads()` + `source.pollThreads()`，每线程独立游标 |
 | S3 | 飞书新群自动发现 | ✅ | `+chat-list` 每轮刷新群清单（补收侧）。真正卡住「@ 一次建不出工单」的是 S6 |
 | S6 | 飞书来源没进准入表 | ✅ | 补 `feishuAllowed` + 登记 + `scope` 分支。**待真账号验收** |
-| S4 | `lark-cli` 打包 | ⏳ | 等用户定它进不进运行时依赖清单，见 §3-A |
-| S5 | 真账号验收 | ⏳ | GitHub / 飞书都要真账号，只能人做，见 §3-A |
+| S4 | `lark-cli` 打包 | ✅ | 已拍板（2026-11-14）：不进运行时依赖清单；设置页与体检项写明装法 `npm install -g @larksuite/cli`（`5cd6e654`） |
+| S5 | 真账号验收 | ⏳ | GitHub / 飞书都要真账号，只能人做。用户已拍板暂缓 |
 | U1 | 停用界面包时复位页面 | ✅ | `ui-sessions` 对任意整页判断「启动图里还有没有人报名」 |
 | U2 | 详情页转录自动刷新 | ✅ | `working` / `idle` 时每 5 秒静默重读，已结束与等人档位不轮询 |
 | U3 | `branch` / `changedFiles` | 🧭 | 不是移植缺口（上游没有这两个字段）。`branch` 零成本可补，`changedFiles` 要单独立项 |
@@ -60,6 +74,7 @@
 | O2 | 机器校验 | ✅ | 体检项 `superagent/dependencies`：git 与 lark-cli 各跑一次 `--version`，缺失记 `warn` |
 | O3 | 构建与测试门禁 | ✅ | `scripts/superagent-e2e-test.mjs`，24 条断言，落 `check-core` |
 | O4 | 崩溃恢复：出站消息 | ✅ | outbox `state` 列 + `claimOutbox` / `finishOutbox` + 开库把残留 `sending` 改回 `pending` |
+| G9 | worker 模型与禁令名单 | ✅ | 第二轮查漏补出：设置面 `workerModel`（空=跟随选路）与 `workerBlockedCommands`（只进系统提示词）；上游的 worker-bin shim 强制层在 DSC 无对应物（`a4803cdd`） |
 
 ### 2.3 backlog 里的逐项做法
 
@@ -67,12 +82,11 @@
 
 ## 3 未完成清单
 
-### A 等用户拍板（代码侧做不了）
+### A 等真账号（代码侧已就位，用户已拍板暂缓）
 
 | 项 | 缺什么 | 为什么不是我们的活 |
 | --- | --- | --- |
-| **S4 `lark-cli` 打包** | 定它进不进运行时依赖清单；定了之后设置页给一条可操作提示 | 是分发策略，不是代码能力。现在没装 CLI 时不启动来源、记一行日志、不影响其余部分 |
-| **S5 真账号验收** | GitHub 仓库 + `GITHUB_TOKEN`；飞书自建应用 + 5 个 IM 权限 + 长连接订阅 | 只能人操作账号。离线用例 15 + 6 + 10 + 9 条已跑通 |
+| **S5 真账号验收** | GitHub 仓库 + `GITHUB_TOKEN`；飞书自建应用 + 5 个 IM 权限 + 长连接订阅 | 只能人操作账号。离线侧：包级用例 15 + 6 + 10 + 9 条已跑通；候选收件箱链路已有假 CLI 全链路 e2e 覆盖 |
 
 ### B 有意没做的一层（不是漏项，是设计差异）
 
@@ -82,41 +96,49 @@
 | **G6 队友工具交集** | 孙代理继承 worker 的工具与权限（`app/sessions.ts:303-312`） | 队友工牌来自角色文件，不继承父会话 | 要改共用包 `subagent` 的工具挑选逻辑，影响所有会话 |
 | **U6 手机档** | — | 侧栏收起、56px 窄栏不出现、整页顶掉对话区 | 是 §8.5「整页」范式的代价；要改就得重选界面范式 |
 
-### C 文档与代码不一致（**接手后先修这一条**）
+### C 第二轮查漏时确认的边缘差异（都不在 25 项清单里，已定性不补）
 
-**`backlog.md` 里 G2 的状态行写着「未补」，实际已补。**证据：
+对照原型 `D:\code\dsh-superagent-prototype` 全量对照 78 个源文件（`src/app` 32 + `src/core` 18 + `src/sources` 15 + 顶层），除 G9 两个设置面缺口（已补）外，其余差异全部定性：
 
-- `src/packages/superagent/adapters/effects.ts` 418 行，`EffectQueue` 照上游 `app/effects.ts` 移植
-- `runtime.ts:427` `new EffectQueue(store)`、`:457` `effects.start()`、`:1134` `effects.drain()`
-- `executor.ts:858` `effects.enqueue('launch', …)`、`:871` `effects.enqueue('delivery', …)`
+| 项 | 上游怎么做 | 我们怎么做 | 为什么不补 |
+| --- | --- | --- | --- |
+| `app/cache` / `app/links` / `app/resources` | LRU 缓存 + 飞书链接解析 + `orchestrator_read` 分页资源，全是**常驻主会话**的工具面 | 工单文本 + 判定器 `threadContext`（S1）替代 | 依附 G1 有意不做的那一半 |
+| `app/skill-files` 的两个内置 SKILL.md | 教 worker 用 `orchestrator_read` 读 GitHub/飞书源头 | 同上，依附 G1；S1 的上下文渲染覆盖了「worker 知道来龙去脉」的主要场景 | 同上 |
+| prompts 15 个文件按角色拼装 | `shared` / `subscriptions` / `replies` / `handoff/*` / `team/*` 各一段注入两角色 | 并入 `worker.md` 一份定稿（设计文档 §6.2.1） | 文案组织差异，非功能缺口；orchestrator / dispatch / admission 三段依附 G1 |
+| `app/settings-history` + `app/versions` | 管理面板展示设置修订历史 diff | 无 | 管理面板增强，DSC 设置页无此概念；要补单独立项 |
+| 上游 save 时校验角色模型（`resolveRoleModel` 抛 `modelUnavailable`） | 保存设置时就验证 provider/model 存在 | `workerModel` / `assessorModel` save 不校验 | 填错 provider 时 worker 请求在 `routeFor` 当场抛错（回合失败，可归因），判定器退回同步规则；两级兜底都不炸宿主 |
+| `eval.timeoutSeconds` 可配 | 管理面板可调判定超时 | schema 默认 120，未暴露设置面 | 120 秒够用；要补是 minutes 级的活 |
 
-这只是回填漏了，不是代码没做。修 `backlog.md` 的 G2 行即可，**别去重写 `effects.ts`**。
+### D 第二轮已清空
 
-### D 有单测但没跑过真链路
+上一轮的三条「有单测但没跑过真链路」全部验完（见 §2.1 的 `054e6d8b` / `546ae2c8`），探针永久留在
+`scripts/`（`superagent-candidate-e2e-test.mjs` 22 条、`superagent-worker-e2e-test.mjs` 19 条，都进 `check-core` 门禁）。
 
-| 项 | 已验到什么程度 | 还差什么 |
-| --- | --- | --- |
-| **候选收件箱全链路** | 挂起（`assessor.test.mjs` 三条）、表读写（`store.test.mjs`）、快照面（`surface.test.mjs`）、界面按钮（`pages.test.mjs`） | 没在真宿主里走「发布一条推断候选 → 概览页看到 → 点接单 → 工单开跑」。需要一个假模型端点返回 `accept` 且强度 `inferred`，`eval.mode = auto`，`confirmInferred = true` |
-| **后台作业 30 分钟上限** | 执行器用假 jobs 表测过（注入 `backgroundLimitMs: 60`）；`JobTable` 真实现的 `list`/`running`/`wait`/`kill` 用真子进程测过（`tools-default.test.mjs`） | 没在真 worker 里跑过完整一轮「起作业 → 回合结束 → 作业结束 → 唤醒」。30 分钟本身只是常量，注入小值等价 |
-| **子智能体在 worker 里** | worker 白名单有 `subagent`（`executor.test.mjs`）；父会话查不到抛错（`subagent.test.mjs`）；停工单收队友（`executor.test.mjs`） | 没在真 worker 里起过队友。要验得让假模型在 worker 回合里调一次 `subagent(action=spawn)` |
-
-## 4 接手必须知道的五个机制
+## 4 接手必须知道的六个机制
 
 1. **worker 会话是「幽灵会话」**：执行器自己 `Session.create`（`executor.ts:1086`），紧接着 `attachSession`（`:1097`），不进 `ctx.agent` 的常驻名册。靠 `attach` / `detach` 让内核认得它。`hasAgent` 与 `followup` **仍然只认常驻名册**——别顺手把它们改成查 `attached`，那会导致「对一个没有 MiniAgent 的会话调 followup」。
-2. **候选收件箱只在 `auto` 模式下有内容**：`assessmentOutcome` 在 `mode !== 'auto'` 时把推断强度的 accept 降成 `ignore`（`core/policy.ts` 的 `observed` 分支）。默认设置是 `observe`。所以「开了 `confirmInferred` 却什么都没有」不是 bug。
+2. **候选收件箱只在 `auto` 模式下有内容**：`assessmentOutcome` 在 `mode !== 'auto'` 时把推断强度的 accept 降成 `ignore`（`core/policy.ts` 的 `observed` 分支）。默认设置是 `observe`。第二轮补了 `evalMode` 设置字段（`e36cb6a9`）后这个模式**可调了**，但默认仍是 `observe`——「开了 `confirmInferred` 却什么都没有」先看判定模式。
 3. **等作业静默是轮询**：`settleBackground` 每 `backgroundPollMs`（默认 500ms）查一次 `ctx.jobs.running`。没走事件，因为作业表只提供查询。要改事件得先给 `JobTable` 加订阅。
 4. **子智能体查不到父会话就抛错**：`subagent/index.ts` 的 `subagentTool().run` 不再回落 `ctx.session.current()`。回落会把队友派到用户正看着的会话名下（名册、额度、任务板全错）。这条是**故意**的，别改回去。
-5. **`confirmInferred` 默认关**：判定器在构造时就定了形状，改它要重开宿主（与 `assessorModel` 同一条取舍）。
+5. **`confirmInferred` 默认关**：判定器在构造时就定了形状，改它要重开宿主（与 `assessorModel` 同一条取舍）。`evalMode` 走 `settings()` 回调现读，改完下一拍生效，不必重启。
+6. **`subagent` 插件默认关**：收队友（`ctx.get('team')`）与 spawn 都要求它启用；不启用时执行器那一支静默短路（`hostFromContext` 拿到 undefined），派工照常。e2e 验队友链路要在 `plugins.json` 里显式启用它（`546ae2c8` 的探针就是这么做的）。
 
-## 5 门禁（在本轮最后一次源码改动 `2c0374ef` 上跑过）
+## 5 门禁（在本轮最后一次源码改动 `546ae2c8` 上跑过）
 
 ```sh
 pnpm run build                     # exit 0，79 个功能包
-node scripts/package-tests.mjs     # 91 包 / 121 用例 / 691 断言 / 0 失败
+node scripts/package-tests.mjs     # 91 包 / 121 用例 / 692 断言 / 0 失败
 pnpm run check:plugin              # 换包 e2e 17 PASS / 0 FAIL
-node scripts/check-core.mjs        # 123/123（898.6s，exit 0）
-node scripts/superagent-e2e-test.mjs  # 24/24
+node scripts/check-core.mjs        # 124/125（816.7s）——唯一失败见下
+node scripts/superagent-e2e-test.mjs           # 24/24
+node scripts/superagent-candidate-e2e-test.mjs # 22/22（复跑稳定）
+node scripts/superagent-worker-e2e-test.mjs    # 19/19（复跑稳定）
 ```
+
+**check-core 的那 1 条失败与本轮无关**：`sandbox-win-token-test.mjs` 的「0x03 经 conin
+中断子进程」用例——ConPTY 下 Ctrl+C 不保证中断子进程（探针自己的 note 也写了「这条没做到」），
+单跑复现稳定挂，疑似环境漂移（上一轮在同一分支上是全绿）。本轮改动（superagent 包 +
+locale + 文档 + 两条新探针）与沙箱/TTY 层零交集。
 
 单跑某条探针要走 `--import` 钩子（否则界面模块的 `@dsc/ui` 别名解析不了）：
 
@@ -132,16 +154,15 @@ node --import ./scripts/_i18n-alias.mjs scripts/<name>-test.mjs
 
 ## 7 建议的接手顺序
 
-1. **修 `backlog.md` 的 G2 状态行**（5 分钟，纯文档）。
-2. **补 D 表里第一条：候选收件箱全链路**（最有价值——这是唯一「新增的对外能力」还没在真宿主里走通）。
-3. 补 D 表第二、三条（后台作业与子智能体在真 worker 里）——可以合并成一条 e2e 用例。
-4. A 表两项去问用户；B 表三项别再动，除非用户明确要换架构。
+1. **没有待办的功能缺口了**。第二轮把上一轮的 D 表三条全部走通、查漏补出的设置面缺口全部补上。
+2. S5 真账号验收等用户提供账号（拍板过暂缓）；B 表三项别再动，除非用户明确要换架构。
+3. §C 表的边缘差异若用户想补，按「单独立项」做（settings-history 最有内容，其余都是 minutes 级）。
 
 ## 8 相关文档
 
 | 文档 | 看什么 |
 | --- | --- |
-| [`backlog.md`](backlog.md) | 24 项补齐清单，每项有现状 / 补法 / 验收 |
+| [`backlog.md`](backlog.md) | 25 项补齐清单（含 G9），每项有现状 / 补法 / 验收 |
 | [`../superagent-design.md`](../superagent-design.md) | §11 与上游差异表；§15 第 11 步实施记录 |
 | [`../../src/packages/superagent/README.md`](../../src/packages/superagent/README.md) | 宿主包现状：五处装配面、工作链路、Known Limitations |
 | [`../../src/packages/ui-superagent/README.md`](../../src/packages/ui-superagent/README.md) | 界面包四页签，「待确认」块怎么接 |
