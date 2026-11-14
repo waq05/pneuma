@@ -19,7 +19,7 @@
  * @module dsc-ui-ask/ui/side-ask.spec
  */
 import { describe, expect, test } from 'vitest'
-import type { LlmRoute, LlmStream, StreamResult } from '@pneuma/runtime/core/llm.js'
+import { contentText, type LlmRoute, type LlmStream, type StreamResult } from '@pneuma/runtime/core/llm.js'
 import { INVOKABLE_METHODS } from '@pneuma/runtime/core/host-methods.js'
 import { SIDE_ASK_MAX_QUOTE, SIDE_ASK_MAX_TOKENS, SIDE_ASK_SYSTEM, buildSideAskMessages, sideAskOnce } from '@pneuma/runtime/core/side-ask.js'
 import { UI_METHODS, validateUiArgs } from '@pneuma/runtime/core/ui-methods.js'
@@ -92,7 +92,9 @@ describe('② 宿主：消息组装（buildSideAskMessages）', () => {
     const messages = buildSideAskMessages('这是什么？', 'const a = 1')
     expect(messages).toHaveLength(2)
     expect(messages[0]?.role).toBe('system')
-    const question = messages[1]?.content ?? ''
+    // content 的类型是 `string | null | ChatContentPart[]`（协议面），读文本走产品自己的
+    // 取词助手 contentText（`core/llm.ts` 导出）：拿到 string 才好比次序，不写类型断言。
+    const question = contentText(messages[1]?.content)
     expect(question).toContain('````')
     expect(question.indexOf('const a = 1')).toBeLessThan(question.indexOf('这是什么？'))
   })
@@ -121,13 +123,16 @@ describe('② 宿主：sideAskOnce 的只读保证与三种收尾', () => {
   })
 
   test('请求不带 tools（只读的硬保证）、输出预算封顶、思考档与温度照路由带', async () => {
-    let sent: Record<string, unknown> | null = null
+    // 用数组收调用：`let sent: T | null` 在闭包里赋值会被流分析收窄回 null，
+    // `sent?.tools` 的可选链一收窄就成了 never（TS2339）。数组下标读回的是真联合。
+    const seen: Array<Record<string, unknown>> = []
     const stream: LlmStream = async (_api, request) => {
-      sent = request as unknown as Record<string, unknown>
+      seen.push(request as unknown as Record<string, unknown>)
       return streamResult('好')
     }
     await sideAskOnce({ route, stream, question: '问', quote: '引', signal: new AbortController().signal })
-    expect(sent).not.toBeNull()
+    const sent = seen[0]
+    expect(sent).toBeDefined()
     expect(sent?.tools).toBeUndefined()
     expect(sent?.maxTokens).toBe(SIDE_ASK_MAX_TOKENS)
     expect(sent?.temperature).toBe(0.3)

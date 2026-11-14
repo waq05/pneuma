@@ -41,7 +41,23 @@ import {
 import { REMOTE_SHELL_METHODS } from '../../remote/types.js'
 import { INVOKABLE_METHODS } from '@pneuma/runtime/core/host-methods.js'
 import { UI_ARG_SPECS, UI_EXCLUDED, UI_METHODS } from '@pneuma/runtime/core/ui-methods.js'
-import { blockedNow, claimInput, commandQuery, filterCommands, insertCommand } from './commands.js'
+import { blockedNow, claimInput, commandQuery, filterCommands, insertCommand, type ShellCommandView } from './commands.js'
+
+/**
+ * 宿主 `listUiCommands` 的投影（照 `packages/runtime/index.ts` 的取法转录）：spec → view。
+ *
+ * 壳侧四个纯函数收的是 **view**（宿主已把 spec 投影好：`duringTask` 缺省补 `'allow'`、
+ * label / input 缺省不填）——壳只读不造。这里转录的是「取法」而非源码文本：宿主投影少带
+ * 一个字段时，走这条路的断言会红；手写的夹具直接写成 view，不过这道。
+ */
+const toView = (spec: CommandSpec): ShellCommandView => ({
+  name: spec.name,
+  args: spec.args,
+  description: spec.description,
+  ...(spec.label === undefined ? {} : { label: spec.label }),
+  ...(spec.input === undefined ? {} : { input: spec.input }),
+  duringTask: spec.duringTask ?? 'allow',
+})
 
 /** 壳里能跑的清单（改这一份就是改口径：清单动了本文件必须跟着动）。 */
 const EXPECTED = ['new', 'compact', 'status', 'usage', 'diff', 'review', 'review-status', 'review-cancel', 'help']
@@ -270,7 +286,7 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('空前缀列全部且保持原序；前缀过滤命中且大小写不敏感', () => {
-    const table: CommandSpec[] = [
+    const table: ShellCommandView[] = [
       { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
       { name: 'review', args: '[关注点]', description: '审查工作区未提交改动', duringTask: 'allow' },
       { name: 'resume', args: '', description: '恢复历史会话', duringTask: 'deny' },
@@ -281,14 +297,14 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('负向对照：只认前缀不认子串（view 不该命中 review）', () => {
-    const table: CommandSpec[] = [
+    const table: ShellCommandView[] = [
       { name: 'review', args: '[关注点]', description: '审查', duringTask: 'allow' },
     ]
     expect(filterCommands(table, 'view')).toEqual([])
   })
 
   test('补全文本：无参数不带空格，有参数带一个空格（接着打参数）', () => {
-    const table: CommandSpec[] = [
+    const table: ShellCommandView[] = [
       { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
       { name: 'review', args: '[关注点]', description: '审查', duringTask: 'allow' },
     ]
@@ -297,12 +313,12 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('菜单过滤按壳清单算：/rev 命中 review 三条（review-status / review-cancel 也是事实）', () => {
-    expect(filterCommands(shellCommands(), 'rev').map((row) => row.name)).toEqual([
+    expect(filterCommands(shellCommands().map(toView), 'rev').map((row) => row.name)).toEqual([
       'review',
       'review-status',
       'review-cancel',
     ])
-    expect(filterCommands(shellCommands(), 'RE').map((row) => row.name)).toEqual([
+    expect(filterCommands(shellCommands().map(toView), 'RE').map((row) => row.name)).toEqual([
       'review',
       'review-status',
       'review-cancel',
@@ -310,7 +326,7 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('回合中：deny 的行标灰，allow 的不标，闲着都不标', () => {
-    const table: CommandSpec[] = [
+    const table: ShellCommandView[] = [
       { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
       { name: 'review', args: '[关注点]', description: '审查', duringTask: 'allow' },
     ]
@@ -320,7 +336,7 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('要收输入的命令：回车前给出补全文本与提示', () => {
-    const claimRows: CommandSpec[] = [
+    const claimRows: ShellCommandView[] = [
       { name: 'review', args: '[关注点]', description: '代码审查', duringTask: 'allow', input: { hint: '写上关注点' } },
       { name: 'reviewer', args: '', description: '审阅者', duringTask: 'allow' },
       { name: 'diff', args: '[文件]', description: '差异', duringTask: 'allow' },
@@ -331,7 +347,7 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('尾空格不算参数；写了参数就不补全', () => {
-    const claimRows: CommandSpec[] = [
+    const claimRows: ShellCommandView[] = [
       { name: 'review', args: '[关注点]', description: '代码审查', duringTask: 'allow', input: { hint: '写上关注点' } },
     ]
     expect(claimInput(claimRows, '/review   ')?.insert).toBe('/review ')
@@ -339,7 +355,7 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('/rev 撞 /reviewer 时只认收输入的那条', () => {
-    const claimRows: CommandSpec[] = [
+    const claimRows: ShellCommandView[] = [
       { name: 'review', args: '[关注点]', description: '代码审查', duringTask: 'allow', input: { hint: '写上关注点' } },
       { name: 'reviewer', args: '', description: '审阅者', duringTask: 'allow' },
     ]
@@ -347,12 +363,12 @@ describe('④ 壳侧纯逻辑：composer/commands.ts', () => {
   })
 
   test('没有 input 的命令行为不变（/diff 返回 null）', () => {
-    const claimRows: CommandSpec[] = [{ name: 'diff', args: '[文件]', description: '差异', duringTask: 'allow' }]
+    const claimRows: ShellCommandView[] = [{ name: 'diff', args: '[文件]', description: '差异', duringTask: 'allow' }]
     expect(claimInput(claimRows, '/diff')).toBeNull()
   })
 
   test('清单为空时返回 null（不为这条去请求宿主）；普通消息不认', () => {
-    const claimRows: CommandSpec[] = [
+    const claimRows: ShellCommandView[] = [
       { name: 'review', args: '[关注点]', description: '代码审查', duringTask: 'allow', input: { hint: '写上关注点' } },
     ]
     expect(claimInput([], '/review')).toBeNull()
