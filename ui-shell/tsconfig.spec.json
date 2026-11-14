@@ -19,9 +19,9 @@
   // 只写 @pneuma 两条会把界面半自己的别名拆了。
   "compilerOptions": {
     // cordis 4.1 的声明文件之间用 `.ts` 扩展名互引（`export * from './context.ts'`）。
-    // bundler 解析下没有这个开关，这些引用被静默丢掉：九份声明只装进 utils/registry 两份，
-    // Context 的实例方法（effect/provide/get，声明在 fiber/context 等其余七份里）整片消失，
-    // 被 spec 拉进来的 cordis-host.ts 满屏 TS2576/2339。开它（noEmit 下合法）声明图才完整。
+    // bundler 解析下开它（noEmit 下合法）才吃得下这种声明引用；实测它对 cordis-host 那
+    // 六条 TS2576/2339 不是必要条件（关掉错一样在，真正的机关在下面的 include 顺序），
+    // 保留它是为了别让 `.ts` 扩展声明在任何口径下被静默丢掉。
     // 注意：不能顺手把 module/moduleResolution 换成 nodenext——壳的产物代码按 bundler
     // 口径写（JSON 导入、扩展名风格），换回去整片翻红（实测 67+45 条）。
     "allowImportingTsExtensions": true,
@@ -39,16 +39,26 @@
       "@pneuma/*": ["../src/packages/*", "../src/packages/*/index.ts"]
     }
   },
+  // include 必须保持这个口径与顺序：壳 src → ui-core → 界面半整片目录 → services/types.ts → dom.ts。
+  //
+  // 为什么是目录整片而不是 `ui/**/*.spec.ts` 三条通配：cordis 的 `declare module` 增强
+  // （services/types.ts 的 llm/session 等 30 个服务 + cordis-host.ts 的 slots/host/uiRuntime）
+  // 能不能合并进 context.d.ts 的 `class Context`，实测取决于程序收 root files 的顺序。
+  // 按 spec 通配收（services/types.ts 排在界面半源码之前）时，两处增强落到一个独立符号上：
+  // `new Context()` 的实例侧拿不到 slots/llm，`Context` 类型引用侧拿不到 effect/provide/get，
+  // cordis-host.ts 报满屏 TS2576/2339/2740/2345。同一份文件集，include 换成壳主支的目录口径
+  // 就全绿——红绿只随 include 条目顺序翻转（对照实验已核），与文件集本身无关。
+  // 目录整片还顺带解决旧口径靠 `**/*.d.ts` 通配单独保的 vite-env.d.ts
+  // （`declare module '*?url'`，Vite 专有导入能过类型检查的唯一依据）——现在随目录进来。
+  //
+  // 代价：这份配置顺带把界面半的非 spec 源码也查一遍（与壳主支同一套 compilerOptions，重复
+  // 但无害，壳主支本来就 0 错）。换来的是不用在「spec 通配口径」上再叠补丁。
   "include": [
-    "../src/packages/*/ui/**/*.spec.ts",
-    "../src/packages/*/ui/**/*.spec.tsx",
-    // 环境声明也必须带上：`ui-primitives/ui/vite-env.d.ts` 里 `declare module '*?url'`
-    // 是 `pdf-view.tsx` 那类 Vite 专有导入能过类型检查的唯一依据。父配置靠 include
-    // `../src/packages/*/ui` 整片收进来，这份只收 spec，漏了它就报 TS2307。
-    "../src/packages/*/ui/**/*.d.ts",
-    // cordis 的 Context 增强声明在 services/types.ts（D20 那条「声明合并靠 include」的根）。
-    // 这份配置只收 spec，被 spec 拉进来的内核文件（如 ui-boot/ui/cordis-host.ts）拿到的
-    // Context 是裸的，`ctx.effect/provide/get` 整片 TS2576/2339。带上这一份，增强进程序。
+    "src",
+    "../src/packages/ui-core",
+    "../src/packages/*/ui",
+    // cordis 的 Context 增强声明在 services/types.ts（D20 那条「声明合并靠 include」的根），
+    // 必须作为 root file 收进来，被 spec 拉进来的 cordis-host.ts 的 ctx 才带得上这些服务。
     "../src/services/types.ts",
     // 这个 setup 文件给 jsdom 打桩（`matchMedia` 之类），必然写 DOM API，
     // 归这份配置查；根配置的 exclude 里排掉了它。
