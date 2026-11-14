@@ -35,7 +35,13 @@ concurrency:
 
 jobs:
   core:
-    name: 内核编译与排版
+    name: 内核编译与排版（Node ${{ matrix.node }}）
+    # Node 版本矩阵（P6）：engines 是 >=22.19，本仓库的支持面底线是 22，同时验 24
+    # （当前开发机版本）——两个都绿才允许合。
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +50,7 @@ jobs:
           version: 10.15.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: pnpm
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -57,14 +63,74 @@ jobs:
         run: pnpm run typecheck:spec
       - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
         run: pnpm run check:style
-      # 单元 19 + 界面 44 + 集成 15 = 78 条，本地 4 秒级。
-      # integration 也放这道门（设计文档原本把它排在夜跑）：它只解析 src/**、不 import lib/，
-      # 不需要先 build；15 条守的正是「同一 callId 两条工具结果让网关 400」那个线上事故，
-      # 隔夜才发现太慢。等 P2 把存量集成探针迁过来、这条超过两分钟，再移去 probe job。
-      - name: 单元与界面测试
-        run: pnpm test
-      - name: 集成测试
-        run: pnpm run test:int
+      # unit + ui + tui 三层（2026-11-14 起 221 文件 / 2500+ 条）。JUnit 报告同时落一份，
+      # 失败时能在 Actions 的 artifact 里逐用例看（P6 flake 治理：报告 + 耗时历史）。
+      - name: 单元、界面与 TUI 测试
+        run: pnpm test --reporter=default --reporter=junit --outputFile.junit=reports/unit-${{ matrix.node }}.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-${{ matrix.node }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  integration:
+    name: 集成测试分片（${{ matrix.shard }}/3）
+    # 分片（P6）：每个文件都要起一次真内核，单 job 串行太慢；按 Vitest 的 --shard 切三片并行。
+    # 每片各自 build（1-2 分钟）换来不用搞构建产物缓存，简单可靠优先。
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # test:int 脚本里是「build && vitest」，分片需要把 vitest 单独拎出来加 --shard，
+      # 所以这里手动分两步（build 的新鲜度守卫口径不变）。
+      - name: 编译内核
+        run: pnpm run build
+      - name: 集成测试（分片 ${{ matrix.shard }}）
+        run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --reporter=default --reporter=junit --outputFile.junit=reports/int-${{ matrix.shard }}.xml
+      # 性能基准门（P5 的 test:bench 落地后启用——脚本与基线由批 13 交付）：
+      # - name: 性能基准（对比基线，退化 1.5× 即红）
+      #   run: pnpm run test:bench
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-reports-${{ matrix.shard }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  all-checks-passed:
+    name: all-checks-passed（分支保护只认这一个）
+    # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
+    # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
+    if: always()
+    needs: [core, ui, desktop, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 聚合判定
+        run: |
+          results="${{ toJson(needs.*.result) }}"
+          echo "needs 结果：$results"
+          if echo "$results" | grep -qv '"success"'; then
+            echo "存在未成功的 job，聚合门红。"
+            exit 1
+          fi
 
   ui:
     name: 界面壳编译
@@ -139,3 +205,7 @@ jobs:
       # 包级测试已不在这一串里：119 条 2026-11-13 迁进 Vitest，由 PR 门的 pnpm test 覆盖。
       - name: 插件门禁（模型 / 包标准 / 清单快照 / 装配 / 热替换）
         run: pnpm run check:plugin
+      # 真机 e2e 档（2026-11-14 起）：ui-*_e2e 探针要 Electron 的 Chromium，
+      # 上面的正常安装（没带 --ignore-scripts）已经把 Electron 二进制拉下来了。
+      - name: 界面 e2e 自检（真 Chromium）
+        run: pnpm run check:ui:e2e
