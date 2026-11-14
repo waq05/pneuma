@@ -12,6 +12,33 @@
   // 所以这里直接继承 `ui-shell/tsconfig.json`：它已经有 DOM 库、bundler 解析、全套 `@dsc/*`
   // paths、`resolveJsonModule`，正是界面半代码的编译条件。
   "extends": "./tsconfig.json",
+  // P3 的界面半 spec 会合法 import 非界面模块（如 web 卡的真 wrapUntrusted），tsc 跟随
+  // import 把 src/packages/commands-core 这类文件拉进程序，它们身上的 `@pneuma/*` 导入
+  // 在这份配置里原本没有映射（父配置的 paths 只有 `@dsc/*`），整片 TS2307。
+  // 注意 extends 的 paths 是**整体替换**，所以这里必须把 `@dsc/*` 那九条原样带上，
+  // 只写 @pneuma 两条会把界面半自己的别名拆了。
+  "compilerOptions": {
+    // cordis 4.1 的声明文件之间用 `.ts` 扩展名互引（`export * from './context.ts'`）。
+    // bundler 解析下没有这个开关，这些引用被静默丢掉：九份声明只装进 utils/registry 两份，
+    // Context 的实例方法（effect/provide/get，声明在 fiber/context 等其余七份里）整片消失，
+    // 被 spec 拉进来的 cordis-host.ts 满屏 TS2576/2339。开它（noEmit 下合法）声明图才完整。
+    // 注意：不能顺手把 module/moduleResolution 换成 nodenext——壳的产物代码按 bundler
+    // 口径写（JSON 导入、扩展名风格），换回去整片翻红（实测 67+45 条）。
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@dsc/ui-core": ["../src/packages/ui-core/index.ts"],
+      "@dsc/ui": ["./src/plugin-api.ts"],
+      "@dsc/ui-boot": ["../src/packages/ui-boot/ui/index.ts"],
+      "@dsc/ui-dockkit": ["../src/packages/ui-dockkit/ui/index.ts"],
+      "@dsc/ui-layout": ["../src/packages/ui-layout/ui/index.ts"],
+      "@dsc/ui-primitives": ["../src/packages/ui-primitives/ui/index.ts"],
+      "@dsc/ui-renderer": ["../src/packages/ui-renderer/ui/index.ts"],
+      "@dsc/ui-runtime": ["../src/packages/ui-runtime/ui/index.ts"],
+      "@dsc/ui-slots": ["../src/packages/ui-slots/ui/index.ts"],
+      "@pneuma/runtime/*": ["../src/*"],
+      "@pneuma/*": ["../src/packages/*", "../src/packages/*/index.ts"]
+    }
+  },
   "include": [
     "../src/packages/*/ui/**/*.spec.ts",
     "../src/packages/*/ui/**/*.spec.tsx",
@@ -19,6 +46,10 @@
     // 是 `pdf-view.tsx` 那类 Vite 专有导入能过类型检查的唯一依据。父配置靠 include
     // `../src/packages/*/ui` 整片收进来，这份只收 spec，漏了它就报 TS2307。
     "../src/packages/*/ui/**/*.d.ts",
+    // cordis 的 Context 增强声明在 services/types.ts（D20 那条「声明合并靠 include」的根）。
+    // 这份配置只收 spec，被 spec 拉进来的内核文件（如 ui-boot/ui/cordis-host.ts）拿到的
+    // Context 是裸的，`ctx.effect/provide/get` 整片 TS2576/2339。带上这一份，增强进程序。
+    "../src/services/types.ts",
     // 这个 setup 文件给 jsdom 打桩（`matchMedia` 之类），必然写 DOM API，
     // 归这份配置查；根配置的 exclude 里排掉了它。
     "../tests/setup/dom.ts"
