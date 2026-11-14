@@ -43,6 +43,7 @@
     "test:unit": "vitest run --project unit",
     "test:int": "pnpm run build && vitest run --project integration",
     "test:ui": "vitest run --project ui",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:snapshot": "vitest run --project snapshot --passWithNoTests",
     "test:snapshot:record": "vitest run --project snapshot",
     "test:coverage": "vitest run --coverage",
