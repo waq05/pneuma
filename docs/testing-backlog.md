@@ -65,3 +65,4 @@
 - 补上一条，就把那一行划掉并注明 commit。
 - 新发现的缺口追加到对应小节，不要只写在对话里。
 - 每次 P 阶段收尾，先看这张表还剩几行——它比任何进度百分比都准。
+| B32 | P3-A / `ui-sdk-types` 整条 | 界面 SDK 类型产物契约：`lib/ui/sdk/@dsc/<包>/` 的 .d.ts 树 + 真 tsc 编译 examples demo | 钉的全是构建产物契约，src 平面没有行为接缝；vitest 只解析 src | 待拍板：留 `check:ui`（探针自带壳未构建 SKIP 兜底，探针保留）或给 ui-shell 产物单开独立 project。与 B31 是同一条欠账 |
