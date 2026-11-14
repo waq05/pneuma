@@ -274,7 +274,14 @@ function stringifyArgs(args: unknown, where = 'SSE 工具调用'): string {
 }
 
 /** 默认的标题请求判据，形状同探针：system 正文里含标题生成器提示词。 */
-function isTitleRequestByPrompt(body: unknown): boolean {
+/**
+ * 按内置提示词识别「标题请求」。
+ *
+ * 录制端（快照层的 recorder）与回放端（`fakeLLM` / `replayLLM`）必须用**同一个**判定：
+ * 两边都把标题请求排除在轮次计数之外，录制里的 turn 编号才能与回放时的对齐。
+ * 插件换了措辞就漏判（harness 文件头有这条坑的完整说明），所以这里认的是内置提示词。
+ */
+export function isTitleRequestByPrompt(body: unknown): boolean {
   if (body === null || typeof body !== 'object') return false
   const messages = (body as { messages?: unknown }).messages
   if (!Array.isArray(messages)) return false

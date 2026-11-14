@@ -44,6 +44,7 @@
     "test:int": "pnpm run build && vitest run --project integration",
     "test:ui": "vitest run --project ui",
     "test:snapshot": "vitest run --project snapshot --passWithNoTests",
+    "test:snapshot:record": "vitest run --project snapshot",
     "ui:serve": "node scripts/_ui-shell-serve.mjs",
     "test:tui": "vitest run --project tui"
   },
