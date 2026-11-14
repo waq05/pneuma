@@ -71,6 +71,20 @@ export default defineConfig({
     },
   },
   test: {
+    // 覆盖率（P3 第 3 项）：只出报告不设门（概要设计 §9.1——先看清盲区分布，
+    // P4 冻结基线、P6 逐目录抬杠）。纯类型文件与入口不算覆盖面。
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/core/**', 'src/packages/**'],
+      exclude: [
+        'src/**/*.spec.ts',
+        'src/**/*.int.spec.ts',
+        'src/**/types.ts',
+        'src/packages/tui/**', // tui 由 tui project 单独跑，coverage 汇总口径随 P4 基线再定
+        '**/node_modules/**',
+      ],
+    },
     /**
      * 每个 project 的 `extends: true` 都是必需的，不是保险丝。
      *

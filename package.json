@@ -45,6 +45,7 @@
     "test:ui": "vitest run --project ui",
     "test:snapshot": "vitest run --project snapshot --passWithNoTests",
     "test:snapshot:record": "vitest run --project snapshot",
+    "test:coverage": "vitest run --coverage",
     "ui:serve": "node scripts/_ui-shell-serve.mjs",
     "test:tui": "vitest run --project tui"
   },
