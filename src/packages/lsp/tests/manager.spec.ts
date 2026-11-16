@@ -25,7 +25,11 @@ const created: Array<{ manager: LspManager; root: string }> = []
 afterEach(() => {
   for (const { manager, root } of created.splice(0)) {
     manager.dispose()
-    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    } catch {
+      // Windows 上子进程刚退出时还攥着 cwd：临时目录留给系统清，不让收尾拖红用例。
+    }
   }
 })
 
@@ -194,7 +198,9 @@ describe('失败与退避', () => {
 
 describe('idle 回收', () => {
   test('超过 idle 没用过的实例被收掉；有活的时候不动', async () => {
-    const { manager, root, file } = project({}, {}, { idleTimeoutMs: () => 300 })
+    // 全量并发跑时，起进程+握手本身可能就花掉几百毫秒；窗口留 3s，
+    // 避免「刚查完就因创建耗时超过窗口被当成空闲」而误收。
+    const { manager, root, file } = project({}, {}, { idleTimeoutMs: () => 3000 })
     await manager.query('goToDefinition', file, position, root, undefined)
     expect(manager.status()[0]).toMatchObject({ instances: 1 })
 
@@ -202,7 +208,7 @@ describe('idle 回收', () => {
     await manager.sweepIdle()
     expect(manager.status()[0]).toMatchObject({ instances: 1 })
 
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    await new Promise((resolve) => setTimeout(resolve, 3400))
     await manager.sweepIdle()
     expect(manager.status()[0]).toMatchObject({ instances: 0 })
   })
