@@ -1,1447 +1,172 @@
 /**
- * superagent 插件：把一句话需求派给一个独占工作区的智能体去改代码，结果回到工单里。
+ * superagent 插件入口（W9-1：把包入口切到新树；W9-2：把 DSC 专有宿主面接回来）。
  *
- * **第 8 步的装配**：这个文件仍然只做装配——不写业务逻辑、不拼 SQL、不判定需求。
- * `apply` 里做六件事：
- *   1. 登记设置分区 `superagent`：`repoPath` / `maxWorkers` / `ticketTimeoutSeconds`
- *      三个字段，值现读 `~/.dsc/plugins.json`（`resolvePluginConfig`），保存走
- *      `writePluginConfig`——**重启宿主后值还在**，这是第 8 步唯一的硬验收；
- *   2. 注册 `/sa` 命令（`commands.ts`）；
- *   3. 起一个 2 秒的泵，调 `service.tick()`（`runtime.pump()` + 阶段变样时推快照）；
- *   4. 懒建 `SuperagentRuntime`：第一次用到（发命令 / 界面拉快照 / 调五个方法）才打开编排库；
- *   5. provide `superagent` 服务并把快照面登记进 `ctx.surfaces`（`service.ts` / `surface.ts`）；
- *   6. 向 doctor 的 `ctx.health` 登记三项体检：编排库能不能写、锁被占没有、几张工单卡在
- *      running；飞书来源连上没有、最近一条错误是什么；机器上 git 与 lark-cli 在不在。
+ * 结构照上游 `dsh-superagent/src/index.ts`（26 行）：`name` / `inject` / `apply` 三样，
+ * 装配顺序是「读配置 → 建运行期 → 起来源 → 注册面板服务 → 等就绪 → 接宿主面 → 记一行日志」。
+ * 旧入口原样备份在同目录的 `index.legacy.ts`（不被任何人 import，旧测试仍可临时指过去），
+ * 旧树其余文件本批不动；删旧树留给后续批。
  *
- * **两个外部来源，同一条节奏**：GitHub 靠 `startGithub`、飞书靠 `startFeishu`，都在
- * `ensure()` 建好运行期之后才起，都不在 `apply` 里做任何 IO；来源起来之前的三样前置条件
- * （开关、范围、口令/CLI）缺任何一样都只记一行日志、不启动、不抛。飞书默认关，所以不配
- * 就一个 lark-cli 子进程都不会起。
+ * ## 与上游 26 行的对应
  *
- * 为什么懒建而不是 `apply` 时就连库：插件在设置页里是「可停用」的一行，宿主启动时
- * 十几行插件都会 `apply`；谁在 `apply` 里开库，谁就把「打开数据库」变成宿主启动的
- * 前置条件。一条插件挂了不该拖垮整个宿主（§5.4），所以连库推迟到真正有人用。
+ * | 上游行 | 本文件 | 差异 |
+ * | --- | --- | --- |
+ * | `import './deployment.ts'` 的 `Config` / `machineOf` | `machineOfPlugin`（本文件） | 上游配置来自 DSH 的 `cordis.yml`（`stateDir` 必填、POSIX 绝对路径）；DSC 的插件配置在 `plugins.json`，且没有 `stateDir` 这一项——这里按 `paths.ts` 的 `superagentRoot()`（`<DSC_HOME>/superagent`）取同一条落盘坐标，另外三个可调项允许 `plugins.json` 覆盖，越界夹回区间。不导出 `Config`：DSC 的 loader 会拿它校验 `plugins.json`，而那里还是旧键，校验会把插件挡在启动前。 |
+ * | `ctx.inject(['settings'], child => settings.configure({auto:false}))` | 无 | 那是 DSH 设置页的开关；DSC 的设置面由 `ui-superagent` 的页面与 `Settings` 块自己画，没有这条自动页。 |
+ * | `ctx.fiber.restart()` 做重启回调 | 同句照搬 | DSH 的设置服务在重启后要 `describe()` 一次让表单继续可编辑；DSC 的设置页每次现读，没有这个补丁点。 |
+ * | `new Runtime(ctx, machine, restart)` | 同句照搬 | 上游运行期自己起来源（独立 cordis 插件）；本仓来源导出的是 `startGithub` / `startFeishu`（W4 接线口径），在下面两行 `ctx.effect` 里起。 |
+ * | `ctx.effect(() => async () => await runtime.stop())` | 同句照搬 | 无。 |
+ * | `await runtime.ready` + 一行日志 | 同句照搬 | 日志文案按本仓名（`superagent`）。 |
+ * | `export type { Deployment, DeploymentConfig }`、`export * from './core/index.ts'` | 不导出 | 本仓没有任何地方从包入口取这些类型（都直接 import 子路径）；包入口只留插件身份，免得把整棵核心的类型面拖成公开 API。 |
  *
- * 为什么泵不主动触发建库：泵每 2 秒跑一次，如果它负责建库，插件一启用就会去抢编排库
- * 的单实例锁——用户还没发任何需求，锁已经被占住。泵只驱动已经建好的运行期；
- * 用户第一次 `/sa new` 之后它才开始工作。
+ * ## 工具注册为什么不在这个文件
  *
- * **启动恢复与保留策略挂在「运行期第一次建起来」那一刻**（`ensure` 里）：懒启动下，
- * 那才是真正意义上的「这次启动」。恢复把上次崩在 `running` 的工单标成失败、把 `pending`
- * 的重新入队；保留策略删掉已结束超过 30 天的会话目录。之后每天再扫一次会话目录。
+ * 上游主会话 / 执行者会话的工具由 `app/sessions.ts` 按会话挑（`SessionsHost.tools` 直接收
+ * `ToolEntry[]`），本仓新树的 `Runtime` 在构造时就把 `mainTools` / `executorTools` 塞给
+ * `Sessions`（`app/runtime.ts:176-179` 的 `tools` 回调、`:217-220` 的 `toolHost`），
+ * 工具宿主是运行期的私有成员，入口拿不到也不该拿。旧入口往 `ctx.tools` 注册主会话十二个 /
+ * worker 五个工具，是「旧运行期没有会话工具目录」的补丁；新树由运行期自己给，这里不重复注册。
  *
- * **出错不炸宿主**：`ensure()` 把打开失败收敛成 `null` + 一条日志，命令据此显示
- * 「未启动」；泵的每一拍也各自捕获异常。插件停在「未启动」状态，与设计文档 §5.4 一致。
+ * ## DSC 专有宿主接线（W9-2：上游没有这些，放在 `host/`）
  *
- * @module pneuma/superagent
+ * 三块都不属于运行期，而是「宿主半」的接线，所以在这里登记、都在 `runtime.ready` 之后：
+ *
+ * - `host/settings-section.ts`：设置分区 `superagent`。字段与值现读新树的设置块（执行 / 判定）、
+ *   来源 kind（配置字段 / 策略名单）与部署检查结果；保存走 `runtime.settings.save(...)`，
+ *   不另开写路径。
+ * - `host/command.ts`：`/sa` 命令，读写都走 `PanelApi`（`app/api.ts`），与 `ui-superagent` 同一条路。
+ * - `host/health.ts`：doctor 四项体检，读数来自 `runtime.health` / `runtime.store` / `runtime.sources`。
+ *
+ * 2 秒泵与来源启停不在这里重复：新树 `Passes` 自己每 2 秒一拍（`app/passes.ts:38`），
+ * 来源由下面两行 `ctx.effect` 起；宿主面的登记同样包在 `ctx.effect` 里，停用插件即摘掉。
+ *
+ * @module dsc/packages/superagent
  */
+/** Main plugin entry: mounts the new-tree Runtime, starts the Sources, and provides the panel service. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsField, SettingsValue, SettingsValues, SuperagentSourceView } from '@pneuma/runtime/contract.js'
-import type { HealthService, MaybePromise, SettingsMutationOk, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt } from '@pneuma/runtime/core/clamp.js'
-import { hostT } from '@pneuma/runtime/core/i18n.js'
-import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
-import { openStore, type DscStore } from './adapters/store.js'
-import { type MessageSender } from './adapters/dispatch.js'
-import { createGithubApi } from './adapters/github/api.js'
-import { sendGithub } from './adapters/github/channel.js'
-import { createGithubSource, pollPullChecks } from './adapters/github/source.js'
-import { bindAgentPulls, pollTicketChecks, type OpenPull } from './adapters/github/bind.js'
-import { sendFeishu } from './adapters/feishu/channel.js'
-import { resolveFeishuCli, readFeishuBot, DEFAULT_FEISHU_CLI, type FeishuCli } from './adapters/feishu/cli-run.js'
-import { createFeishuSource, type FeishuSource } from './adapters/feishu/loops.js'
-import { SOURCE as FEISHU_SOURCE } from './adapters/feishu/trigger.js'
-import type { AssessorComplete } from './adapters/assessor-model.js'
-import { superagentScope } from './adapters/scope.js'
-import { defaultSettings, GITHUB_SOURCE, normalizeFeishuAccount, normalizeGithubAccount, type FeishuAccount, type GithubAccount } from './adapters/settings.js'
-import type { Settings } from './core/policy.js'
-import { registerCommands } from './commands.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { createApi } from './app/api.js'
+import { Runtime } from './app/runtime.js'
 import { LIMITS } from './core/limits.js'
-import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth, createTeammatesHealth } from './health.js'
-import { createMainTools } from './main-tools.js'
-import { SuperagentRuntime, type SettingsFieldView } from './runtime.js'
-import { SuperagentService } from './service.js'
-import { registerSurface, withRepoGuide } from './surface.js'
-import { createWorkerTools, WORKER_ONLY_TOOL_NAMES } from './tools.js'
+import type { Machine } from './deployment.js'
+import { registerSaCommand } from './host/command.js'
+import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth, createTeammatesHealth } from './host/health.js'
+import { createSettingsSection } from './host/settings-section.js'
+import { superagentRoot } from './paths.js'
+import { startFeishu } from './sources/feishu.js'
+import { startGithub } from './sources/github.js'
 
 /** 行身份：与 `cordis.patch.yml` 的 `id`、产物目录名三处一致。 */
 export const name = 'superagent'
 
 /**
- * 依赖的服务：设置（分区）、命令（`/sa`），以及执行器要的模型 / 工具 / 守卫。
+ * 依赖的宿主服务。
  *
- * 后三项从第 5 步起是硬依赖：worker 就是「另一个 MiniAgent」，没有 `llm` 发不出请求、
- * 没有 `tools` 只拿得到空工具表、没有 `guards` 则沙箱与审批整条链不在场。它们起不来时
- * 本插件也不该起来——这是正确的失败方式（不降级成「看起来能派工」）。
- * 沙箱与压缩是**可选**能力：执行器用 `ctx.get(...)` 读，不在场就少一道围栏 / 少一次压缩，
- * 不写进 inject，免得那两个插件停用时把本插件一起拖得挂不上。
- * `health`（doctor 的体检登记表）同样不写进 inject：doctor 停用时少一项体检，不影响派工。
+ * `llm`：`app/role-models.ts:52` 直接调 `ctx.llm.routeTo`（设置里选角色模型时校验可用性）；
+ * `surfaces`：下面把 `superagent` 快照面登记进宿主快照；
+ * `settings` / `commands`：W9-2 的宿主接线要用——设置分区没登记就没有面板，命令没注册
+ * `/sa` 就不可见，两者都是「没有就少一块能力」，与旧入口的 inject 同一条取舍。
+ * 其余能力（tools / guards / skills / jobs / team / agent / prompt / compact / health）新树都用
+ * `ctx.get(...)` 现取、缺了降级，不写进 inject——不把可选能力变成硬依赖（旧入口同一条取舍，
+ * `index.legacy.ts:70-80`）。doctor 停用时 `ctx.get('health')` 给 undefined，只是少四项体检。
  */
-export const inject = ['settings', 'commands', 'tools', 'llm', 'guards', 'surfaces']
+export const inject = ['llm', 'surfaces', 'settings', 'commands']
 
-/**
- * 配置键：`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`。
- *
- * 与设置分区 id、patch 行 id 同一个字符串：三处一致，才不会出现「分区写进去了、
- * 插件读的是另一条」这种查半天的错。
- */
+/** `~/.dsc/plugins.json` 里本插件那一项的 `file` 名（与设置分区、patch 行 id 同一个字符串）。 */
 const CONFIG_KEY = 'superagent'
 
-/** 设置分区里三个字段的键。P0 只有一个 `repoPath`，第 8 步补齐其余两个。 */
-const REPO_PATH_KEY = 'repoPath'
-const MAX_WORKERS_KEY = 'maxWorkers'
-const TIMEOUT_KEY = 'ticketTimeoutSeconds'
+/** 快照失效桥的采样间隔：与旧入口的泵同一条节奏（旧 `index.ts:177` 的 `PUMP_INTERVAL_MS`）。 */
+const SURFACE_PULSE_MS = 2000
+
+/** 与上游 `deployment.ts` 的 `Config` 缺省值逐字一致（DSH 那边来自 schemastery 的 `.default()`）。 */
+const DEFAULTS = { promptMaxChars: 100_000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15_000 } as const
 
 /**
- * 工作区准备命令：建好工作树之后、worker 开跑之前执行的一条 shell 命令。
+ * 读插件配置，换成运行期要的 `Machine`。
  *
- * 对应上游 `executor.prepare`（`core/policy.ts` 的 `ExecutorConfigSchema`）。典型用法是
- * `pnpm install`：worker 的第一步往往就是跑测试，依赖没装就得它自己装，装不完还会撞超时。
- * 空串 = 不跑。
+ * 为什么不直接 `Config.parse` 再 `machineOf`：
+ *   1. 上游的 `stateDir` 用 `/^\/` 约束成 POSIX 绝对路径，Windows 的 `C:\...` 会被 schema 拒；
+ *   2. `Config` 是 `.loose()` + `machineOf` 点名旧键的组合，DSC 的 `plugins.json` 里恰好还是
+ *      旧键（`repoPath` 等），照搬会把插件拦在启动前，而不是带着缺省值跑起来。
+ * 所以这里只认本插件用得上的四个键，类型不对用缺省、数值夹回区间——与旧入口
+ * `readSuperagentConfig` 的读路径同一条规矩（`index.legacy.ts:342-383`）。
+ *
+ * @param passed - cordis 装配时传来的行配置（`cordis.patch.yml` 那一行没有 `config`，通常为空）
  */
-const PREPARE_COMMAND_KEY = 'prepareCommand'
-/**
- * 推断候选先等人点头（backlog G1）。
- *
- * 布尔字段：`raw[...] === true` 才算开，字符串 `'true'` 不算——设置面写回来的是真布尔，
- * 手改配置文件时写错类型不该悄悄打开一个会让人等确认的开关。
- */
-const CONFIRM_INFERRED_KEY = 'confirmInferred'
-
-/**
- * 接单模式（`off` / `observe` / `auto`），对应上游 `settings/eval` 块的 `mode`。
- *
- * 为什么必须有这个字段：候选收件箱（backlog G1）只在 `auto` 下有内容——推断强度的 accept
- * 在其它模式会被判成 `would_accept` 记录了事（`core/policy.ts:67`），`confirmInferred` 开了
- * 也等不到候选。缺省 `observe`（与上游同一条默认）：不显式打开，行为与收件箱做出之前一致。
- */
-const EVAL_MODE_KEY = 'evalMode'
-
-/**
- * 判定超时秒数（30–600，默认 120），对应上游 `settings/eval` 块的 `timeoutSeconds`。
- *
- * 核心消费点在 Eval 的截止时间（`core/evals.ts` 的 `deadline`）与 policyVersion 指纹
- * （`core/policy.ts:129`）——超时改了，等判定中的 Eval 按新截止时间重排。现读，改完下一拍生效。
- */
-const EVAL_TIMEOUT_KEY = 'evalTimeoutSeconds'
-/** P2 的 GitHub 来源：仓库、机器人自己的登录名、谁能派活、令牌放在哪个环境变量里。 */
-const GITHUB_REPOSITORY_KEY = 'githubRepository'
-const GITHUB_LOGIN_KEY = 'githubLogin'
-const GITHUB_ALLOWED_KEY = 'githubAllowed'
-const GITHUB_TOKEN_ENV_KEY = 'githubTokenEnv'
-
-/**
- * P2 的飞书来源：开关、CLI 路径、群清单、要不要收私聊。
- *
- * 两件事与 GitHub 不同，都是设置面的取舍：来源**默认关**（打开才起子进程），群清单只有
- * 一行逗号分隔的 `chat_id`（设置表单没有多行控件，与 `githubAllowed` 同一种写法）。
- */
-const FEISHU_ENABLED_KEY = 'feishuEnabled'
-const FEISHU_CLI_KEY = 'feishuCli'
-const FEISHU_CHATS_KEY = 'feishuChats'
-const FEISHU_DIRECT_KEY = 'feishuDirect'
-/**
- * 允许派活的飞书 `open_id`（`ou_` 开头，逗号分隔）。
- *
- * 为什么必须单独一个名单：核心准入闸只认 `policy.sources[source].allowed` 里的精确 id
- * （`core/policy.ts:132`），没有通配。不填这个字段，飞书来源就没被登记进准入表，
- * 每条消息都会被判 `not_a_member`——消息收得到，工单一张也建不出来。
- */
-const FEISHU_ALLOWED_KEY = 'feishuAllowed'
-
-/** 令牌环境变量的缺省名。 */
-const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN'
-
-/** 判定用的模型：写成 `provider/model`，空 = 不调模型（用同步规则）。 */
-const ASSESSOR_MODEL_KEY = 'assessorModel'
-
-/**
- * worker 的模型：写成 `provider/model`，空 = 跟随宿主当前选路。
- *
- * 对应上游 `executor.model`（`core/policy.ts:92`，`app/sessions.ts:150` 按角色种入）。
- * DSC 的等价位是执行器的 `WorkerModel`（`adapters/executor.ts:126`）：路由与种入逻辑
- * 早已备好，缺的只是设置面这个字段。判定模型同款取舍：装配时读一次，改了要重开宿主。
- */
-const WORKER_MODEL_KEY = 'workerModel'
-
-/**
- * worker 额外禁用的命令名单（逗号分隔），写进系统提示词的「可用命令」一句。
- *
- * 对应上游 `executor.blockedCommands`（`core/policy.ts:96`）。**只做提示词层**：上游还有
- * worker-bin shim 的强制层（按命令名直接失败，`app/settings.ts:187`），DSC 的 worker
- * 命令面走宿主守卫与工具目录白名单，没有独立 PATH shim 机制，这条差异记在交接文档。
- */
-const WORKER_BLOCKED_KEY = 'workerBlockedCommands'
-
-/** 泵的间隔：设计文档 §6.3 写的是 2 秒。 */
-const PUMP_INTERVAL_MS = 2000
-
-/**
- * GitHub 轮询间隔：30 秒。
- *
- * 上游是 60 秒一拍（`sources/poll.ts:33-39`），这里略密一点是因为 DSC 的泵本来就 2 秒一拍、
- * 顺手判断一次不花钱；真正的约束是接口配额——30 秒一次对一个仓库足够，再密也换不来更快的
- * 响应（上游的 60 秒是给多个仓库留的余量）。
- */
-const GITHUB_POLL_INTERVAL_MS = 30_000
-
-/**
- * 飞书补收间隔：60 秒，与适配器自己的缺省一致（`adapters/feishu/loops.ts:230`）。
- *
- * 为什么不是一个更小的数：补收是按时间窗读历史的，飞书那边的窗口精度只到秒，读得再密
- * 也换不来更快的响应，只会多花配额。事件本身走长连接，这条轮询只负责补漏。
- */
-const FEISHU_POLL_INTERVAL_MS = 60_000
-
-/**
- * 适配器内部那条补收循环的间隔：一天。
- *
- * 为什么不是默认的 60 秒：`createFeishuSource().start()` 自己会起一条每 60 秒 `tick()` 的
- * 循环（`loops.ts:591-599`），而泵这一拍也调 `tick()`（见 `pollFeishu`）。两条路都按 60 秒
- * 跑，等于每轮把同一段历史读两遍。把内部那条压到一天，`tick` 的节奏就只剩泵一处（与
- * GitHub 的 `pollGithub` 同构），而 `start()` 时的那第一轮基线照旧会跑。
- */
-const FEISHU_INTERNAL_BACKFILL_MS = 24 * 60 * 60 * 1000
-
-/** 会话目录的清扫间隔：启动时扫一次，之后每天一次。 */
-const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
-
-/** 超时的上限（秒）：24 小时。再长就等于不限，而「不限」用 0 表达。 */
-const TIMEOUT_MAX_SECONDS = 24 * 60 * 60
-
-/** 缺省值：并发 2（设计文档 §6.2）、单工单 30 分钟。 */
-const DEFAULTS = { maxWorkers: 2, ticketTimeoutSeconds: 1800 } as const
-
-/**
- * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
- * `locale/ui.zh.json` / `ui.en.json`（中文原文是语义真源，英文是译本）。
- */
-const t = hostT(import.meta.dirname)
-
-/** 把未知异常压成一行，日志里用。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-/**
- * 来源自己的轮询读数（GitHub 与飞书的 `status()` 同形；这里只取本视图用到的两项）。
- *
- * 两个适配器的 `status()` 还带别的字段（飞书的 `connected`），但界面这一格只回答
- * 「上次成功是什么时候、错在哪」；多给的字段没有出口，索性写窄，接线的形状对不上时
- * `tsc` 会当场报错。
- */
-export interface SuperagentSourceStatus {
-  lastPollAt: string | null
-  lastError: string | null
-}
-
-/**
- * 一条来源的投影。
- *
- * `status` 为 `null` 表示来源没起来（没配、缺令牌、CLI 找不到，或建失败）——这时只给
- * `id` 与 `enabled`，`lastPollAt` / `lastError` 一律不出现。适配器用 `null` 表示「还没有
- * 过成功的一拍 / 还没有过错误」，契约用「没有这一项」表达，所以这里做一次转换：
- * 直接把 `null` 透传给界面，界面就得再判一次 `null`，两种空值会各写一份。
- */
-function sourceViewOf(id: string, enabled: boolean, status: SuperagentSourceStatus | null): SuperagentSourceView {
-  return {
-    id,
-    enabled,
-    ...(status?.lastPollAt == null ? {} : { lastPollAt: status.lastPollAt }),
-    ...(status?.lastError == null ? {} : { lastError: status.lastError }),
-  }
-}
-
-/**
- * 拼出来源清单：GitHub 在前、飞书在后，顺序固定（界面按这个顺序画，不自己排）。
- *
- * 为什么单独导出：`apply` 的闭包里 `github` / `feishu` 是真来源（要令牌、要 CLI），
- * 包级测试造不出来；把「读到的状态 → 契约形状」拆成纯函数，三种情形（没起来 / 正常 /
- * 有错误）就能直接断言，不必为了一个快照字段起一套 cordis 上下文。接线由 `apply` 里
- * 那一行保证（只做 `{ ...surface, sources }` 的拼接）。
- *
- * @param input - 两个来源各自的「设置开关」与「已起来时的 status()」；没起来时 status 给 null
- */
-export function buildSourceViews(input: {
-  github: { enabled: boolean; status: SuperagentSourceStatus | null }
-  feishu: { enabled: boolean; status: SuperagentSourceStatus | null }
-}): SuperagentSourceView[] {
-  return [
-    sourceViewOf('github', input.github.enabled, input.github.status),
-    sourceViewOf('feishu', input.feishu.enabled, input.feishu.status),
-  ]
-}
-
-/** 设置面读回来的值（都收好了类型与区间）。 */
-export interface SuperagentConfig {
-  /** 执行器建工作树的仓库根；空 = 没配。 */
-  repoPath: string
-  /** 并发上限，夹在 1–16。 */
-  maxWorkers: number
-  /** 单工单超时秒数；0 = 不限。 */
-  ticketTimeoutSeconds: number
-  /**
-   * 工作区准备命令；空 = 不跑。
-   *
-   * 在**工作树目录里**跑（上游在工单目录的父目录跑，因为上游的目录是 prepare 负责建的；
-   * 当前目录由 `git worktree` 建好，prepare 的用途变成「在这棵树里装依赖」）。
-   */
-  prepareCommand: string
-  /** GitHub 仓库 `owner/name`；空 = 没接这个来源。 */
-  githubRepository: string
-  /** 机器人自己的 GitHub 登录名；用它跳过自己发的评论。 */
-  githubLogin: string
-  /** 允许派活的人（已按逗号拆开、去空、去重）。 */
-  githubAllowed: string[]
-  /** 令牌所在的环境变量名。 */
-  githubTokenEnv: string
-  /** 飞书来源开关；默认关。关着时一个 lark-cli 进程都不起。 */
-  feishuEnabled: boolean
-  /** lark-cli 的路径；空 = 走 PATH 上的 `lark-cli`。 */
-  feishuCli: string
-  /** 要收的群 `chat_id`（已按逗号拆开、去空、去重）；空 = 不收任何群。 */
-  feishuChats: string[]
-  /** 允许派活的飞书 `open_id`（已按逗号拆开、去空、去重）；空 = 这个来源没接进准入表。 */
-  feishuAllowed: string[]
-  /** 收不收私聊；默认关。 */
-  feishuDirect: boolean
-  /** 判定用模型（`provider/model`）；空 = 不调模型。 */
-  assessorModel: string
-  /** 接单模式；候选收件箱只在 `auto` 下有内容。 */
-  evalMode: Settings['eval']['mode']
-  /** 判定超时秒数（30–600）。 */
-  evalTimeoutSeconds: number
-  /** worker 用模型（`provider/model`）；空 = 跟随宿主当前选路。 */
-  workerModel: string
-  /** worker 额外禁用的命令名单（已按逗号拆开、去空、去重）；空 = 只有内置限制。 */
-  workerBlockedCommands: string[]
-  /**
-   * 推断候选要不要先等人点头（backlog G1）；默认关。
-   *
-   * 开着时判定器判成可以接的推断候选不直接建工单，先落进候选收件箱，人在界面上
-   * 点「接单」才建；关着时判定即接单（与上游一致）。只在 `eval.mode = 'auto'` 时
-   * 看得出区别（`observe` 模式下引擎本来就不让推断候选接单）。
-   */
-  confirmInferred: boolean
-}
-
-/** 把一个配置值读成去空白的字符串；类型不对或没给都算空。 */
-function textOf(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-/**
- * 读设置：**每次现读磁盘**，所以设置页保存完不必重启宿主。
- *
- * 三档来源由 `resolvePluginConfig` 统一决定（宿主直给 > patch 行 > `plugins.json`），
- * 这里只负责「类型不对用缺省、数值夹回区间」——库文件与配置文件用户都能手改，
- * 读路径不能信它们的形状。
- *
- * @param passed - 装配时传进来的行配置（cordis 的第二参数）
- */
-export function readSuperagentConfig(passed?: unknown): SuperagentConfig {
+function machineOfPlugin(passed?: unknown): Machine {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
+  const stateDir = typeof raw.stateDir === 'string' && raw.stateDir.trim() !== '' ? raw.stateDir.trim() : superagentRoot()
   return {
-    repoPath: typeof raw[REPO_PATH_KEY] === 'string' ? raw[REPO_PATH_KEY].trim() : '',
-    maxWorkers: clampInt(raw[MAX_WORKERS_KEY], LIMITS.maxWorkers.min, LIMITS.maxWorkers.max, DEFAULTS.maxWorkers),
-    ticketTimeoutSeconds: clampInt(raw[TIMEOUT_KEY], 0, TIMEOUT_MAX_SECONDS, DEFAULTS.ticketTimeoutSeconds),
-    // 长度上限与上游 schema 的 `LIMITS.prepareCommand` 对齐；超出部分截断而不是报错——
-    // 这是启动路径，不能因为一条设置让整个插件起不来。
-    prepareCommand: textOf(raw[PREPARE_COMMAND_KEY]).slice(0, LIMITS.prepareCommand),
-    confirmInferred: raw[CONFIRM_INFERRED_KEY] === true,
-    githubRepository: textOf(raw[GITHUB_REPOSITORY_KEY]),
-    githubLogin: textOf(raw[GITHUB_LOGIN_KEY]),
-    // 名单用逗号分隔：设置面只有 text 字段（`contract/settings.ts` 没有多行/标签类控件）。
-    // 大小写不敏感的去重，免得 `Alice` 与 `alice` 生成两条没用的名单项。
-    githubAllowed: [...new Set(
-      textOf(raw[GITHUB_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
-    )],
-    githubTokenEnv: textOf(raw[GITHUB_TOKEN_ENV_KEY]) || DEFAULT_TOKEN_ENV,
-    // 开关只认布尔：设置面给的是 `true` / `false`，手改 JSON 写成 `"true"` 不算打开——
-    // 宁可让人再点一次，也不要把一个字符串悄悄当成「已启用」去起子进程。
-    feishuEnabled: raw[FEISHU_ENABLED_KEY] === true,
-    feishuCli: textOf(raw[FEISHU_CLI_KEY]),
-    // 群名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。空串 = 没有群。
-    feishuChats: [...new Set(
-      textOf(raw[FEISHU_CHATS_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
-    )],
-    feishuAllowed: [...new Set(
-      textOf(raw[FEISHU_ALLOWED_KEY]).split(',').map((id) => id.trim()).filter((id) => id !== ''),
-    )],
-    feishuDirect: raw[FEISHU_DIRECT_KEY] === true,
-    assessorModel: textOf(raw[ASSESSOR_MODEL_KEY]),
-    // 枚举只认三值：手改 JSON 写成别的字符串不算——设置面下拉给什么这里就收什么，
-    // 但库文件用户能手改，读路径不能信它的形状（与本函数其它的「类型不对用缺省」同一条）。
-    evalMode: raw[EVAL_MODE_KEY] === 'off' || raw[EVAL_MODE_KEY] === 'auto' ? raw[EVAL_MODE_KEY] : 'observe',
-    evalTimeoutSeconds: clampInt(raw[EVAL_TIMEOUT_KEY], LIMITS.evalTimeoutSeconds.min, LIMITS.evalTimeoutSeconds.max, 120),
-    workerModel: textOf(raw[WORKER_MODEL_KEY]),
-    // 名单与 githubAllowed 同一种写法：逗号分隔、去空白、去重。
-    workerBlockedCommands: [...new Set(
-      textOf(raw[WORKER_BLOCKED_KEY]).split(',').map((name) => name.trim()).filter((name) => name !== ''),
-    )],
+    stateDir,
+    promptMaxChars: clampInt(raw.promptMaxChars, LIMITS.promptMaxChars.min, LIMITS.promptMaxChars.max, DEFAULTS.promptMaxChars),
+    admissionContextMaxPages: clampInt(raw.admissionContextMaxPages, LIMITS.admissionContextMaxPages.min,
+      LIMITS.admissionContextMaxPages.max, DEFAULTS.admissionContextMaxPages),
+    admissionContextTimeoutMs: clampInt(raw.admissionContextTimeoutMs, LIMITS.admissionContextTimeoutMs.min,
+      LIMITS.admissionContextTimeoutMs.max, DEFAULTS.admissionContextTimeoutMs),
   }
 }
 
 /**
- * 把 `provider/model` 拆成路由要的形状；空或格式不对返回 `null`。
+ * 装配入口：建运行期、起来源、provide 面板服务与快照面。
  *
- * 模型名是用户手填的，`null` 是合法形态（判定器=不调模型，worker=跟随选路），
- * 所以格式不对时按「不配」处理，而不是抛错让插件起不来。
+ * 与旧入口最大的差别是**不再懒建**：旧入口把开库推迟到有人用（设计文档 §5.4，一条插件挂了
+ * 不拖垮宿主），新树照上游在 `apply` 里直接建。代价是状态目录锁在插件启用时就拿到；
+ * 好处是来源、面板、泵从启动那刻起就有同一份运行期，不会出现「界面先到、运行期后到」的
+ * 两套状态。拿不到锁时 `Runtime` 的构造会抛，cordis 把这一行标成失败——这正是上游的
+ * 失败方式（不降级成「看起来能用」）。
+ *
+ * @param ctx - 插件上下文（`llm` 与 `surfaces` 已就绪）
+ * @param passed - 装配时传进来的行配置（`plugins.json` 现读，见 `machineOfPlugin`）
  */
-function splitRoleModel(text: string): { provider: string; model: string } | null {
-  const cut = text.lastIndexOf('/')
-  if (cut <= 0 || cut === text.length - 1) return null
-  const provider = text.slice(0, cut).trim()
-  const model = text.slice(cut + 1).trim()
-  return provider === '' || model === '' ? null : { provider, model }
-}
-
-/** 判定器的模型目标；`null` = 不调模型（用同步规则，`adapters/assessor-select.ts`）。 */
-export function assessorTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
-  return splitRoleModel(config.assessorModel.trim())
-}
-
-/** worker 的模型目标；`null` = 跟随宿主当前选路（`adapters/executor.ts` 的 `route()`）。 */
-export function workerTargetOf(config: SuperagentConfig): { provider: string; model: string } | null {
-  return splitRoleModel(config.workerModel.trim())
-}
-
-/**
- * 设置变更的记录口：save 成功且值真的变了时调一次。装配处把它接进编排库的
- * `settings_history` 表；不传 = 不记历史（测试或运行期没起来的场景）。
- */
-export type SettingsHistoryRecorder = (change: { key: string; from?: unknown; to?: unknown }) => void
-
-/**
- * 建设置分区：执行器三字段 + GitHub 四字段 + 飞书四字段 + 判定模型，`values()` 现读磁盘、
- * `save()` 真落盘。
- *
- * 单独导出而不是在 `apply` 里内联，是为了包级测试能直接验「保存 → 读回 → 重开还在」，
- * 不必为一个设置分区造一整套 cordis 上下文。`apply` 用的就是这一个函数，没有第二份。
- *
- * `record` 给了就包一层 save：写盘前后各读一次配置，值真的变了才记一条（被校验拦下、
- * 或重写同一个值都不记）。记录逻辑收在这一层而不是散进每个 case——15 个 case 各自
- * 记一遍迟早漏一处。
- *
- * @param passed - 装配时传进来的行配置；与 `apply` 收到的是同一个
- * @param record - 设置变更的记录口；缺省不记历史
- */
-export function createSettingsSection(passed?: unknown, record?: SettingsHistoryRecorder): SettingsSectionSpec {
-  const section: SettingsSectionSpec = {
-    id: CONFIG_KEY,
-    title: t('section.title'),
-    subtitle: t('section.subtitle'),
-    // 排在「定时任务」（32）、「子代理」（29）之后：都属于「让别的智能体替你干活」那一类。
-    order: 39,
-    fields(): SettingsField[] {
-      return [
-        {
-          type: 'text',
-          key: REPO_PATH_KEY,
-          label: t('field.repoPath.label'),
-          placeholder: '/path/to/repo',
-          mono: true,
-          help: t('field.repoPath.help'),
-        },
-        {
-          type: 'text',
-          key: PREPARE_COMMAND_KEY,
-          label: t('field.prepareCommand.label'),
-          placeholder: 'pnpm install',
-          mono: true,
-          help: t('field.prepareCommand.help'),
-        },
-        {
-          type: 'number',
-          key: MAX_WORKERS_KEY,
-          label: t('field.maxWorkers.label'),
-          min: LIMITS.maxWorkers.min,
-          max: LIMITS.maxWorkers.max,
-          step: 1,
-          help: t('field.maxWorkers.help'),
-        },
-        {
-          type: 'number',
-          key: TIMEOUT_KEY,
-          label: t('field.ticketTimeoutSeconds.label'),
-          min: 0,
-          max: TIMEOUT_MAX_SECONDS,
-          step: 60,
-          help: t('field.ticketTimeoutSeconds.help'),
-        },
-        {
-          type: 'switch',
-          key: CONFIRM_INFERRED_KEY,
-          label: t('field.confirmInferred.label'),
-          help: t('field.confirmInferred.help'),
-        },
-        {
-          type: 'select',
-          key: EVAL_MODE_KEY,
-          label: t('field.evalMode.label'),
-          help: t('field.evalMode.help'),
-          options: [
-            { value: 'observe', label: t('field.evalMode.option.observe') },
-            { value: 'auto', label: t('field.evalMode.option.auto') },
-            { value: 'off', label: t('field.evalMode.option.off') },
-          ],
-        },
-        {
-          type: 'number',
-          key: EVAL_TIMEOUT_KEY,
-          label: t('field.evalTimeoutSeconds.label'),
-          min: LIMITS.evalTimeoutSeconds.min,
-          max: LIMITS.evalTimeoutSeconds.max,
-          step: 30,
-          help: t('field.evalTimeoutSeconds.help'),
-        },
-        {
-          type: 'text',
-          key: GITHUB_REPOSITORY_KEY,
-          label: t('field.githubRepository.label'),
-          placeholder: 'owner/name',
-          mono: true,
-          help: t('field.githubRepository.help'),
-        },
-        {
-          type: 'text',
-          key: GITHUB_LOGIN_KEY,
-          label: t('field.githubLogin.label'),
-          placeholder: 'your-bot-login',
-          mono: true,
-          help: t('field.githubLogin.help'),
-        },
-        {
-          type: 'text',
-          key: GITHUB_ALLOWED_KEY,
-          label: t('field.githubAllowed.label'),
-          placeholder: 'alice, bob',
-          mono: true,
-          help: t('field.githubAllowed.help'),
-        },
-        {
-          type: 'text',
-          key: GITHUB_TOKEN_ENV_KEY,
-          label: t('field.githubTokenEnv.label'),
-          placeholder: DEFAULT_TOKEN_ENV,
-          mono: true,
-          help: t('field.githubTokenEnv.help'),
-        },
-        {
-          type: 'switch',
-          key: FEISHU_ENABLED_KEY,
-          label: t('field.feishuEnabled.label'),
-          help: t('field.feishuEnabled.help'),
-        },
-        {
-          type: 'text',
-          key: FEISHU_CLI_KEY,
-          label: t('field.feishuCli.label'),
-          placeholder: 'lark-cli',
-          mono: true,
-          help: t('field.feishuCli.help'),
-        },
-        {
-          type: 'text',
-          key: FEISHU_CHATS_KEY,
-          label: t('field.feishuChats.label'),
-          placeholder: 'oc_xxx, oc_yyy',
-          mono: true,
-          help: t('field.feishuChats.help'),
-        },
-        {
-          type: 'text',
-          key: FEISHU_ALLOWED_KEY,
-          label: t('field.feishuAllowed.label'),
-          placeholder: 'ou_xxx, ou_yyy',
-          mono: true,
-          help: t('field.feishuAllowed.help'),
-        },
-        {
-          type: 'switch',
-          key: FEISHU_DIRECT_KEY,
-          label: t('field.feishuDirect.label'),
-          help: t('field.feishuDirect.help'),
-        },
-        {
-          type: 'text',
-          key: ASSESSOR_MODEL_KEY,
-          label: t('field.assessorModel.label'),
-          placeholder: 'provider/model',
-          mono: true,
-          help: t('field.assessorModel.help'),
-        },
-        {
-          type: 'text',
-          key: WORKER_MODEL_KEY,
-          label: t('field.workerModel.label'),
-          placeholder: 'provider/model',
-          mono: true,
-          help: t('field.workerModel.help'),
-        },
-        {
-          type: 'text',
-          key: WORKER_BLOCKED_KEY,
-          label: t('field.workerBlockedCommands.label'),
-          placeholder: 'npm publish, docker push',
-          mono: true,
-          help: t('field.workerBlockedCommands.help'),
-        },
-      ]
-    },
-    values(): SettingsValues {
-      // 现读磁盘而不是读闭包里的缓存：这是「重启后值还在」与「保存即生效」的同一条路径。
-      const config = readSuperagentConfig(passed)
-      return {
-        [REPO_PATH_KEY]: config.repoPath,
-        [MAX_WORKERS_KEY]: config.maxWorkers,
-        [TIMEOUT_KEY]: config.ticketTimeoutSeconds,
-        [PREPARE_COMMAND_KEY]: config.prepareCommand,
-        [CONFIRM_INFERRED_KEY]: config.confirmInferred,
-        [EVAL_MODE_KEY]: config.evalMode,
-        [EVAL_TIMEOUT_KEY]: config.evalTimeoutSeconds,
-        [GITHUB_REPOSITORY_KEY]: config.githubRepository,
-        [GITHUB_LOGIN_KEY]: config.githubLogin,
-        // 设置面只认标量，名单在磁盘上存成一行逗号分隔的文本。
-        [GITHUB_ALLOWED_KEY]: config.githubAllowed.join(', '),
-        [GITHUB_TOKEN_ENV_KEY]: config.githubTokenEnv,
-        [FEISHU_ENABLED_KEY]: config.feishuEnabled,
-        [FEISHU_CLI_KEY]: config.feishuCli,
-        // 与 githubAllowed 一样：磁盘上存一行逗号分隔的文本，设置面只认标量。
-        [FEISHU_CHATS_KEY]: config.feishuChats.join(', '),
-        // 与 githubAllowed 同一种写法：磁盘上一行逗号分隔的 open_id。
-        [FEISHU_ALLOWED_KEY]: config.feishuAllowed.join(', '),
-        [FEISHU_DIRECT_KEY]: config.feishuDirect,
-        [ASSESSOR_MODEL_KEY]: config.assessorModel,
-        [WORKER_MODEL_KEY]: config.workerModel,
-        // 与 githubAllowed 一样：磁盘上存一行逗号分隔的文本，设置面只认标量。
-        [WORKER_BLOCKED_KEY]: config.workerBlockedCommands.join(', '),
-      }
-    },
-    save(key: string, value: SettingsValue): string | void {
-      /** 文本类字段的统一写法：去空白，空串 = 删掉这个键。 */
-      const saveText = (field: string, text: string) => {
-        writePluginConfig(CONFIG_KEY, { [field]: text === '' ? null : text })
-      }
-      switch (key) {
-        case REPO_PATH_KEY: {
-          const text = String(value).trim()
-          // 空串 = 删掉这个键（回到缺省的空路径）；写空串只会在 plugins.json 里留一条没意义的记录。
-          writePluginConfig(CONFIG_KEY, { [REPO_PATH_KEY]: text === '' ? null : text })
-          return
-        }
-        case MAX_WORKERS_KEY: {
-          const number = Number(value)
-          if (!Number.isFinite(number)) return t('save.maxWorkersBad')
-          writePluginConfig(CONFIG_KEY, {
-            [MAX_WORKERS_KEY]: clampInt(number, LIMITS.maxWorkers.min, LIMITS.maxWorkers.max, DEFAULTS.maxWorkers),
-          })
-          return
-        }
-        case TIMEOUT_KEY: {
-          const number = Number(value)
-          if (!Number.isFinite(number)) return t('save.timeoutBad')
-          writePluginConfig(CONFIG_KEY, {
-            [TIMEOUT_KEY]: clampInt(number, 0, TIMEOUT_MAX_SECONDS, DEFAULTS.ticketTimeoutSeconds),
-          })
-          return
-        }
-        case PREPARE_COMMAND_KEY: {
-          // 空串 = 删掉这个键（回到「不跑准备命令」）。
-          const text = String(value).trim()
-          if (text.length > LIMITS.prepareCommand) return t('save.prepareCommandTooLong')
-          saveText(PREPARE_COMMAND_KEY, text)
-          return
-        }
-        case CONFIRM_INFERRED_KEY: {
-          // 与飞书那两个开关同一种写法：写 `false` 而不是删键，磁盘上分得清「关过」与「没配过」。
-          writePluginConfig(CONFIG_KEY, { [CONFIRM_INFERRED_KEY]: value === true })
-          return
-        }
-        case EVAL_MODE_KEY: {
-          // 下拉只发三值，但 save 也能被别的调用方喂脏值：枚举校验在这里再收一次，
-          // 非法值给一句可读的提示，不静默落盘（读路径还会兜一层，两层各管各的边界）。
-          const mode = String(value)
-          if (mode !== 'off' && mode !== 'observe' && mode !== 'auto') return t('save.evalModeBad')
-          writePluginConfig(CONFIG_KEY, { [EVAL_MODE_KEY]: mode })
-          return
-        }
-        case EVAL_TIMEOUT_KEY: {
-          const number = Number(value)
-          if (!Number.isFinite(number)) return t('save.evalTimeoutBad')
-          writePluginConfig(CONFIG_KEY, {
-            [EVAL_TIMEOUT_KEY]: clampInt(number, LIMITS.evalTimeoutSeconds.min, LIMITS.evalTimeoutSeconds.max, 120),
-          })
-          return
-        }
-        case GITHUB_REPOSITORY_KEY: {
-          const text = String(value).trim()
-          // 只认 `owner/name`：写错了不会报错，只会静默地一条工单都不建（轮询打的是一个不存在的仓库）。
-          // 空串是「关掉这个来源」，不算写错。
-          if (text !== '' && !/^[\w.-]+\/[\w.-]+$/.test(text)) return t('save.githubRepositoryBad')
-          saveText(GITHUB_REPOSITORY_KEY, text)
-          return
-        }
-        case GITHUB_LOGIN_KEY: {
-          saveText(GITHUB_LOGIN_KEY, String(value).trim())
-          return
-        }
-        case GITHUB_ALLOWED_KEY: {
-          // 存成逗号分隔的一行；顺手去掉多余空白与重复项，免得名单里躺着两条一样的。
-          const names = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
-          saveText(GITHUB_ALLOWED_KEY, names.join(', '))
-          return
-        }
-        case GITHUB_TOKEN_ENV_KEY: {
-          saveText(GITHUB_TOKEN_ENV_KEY, String(value).trim())
-          return
-        }
-        case FEISHU_ENABLED_KEY: {
-          // 关掉时写 `false` 而不是删键：删了会回到缺省（也是关），两种写法效果一样，
-          // 但留下 `false` 能让「用户主动关过」与「从来没配过」在磁盘上分得清。
-          writePluginConfig(CONFIG_KEY, { [FEISHU_ENABLED_KEY]: value === true })
-          return
-        }
-        case FEISHU_CLI_KEY: {
-          // 路径原样存；空串 = 删掉这个键（回到 PATH 上的 lark-cli）。
-          saveText(FEISHU_CLI_KEY, String(value).trim())
-          return
-        }
-        case FEISHU_CHATS_KEY: {
-          // 与 githubAllowed 同一种整理：去空白、去重，存成一行逗号分隔的文本。
-          const chats = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
-          saveText(FEISHU_CHATS_KEY, chats.join(', '))
-          return
-        }
-        case FEISHU_DIRECT_KEY: {
-          writePluginConfig(CONFIG_KEY, { [FEISHU_DIRECT_KEY]: value === true })
-          return
-        }
-        case FEISHU_ALLOWED_KEY: {
-          // 与 githubAllowed 同一种整理：去空白、去重，存成一行逗号分隔的文本。
-          const ids = [...new Set(String(value).split(',').map((id) => id.trim()).filter((id) => id !== ''))]
-          saveText(FEISHU_ALLOWED_KEY, ids.join(', '))
-          return
-        }
-        case ASSESSOR_MODEL_KEY: {
-          saveText(ASSESSOR_MODEL_KEY, String(value).trim())
-          return
-        }
-        case WORKER_MODEL_KEY: {
-          saveText(WORKER_MODEL_KEY, String(value).trim())
-          return
-        }
-        case WORKER_BLOCKED_KEY: {
-          saveText(WORKER_BLOCKED_KEY, String(value).trim())
-          return
-        }
-        default:
-          return t('save.unknownKey', { key })
-      }
-    },
+export async function apply(ctx: Context, passed?: unknown): Promise<void> {
+  const machine = machineOfPlugin(passed)
+  // 运行期重启：与上游同一条回调，设置里换账号 / 换 CLI 后由 Setup 推到下一个 macrotask 调它。
+  const restart = (): void => {
+    ctx.fiber.restart().catch((error: unknown) => { ctx.logger.error('superagent restart failed: %s', String(error)) })
   }
-  // 记录历史用包装而不是在每个 case 里记：save 的 case 有提前 return（校验失败不落盘），
-  // 散着写迟早漏一处。包装只在「写盘前后配置真的变了」时记一条，校验被拒、重写同值都自然不记。
-  if (record === undefined) return section
-  return {
-    ...section,
-    save(key: string, value: SettingsValue): MaybePromise<string | void | SettingsMutationOk> {
-      const before = readSuperagentConfig(passed) as unknown as Record<string, unknown>
-      // 接口把 save 声明成可选方法（有的分区只读），本分区必带——非空断言对应构造处的那一行。
-      const notice = section.save!(key, value)
-      const after = readSuperagentConfig(passed) as unknown as Record<string, unknown>
-      if (JSON.stringify(before[key]) === JSON.stringify(after[key])) return notice
-      record({ key, from: before[key], to: after[key] })
-      return notice
-    },
-  }
-}
-
-/**
- * 把一个设置分区的字段投影成主会话工具看到的形状（P7）。
- *
- * 为什么要把 `fields()` 与 `values()` 拼起来：`fields()` 只是控件声明（标题、类型、说明），
- * 当前值在 `values()` 里——设置面板也是这么取值的（`SettingsService.values`）。工具要
- * 「先看现场再改」，两样必须一起给，否则模型是照着一份猜出来的值在改。
- *
- * 为什么跳过 info / button：这两类没有 key / 当前值，不是可保存的设置项；投影给模型只会让它
- * 以为能改一段说明文字。下拉的 `type` 报成 text（值就是字符串），可选值拼进 help——
- * 工具侧的四种类型里没有「枚举」这一种，让模型知道合法值即可。
- */
-function settingsViewOf(section: SettingsSectionSpec): SettingsFieldView[] {
-  // 本分区的 values() 是同步读磁盘（`readSuperagentConfig`）；接口允许 Promise 只是通用契约。
-  const values = section.values() as unknown as SettingsValues
-  const fields: SettingsFieldView[] = []
-  for (const field of section.fields()) {
-    if (field.type === 'info' || field.type === 'button') continue
-    const type = field.type === 'number' ? 'number' : field.type === 'switch' ? 'boolean' : 'text'
-    const help = field.type === 'select'
-      ? [field.help, `可选值：${field.options.map((option) => option.value).join(' / ')}`]
-        .filter((part): part is string => typeof part === 'string' && part !== '')
-        .join('；')
-      : field.help
-    fields.push({
-      key: field.key,
-      label: field.label,
-      type,
-      value: values[field.key],
-      ...(help === undefined || help === '' ? {} : { help }),
-    })
-  }
-  return fields
-}
-
-/**
- * 调设置分区自己的 save（P7）：与设置页同一个函数，返回字符串 = 被拒原因。
- *
- * 为什么不在工具里直接写 `plugins.json`：那会绕过这个分区的校验（枚举 / 上下限 / 路径格式）
- * 与设置变更历史，同一个设置就有了两条写路径，且工具那条没有任何提示。
- */
-function saveSettingOf(section: SettingsSectionSpec, key: string, value: unknown): string | void {
-  const save = section.save
-  if (save === undefined) return '这个设置分区没有保存入口'
-  let result: string | void | SettingsMutationOk | Promise<string | void | SettingsMutationOk>
-  try {
-    result = save(key, value as SettingsValue)
-  } catch (error) {
-    // 契约里「抛错 = 失败原因」，工具要的是一句话，不是一段堆栈。
-    return error instanceof Error ? error.message : String(error)
-  }
-  // 本分区的 save 是同步的；真拿到 Promise 说明分区换成了异步实现，如实说，别把 Promise 当成功。
-  if (result instanceof Promise) return '这个设置分区的保存改成了异步实现，主会话工具还不支持'
-  if (typeof result === 'string') return result
-  return undefined
-}
-
-/**
- * 装配入口：设置分区 + `/sa` 命令 + 2 秒泵 + 体检项，运行期懒建。
- *
- * 返回值故意是 void：所有退订 / 清理都交给 `ctx.effect` 统一收口（与 schedule、
- * approval-floor 同一写法），停用这一行时 cordis 自动调它，不需要手写清理清单。
- * @param ctx - 插件上下文（cordis 注入，`settings` 与 `commands` 服务已就绪）
- * @param passed - 装配时传进来的行配置（`cordis.patch.yml` 那一行的 `config`）
- */
-export function apply(ctx: Context, passed?: unknown): void {
-  /** 现读设置：每次用值时都调它，保存完立刻生效。 */
-  const config = (): SuperagentConfig => readSuperagentConfig(passed)
-
-  /**
-   * 配好的 GitHub 来源；没配全就是 `undefined`。
-   *
-   * 三个字段缺一不可（仓库、机器人登录名、至少一个允许的登录名）：半配状态下把来源登记进来，
-   * 只会得到「轮询在跑、一条单也不建」——那种失败没有任何提示，最难查。
-   */
-  const githubAccount = (): GithubAccount | undefined => {
-    const current = config()
-    return normalizeGithubAccount({
-      repository: current.githubRepository,
-      login: current.githubLogin,
-      allowed: current.githubAllowed,
-    })
-  }
-
-  /**
-   * 配好的飞书来源；名单空就是 `undefined`。
-   *
-   * 判据只有一条：名单里至少一个人。群清单**不**参与——它决定「收哪些群」，不决定
-   * 「谁的话算数」。把两件事混成一个判据，就会出现「配了群、没配人」这种看起来能用、
-   * 实际一条单也建不出来的状态（修之前就是这个状态：消息收得到，全被判 `not_a_member`）。
-   */
-  const feishuAccount = (): FeishuAccount | undefined => {
-    const current = config()
-    return normalizeFeishuAccount({ allowed: current.feishuAllowed })
-  }
-
-  // 设置变更历史：save 成功且值变了就记进编排库的 settings_history 表。运行期还没起来
-  // （懒建，`store` 还是 null）时改的设置不记——历史从插件跑起来那刻开始记。
-  //
-  // 分区对象留一个引用：主会话的 `superagent_read`（settings 资源）与 `superagent_settings_save`
-  // 要读它的字段 / 当前值，并调它自己的 `save`（与设置页同一个函数，不另开写路径）。
-  const settingsSection = createSettingsSection(passed, (change) => {
-    if (store === null) return
-    try {
-      store.recordSettingsChange(change, new Date().toISOString())
-    } catch (error) {
-      // 记历史失败不该让保存本身失败：设置已经写进 plugins.json 了，丢的只是一行 diff。
-      console.warn(`[superagent] 设置变更没记进历史：${errorText(error)}`)
-    }
-  })
-  const offSection = ctx.settings.registerSection(settingsSection)
-  ctx.effect(() => offSection, 'superagent: settings.registerSection')
-
-  // ── 运行期：懒建 / 泵 / 命令 ────────────────────────────────────────────────
-
-  /** 打开着的库；它归插件这一侧所有，运行期关闭时**不**替我们关（见 `close()`）。 */
-  let store: DscStore | null = null
-  /** 已建好的运行期；null = 还没人用过（或上次启动失败）。 */
-  let runtime: SuperagentRuntime | null = null
-  /** 启动失败只记一次日志：泵每 2 秒一拍，不设这道闸会把控制台刷满。 */
-  let warned = false
-  /** 上次建库失败的一句人话；成功即清空（快照面 `problem.detail` 读它）。 */
-  let lastProblem: string | null = null
-  /**
-   * 失败后多久才重试建库（毫秒）。
-   *
-   * 快照每次装配都会问 `surface()`，而它要拿运行期；不设这道闸，库一直打不开时
-   * 每次重画界面都会重试一次 open + 抢锁。10 秒既不让界面卡在旧状态太久，也不打转。
-   */
-  let retryAt = 0
-  const RETRY_MS = 10_000
-
-  /**
-   * 取运行期，没有就建一个。
-   *
-   * 失败一律收敛成 `null`：调用方（命令、服务）据此显示「未启动」，插件本身继续挂在
-   * 宿主上。这是 §5.4「拿不到锁 / 库损坏 → 插件停在未启动，不崩宿主」的落点。
-   *
-   * 建起来之后立刻跑两件只在启动时做的事（各带自己的 try/catch，失败不影响插件可用）：
-   *   - `recover()`：上次崩溃留下的 `running` 起新分配接续、`pending` 重新入队；
-   *   - `sweep()`：删掉已结束超过 30 天的会话目录。
-   */
-  /**
-   * 建好的 GitHub 来源；`null` = 没配、拿不到令牌、或建失败。
-   *
-   * `busy` 是「上一拍还没回来」：轮询是网络活，慢的时候会比间隔长，不设这道闸就会在
-   * 同一个账号上越堆越多请求——配额打满之后症状是「突然一条评论都收不到了」。
-   */
-  let github: {
-    source: ReturnType<typeof createGithubSource>
-    api: ReturnType<typeof createGithubApi>
-    /** 机器人自己的登录名：回评论时要用它认「这条标记是我发的」。 */
-    login: string
-    lastAt: number
-    busy: boolean
-  } | null = null
-
-  /**
-   * 建好的飞书来源；`null` = 没开、没配群、CLI 找不到，或建失败。
-   *
-   * `busy` 与 GitHub 那格同一个意思：上一拍还没回来就不重复 tick。`lastAt` 记的是「上一次
-   * 交给来源的时刻」，不是「来源自己记的 lastPollAt」——两件事差着一次网络往返。
-   * `run` 留着给发送泵用：回一条飞书消息要走同一个 CLI 执行器。
-   */
-  let feishu: { source: FeishuSource; run: FeishuCli['run']; lastAt: number; busy: boolean } | null = null
-
-  /**
-   * 两个来源给界面的状态（U5）：关着的也列出来，否则「没配」与「配了但坏了」分不开。
-   *
-   * 为什么每次现读 `github` / `feishu` 这两个 `let`，而不是启动时抓一份：来源在
-   * `ensure()` 建好运行期之后才起，停用插件时又会被置回 `null`；闭包里抓快照会永远停在
-   * 「未启用」。开关走参数传进来的当次设置——与 `withRepoGuide` 共用一次磁盘读，
-   * 不为一帧快照把 `plugins.json` 读两遍。
-   *
-   * 为什么 label 不从这里出：宿主不夹带人类语言，名称由界面按 `id` 取词（见契约
-   * `SuperagentSourceView` 的注释）。
-   *
-   * @param current - 这一帧快照用的设置（`apply` 的 `config()` 刚读出来的那份）
-   */
-  const sourceViews = (current: SuperagentConfig): SuperagentSourceView[] => {
-    return buildSourceViews({
-      // GitHub 的「开关」就是仓库填了没有：没填 = 这个来源根本没接。
-      github: { enabled: current.githubRepository !== '', status: github?.source.status() ?? null },
-      // 飞书的开关是显式的一格：开了但缺群 / 缺 CLI 时 enabled 仍为 true、状态为空，
-      // 界面据此画「从未成功」，比画成「未启用」更接近事实。
-      feishu: { enabled: current.feishuEnabled, status: feishu?.source.status() ?? null },
-    })
-  }
-
-  /**
-   * 建 GitHub 来源：三个字段配全、且读得到令牌才建。
-   *
-   * 三种没建起来的情况都只记一行日志、不抛：来源是可选件，缺了它插件其余部分照常工作。
-   * 令牌只从环境变量读、绝不落盘——写进 `plugins.json` 就等于把它交给任何能读那台机器的人。
-   */
-  function startGithub(target: SuperagentRuntime): void {
-    const account = githubAccount()
-    if (account === undefined || store === null) return
-    const variable = config().githubTokenEnv
-    const token = (process.env[variable] ?? '').trim()
-    if (token === '') {
-      console.warn(`[superagent] GitHub 来源没启动：环境变量 ${variable} 里没有令牌`)
-      return
-    }
-    try {
-      const api = createGithubApi({ token, repository: account.repository, log: (line) => { console.warn(line) } })
-      github = {
-        api,
-        source: createGithubSource({
-          api,
-          repository: account.repository,
-          login: account.login,
-          engine: target.sourceBridge(),
-          store,
-          now: () => new Date().toISOString(),
-          log: (line) => { console.warn(line) },
-        }),
-        login: account.login,
-        lastAt: 0,
-        busy: false,
-      }
-      console.warn(`[superagent] GitHub 来源已启动：${account.repository}，每 ${String(GITHUB_POLL_INTERVAL_MS / 1000)} 秒一拍`)
-    } catch (error) {
-      console.warn(`[superagent] GitHub 来源没建起来：${errorText(error)}`)
-    }
-  }
-
-  /** 泵的一拍里顺手推一次：到点、且上一拍没在飞才发。 */
-  function pollGithub(): void {
-    if (github === null || github.busy) return
-    const now = Date.now()
-    if (now - github.lastAt < GITHUB_POLL_INTERVAL_MS) return
-    github.lastAt = now
-    github.busy = true
-    // 先把两个活对象抓在手里：`github` / `runtime` 都是可变的 `let`，停用插件时会被置空，
-    // 而 `.then` 里的回调是几十毫秒之后才跑的，回调里再读就可能读到 null。
-    const source = github.source
-    const target = runtime
-    void source.tick()
-      .catch((error: unknown) => { console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`) })
-      // 顺序：事件流 → 订阅线程的新评论 → 绑 PR → 看 CI。
-      // 订阅线程要单独读（工单跟着的 PR / Issue 不在事件流里，只有合并且会经 threadClosed 报进来）；
-      // 订阅清单从运行期拿（工单的 follows 只有它知道），运行期没起来就跳过这一步。
-      // 这一步失败只记日志：`pollThreads` 自己已经逐线程兜住，这里再兜一层「取清单就抛了」的情况，
-      // 不让它挡住后面的绑 PR 与 CI。
-      .then(() => source.pollThreads(target?.subscribedThreads() ?? []))
-      .catch((error: unknown) => { console.warn(`[superagent] GitHub 订阅线程轮询失败：${errorText(error)}`) })
-      // 事件流看完再看 PR 的 CI：两件事的失败互不影响，所以各有各的 catch。
-      // 先认领 PR（智能体自己开的那张），再看已认领的 CI——顺序反了会白等一拍。
-      .then(() => bindPulls())
-      .then(() => { pollPullCi() })
-      .finally(() => { if (github !== null) github.busy = false })
-  }
-
-  /**
-   * 出站消息的发送方：来源起来了才有对应的那一条。
-   *
-   * 为什么是 getter：`ensure()` 建运行期时两个来源都还没起（先有运行期，来源要拿它的
-   * `sourceBridge()`）。写成现成的表，就是「插件启动那一刻排队的回复永远发不出去」。
-   *
-   * 没起来的来源不出现在表里，发送泵按「来源还没起来」退避重试（`dispatch.ts` 的
-   * `defer`），所以「飞书晚两秒起来」不会把那条回复弄丢，而「飞书没配」会在试满几次之后
-   * 丢弃并记一行——不会在库里堆一批永远发不出去的行。
-   */
-  function outboxSenders(): Partial<Record<string, MessageSender>> {
-    const senders: Partial<Record<string, MessageSender>> = {}
-    if (github !== null) {
-      const current = github
-      senders[GITHUB_SOURCE] = (message) => sendGithub(current.api, message, current.login)
-    }
-    if (feishu !== null) {
-      const current = feishu
-      senders[FEISHU_SOURCE] = (message) => sendFeishu(current.run, message)
-    }
-    return senders
-  }
-
-  /**
-   * 建飞书来源：开关打开、群非空、CLI 能解析，三样都满足才起。
-   *
-   * 与 `startGithub` 的差别只有一处：机器人身份要问 CLI（`auth status` + `bot/v3/info`），
-   * 那是一次异步调用，所以收尾在 `void (async () => ...)()` 里，`ensure()` 不等它。三样
-   * 前置条件任何一样不满足都只记一行日志、不启动、不抛：来源是可选件，缺了它插件其余
-   * 部分照常工作（与 §5.4 同一条）。
-   *
-   * 默认关的意义就在这里：不配飞书时这里一次都不会走到 spawn，机器上不会多出任何
-   * lark-cli 子进程。
-   */
-  function startFeishu(target: SuperagentRuntime): void {
-    try {
-      const current = config()
-      if (!current.feishuEnabled) {
-        console.warn('[superagent] 飞书来源没启动：设置里没打开')
-        return
-      }
-      if (current.feishuChats.length === 0) {
-        console.warn('[superagent] 飞书来源没启动：没填群 chat_id')
-        return
-      }
-      const resolved = resolveFeishuCli(current.feishuCli)
-      if (!resolved.ok) {
-        console.warn(`[superagent] 飞书来源没启动：${resolved.reason}`)
-        return
-      }
-      // 库句柄在 `ensure()` 里刚拿到；这里再判一次是为了让类型收窄，不是真的有第二条路。
-      const db = store
-      if (db === null) return
-      void (async () => {
-        try {
-          const bot = await readFeishuBot(resolved.run)
-          // 等身份的这一两秒里插件可能已经被停用：运行期换了或没了就不要再起子进程，
-          // 否则停用之后仍挂着一条长连接收消息（设计文档 §1.1 禁止）。
-          if (runtime !== target) return
-          const source = createFeishuSource({
-            run: resolved.run,
-            consume: resolved.consume,
-            bot,
-            engine: target.sourceBridge(),
-            store: db,
-            config: {
-              chats: current.feishuChats.map((chatId) => ({ chatId })),
-              directMessages: current.feishuDirect,
-            },
-            now: () => new Date().toISOString(),
-            log: (line) => { console.warn(line) },
-            // 话题轮询的三个动作（活在哪些话题、话题上最新那条消息、话题属性）：都只有运行期知道。
-            threads: target.feishuThreads(),
-            // 适配器内部那条循环压到一天，`tick` 的节奏只留泵一处；理由见常量注释。
-            backfillEveryMs: FEISHU_INTERNAL_BACKFILL_MS,
-          })
-          source.start()
-          feishu = { source, run: resolved.run, lastAt: Date.now(), busy: false }
-          console.warn(
-            `[superagent] 飞书来源已启动：${String(current.feishuChats.length)} 个群，`
-              + `每 ${String(FEISHU_POLL_INTERVAL_MS / 1000)} 秒补收一轮`,
-          )
-        } catch (error) {
-          console.warn(`[superagent] 飞书来源没启动：${errorText(error)}`)
-        }
-      })()
-    } catch (error) {
-      // 读设置本身失败（plugins.json 被手改坏）也只记一行：`ensure()` 不该因为一个可选来源
-      // 走进「编排库没打开」那条分支，把已经建好的运行期关掉。
-      console.warn(`[superagent] 飞书来源没启动：${errorText(error)}`)
-    }
-  }
-
-  /** 泵的一拍里顺手补收一轮飞书：到点、且上一拍没在飞才发（与 `pollGithub` 同构）。 */
-  function pollFeishu(): void {
-    if (feishu === null || feishu.busy) return
-    const now = Date.now()
-    if (now - feishu.lastAt < FEISHU_POLL_INTERVAL_MS) return
-    feishu.lastAt = now
-    feishu.busy = true
-    void feishu.source.tick()
-      // `tick()` 自己已经把每个群的失败收进 `status().lastError`（`loops.ts:421-447`），
-      // 这里再兜一层：来源整体抛了也只记日志，不打断泵的下一拍。
-      .catch((error: unknown) => { console.warn(`[superagent] 飞书补收失败：${errorText(error)}`) })
-      .finally(() => { if (feishu !== null) feishu.busy = false })
-  }
-
-  /**
-   * 把「智能体自己开的 PR」绑到工单上。
-   *
-   * 判断与循环都在 `adapters/github/bind.ts`（那里能对着假数据测）；这里只把活对象接成
-   * 五个动作。之所以不在来源适配器里绑，理由见那个文件的文件头。
-   */
-  async function bindPulls(): Promise<void> {
-    const current = github
-    const target = runtime
-    const account = githubAccount()
-    if (current === null || target === null || account === undefined) return
-    await bindAgentPulls({
-      pulls: () => current.api.slurp<OpenPull>('pulls?state=open&per_page=100'),
-      tickets: () => target.openTickets(),
-      account,
-      bind: (ticketId, thread, own) => target.sourceBridge().bindThread(ticketId, thread, own),
-      log: (line) => { console.warn(`[superagent] ${line}`) },
-    })
-  }
-
-  /**
-   * 关注了 PR 的工单，每张顺手看一眼 CI。
-   *
-   * 不 `await`：泵的下一拍不该为一次 PR 检查停住，与原来一样是发出去就走。单张失败在
-   * `pollTicketChecks` 里逐单收掉，这里不会再抛。
-   */
-  function pollPullCi(): void {
-    const current = github
-    const target = runtime
-    if (current === null || target === null || store === null) return
-    const options = { api: current.api, engine: target.sourceBridge(), store, now: () => new Date().toISOString() }
-    void pollTicketChecks({
-      tickets: () => target.openTickets(),
-      check: (number) => pollPullChecks(options, number),
-      log: (line) => { console.warn(`[superagent] ${line}`) },
-    })
-  }
-
-  /**
-   * 判定器的一次问答：走宿主的模型服务，不建会话。
-   *
-   * 宿主没接 `llm` 时返回 `undefined`——那不是错误，是「这台机器上没有模型可用」，
-   * 判定器会退回同步规则（`adapters/assessor-select.ts`）。
-   *
-   * 为什么用窄接口而不是 import `LlmService`：本包只用到三个方法，写成本文件里的形状，
-   * 宿主那边换实现也不用跟着改（与本包执行器的做法一致）。
-   */
-  function oneShot(): AssessorComplete | undefined {
-    const llm = ctx.get('llm') as {
-      route(): { api: string; baseUrl: string; apiKey: string; model: string }
-      routeTo(provider: string, model: string, effort: string): { api: string; baseUrl: string; apiKey: string; model: string }
-      stream(api: string, request: Record<string, unknown>, handlers: { onDelta(delta: string): void }): Promise<{ text: string }>
-    } | undefined
-    if (llm === undefined) return undefined
-    return async (prompt) => {
-      const target = assessorTargetOf(config())
-      const route = target === null ? llm.route() : llm.routeTo(target.provider, target.model, 'medium')
-      const result = await llm.stream(route.api, {
-        baseUrl: route.baseUrl,
-        apiKey: route.apiKey,
-        model: route.model,
-        maxTokens: 800,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: '你只输出一个 JSON 对象，不要解释。' },
-          { role: 'user', content: prompt },
-        ],
-      }, { onDelta: () => {} })
-      return result.text
-    }
-  }
-
-  function ensure(): SuperagentRuntime | null {
-    if (runtime !== null) return runtime
-    if (Date.now() < retryAt) return null
-    try {
-      store = openStore()
-      // 运行期的日志走宿主控制台：`ctx.logger` 不在本包的 inject 里，P0 不为一条日志
-      // 多认一个硬依赖。
-      // 执行器从 `ctx` 取模型 / 工具 / 守卫；仓库路径、并发上限、超时都从设置现读——
-      // 设置页改了，下一张工单 / 下一拍就用新值。
-      const complete = oneShot()
-      // 内核会话表：worker 会话是执行器自己造的，不登记进去的话 `subagent` 认不出
-      // 谁是父会话（会回落成「用户正在看的会话」）。`agent` 不在 inject 里——它停用时
-      // 少的是「队友认归属」，派工照常。
-      const sessions = ctx.get('agent') as {
-        attach(session: import('@pneuma/runtime/core/session.js').Session): void
-        detach(sessionId: string): void
-      } | undefined
-      const opened = new SuperagentRuntime(store, {
-        log: (line) => { console.warn(line) },
-        ctx,
-        // 主会话工具改完工单后要让界面重画：走与 `service.changed` 同一条事件。
-        // 注入而不是让运行期自己去发：`ctx.emit` 是宿主的词汇，运行期只该说「有东西变了」。
-        changed: () => { ctx.emit('dsc/changed') },
-        // worker 的模型与禁令名单：装配时读一次（判定模型同款取舍，改了要重开宿主）。
-        // model 传 null = 执行器跟随当前选路（`adapters/executor.ts` 的 `route()`）。
-        worker: {
-          repo: () => config().repoPath,
-          maxWorkers: config().maxWorkers,
-          prepare: () => config().prepareCommand,
-          model: workerTargetOf(config()),
-          blockedCommands: config().workerBlockedCommands,
-        },
-        timeoutSeconds: () => config().ticketTimeoutSeconds,
-        // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
-        // 策略与来源范围都现读：设置页改完名单，下一条消息就按新名单判，不必重启宿主。
-        settings: () => defaultSettings(githubAccount(), feishuAccount(), config().evalMode, config().evalTimeoutSeconds),
-        scope: superagentScope(githubAccount, feishuAccount),
-        // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
-        assessorModel: assessorTargetOf(config()),
-        // 设置分区的读 / 写（P7）：分区对象只有这里拿得到。读给 `superagent_read` 的 settings
-        // 资源与 save 工具的 key 校验，写走分区自己的 save（与设置页同一个函数、同一套校验）。
-        settingsView: () => settingsViewOf(settingsSection),
-        saveSetting: (key, value) => saveSettingOf(settingsSection, key, value),
-        // 推断候选先等人点头（backlog G1）：现读，设置页打开之后下一条候选就进收件箱。
-        confirmInferred: config().confirmInferred,
-        ...(complete === undefined ? {} : { assessorComplete: complete }),
-        // 发送方现读：两个来源在本函数返回之后才起来（`startGithub` / `startFeishu`）。
-        senders: outboxSenders,
-        // 判定器的线程上下文要读 GitHub（backlog S1）：来源同样是本函数返回后才起，
-        // 所以给 getter；没配 GitHub 时它是 `null`，判定器就按没有上下文判。
-        githubApi: () => github?.api ?? null,
-        // 机器人身份：认领 PR 要判「这张 PR 是不是机器人自己开的」（`agentPull`）。`GithubApi`
-        // 只露仓库、`Settings` 里也没有登录名，所以把同一个配置闭包递进去；没配全时认领
-        // 由运行期回一句「GitHub 没配」。
-        githubAccount: () => githubAccount(),
-        ...(sessions === undefined
-          ? {}
-          : {
-              attachSession: (session) => { sessions.attach(session) },
-              detachSession: (sessionId) => { sessions.detach(sessionId) },
-            }),
-      })
-      runtime = opened
-      warned = false
-      lastProblem = null
-      // 恢复与清扫各自兜底：它们坏了不该让「插件已经能用」这件事退回去。
-      try {
-        const recovery = opened.recover()
-        if (recovery.resumed.length > 0 || recovery.requeued.length > 0) {
-          console.warn(
-            `[superagent] 启动恢复：${String(recovery.resumed.length)} 张接续（起新分配、工作树沿用）、` +
-              `${String(recovery.requeued.length)} 张重新入队`,
-          )
-        }
-      } catch (error) {
-        console.warn(`[superagent] 启动恢复失败（插件照常可用）：${errorText(error)}`)
-      }
-      try {
-        opened.sweep()
-      } catch (error) {
-        console.warn(`[superagent] 会话清理失败（插件照常可用）：${errorText(error)}`)
-      }
-      // 来源最后建：它要拿运行期已经装好的引擎，且失败不该影响「插件已经能用」。
-      startGithub(opened)
-      startFeishu(opened)
-      return runtime
-    } catch (error) {
-      const reason = errorText(error)
-      lastProblem = `编排库没打开：${reason}`
-      retryAt = Date.now() + RETRY_MS
-      if (!warned) {
-        warned = true
-        console.warn(`[superagent] 未启动：编排库没打开（${reason}）`)
-      }
-      // 建库失败时 `openStore` 已经把自己的连接关掉了；这里只兜「赋值到一半」的情况。
-      store?.close()
-      store = null
-      return null
-    }
-  }
-
-  // ── 服务：五个可调方法 + 快照面 ─────────────────────────────────────────────
-  // 服务只拿回调，不持有库：谁开谁关的规则仍然由本文件一个人守（见 `ensure`）。
-  const service = new SuperagentService({
-    current: () => runtime,
-    ensure,
-    problem: () => (lastProblem === null ? null : { code: 'store_unavailable', detail: lastProblem }),
-    changed: () => { ctx.emit('dsc/changed') },
-  })
-  ctx.provide('superagent', service)
-  // 面登记包在 ctx.effect 里（见 `surface.ts`），停用插件即摘掉这一格。
-  // 仓库路径在这里拼进快照面：`service.surface()` 是薄层、不读配置，而「路径没填」这条
-  // 引导要现读设置（见 `surface.ts` 的 `withRepoGuide`）。
-  // 来源状态也在这一层拼：`sources` 要读两个来源的运行期句柄，那是本文件独占的闭包，
-  // 服务层（`service.ts`）不该认识它们。设置只读一次，两份投影共用同一帧的值。
-  registerSurface(ctx, () => {
-    const current = config()
-    return {
-      ...withRepoGuide(service.surface(), current.repoPath),
-      sources: sourceViews(current),
-    }
-  })
-
-  // ── worker 的五个工具（backlog G7 + 第三批）──────────────────────────────────
-  // worker 在后台跑，正文里提的问题没有人接：给它一组工具，把状态说给工单（report），
-  // 动大手术前先回执（ack），处置挂在自己身上的线程（thread_unrelated / thread_follow），
-  // 把不归本工单的消息交回去（trigger_handback）。工具自己不碰库，真正的状态变更与归属判定
-  // 在引擎里（`core/assignments.ts:99-134`、`core/tickets.ts`），所以这里只把「按会话反查
-  // worker」这一手接到运行期上。
-  //
-  // 为什么五个一起注册：执行器的 `tools()` 是按名字从注册表里挑（`WORKER_TOOL_NAMES`），
-  // 注册漏一个，worker 就拿到一个调不到的名字；投影漏一个，主会话就会多出一个 worker 专用工具。
-  // 两处都从 `WORKER_ONLY_TOOL_NAMES` 这一份名单来，名单只有一处。
-  for (const tool of createWorkerTools({
-    // 两道闸按顺序：运行期在不在（懒建），这条会话是不是 worker 的。第二道不能省——
-    // 端口方法返回 `false` 另有含义（线程「本来就在跟」、消息「没交回」），不能用它兼作身份判断。
-    // 运行期关闭时按「不是 worker 会话」处理：那时没有活着的工单，这句判断是准确的。
-    host: (sessionId) => {
-      const current = runtime
-      if (current === null) return null
-      try {
-        return current.commands().isWorkerSession(sessionId) ? current.workerCommands() : null
-      } catch {
-        return null
-      }
-    },
-  })) {
-    ctx.effect(
-      () => ctx.tools.register(tool),
-      `superagent: tools.register (${tool.name})`,
-    )
-  }
-  // 主会话不该看见这五个工具：worker 的目录由执行器自己按名字算（`adapters/executor.ts` 的
-  // `tools()` 走 `list()`，不过投影），所以这道投影只作用在用户会话上。不藏的话，
-  // 模型会在主会话里替某张工单「报进度 / 交回消息」——那条会话连 worker 都不是，只会撞一句报错。
-  // `superagent_read` 这类主会话工具不在名单里，不受影响。
-  ctx.effect(
-    () => ctx.tools.project('superagent.worker-only', (tools) => tools.filter((tool) => !WORKER_ONLY_TOOL_NAMES.includes(tool.name))),
-    'superagent: tools.project (worker-only)',
-  )
-
-  // ── 主会话的十二个工具（P1 / P2 / P6 / P7）──────────────────────────────────
-  // 读快照 / 路由候选 / 催状态 / 记事实 / 发回复（`main-tools.ts`）。它们只调运行期露出的
-  // 窄端口（`runtime.commands()`）：工具不碰库、不认识执行器，运行期没起来时端口是 null，
-  // 工具据此给一句「还没启动」，而不是抛一个 TypeError。
-  //
-  // 为什么不用 `ctx.tools.project` 把它们从 worker 里藏掉：worker 的工具表由执行器按白名单
-  // 自己挑（`adapters/executor.ts` 的 `tools()` 不过投影），这五条本来就不会出现在那里；
-  // 再投影一次只能作用在主会话上，反而会把它们从主会话里藏掉。
-  // 兜底另有一条：每个工具 `run` 开头都问一次 `isWorkerSession`。
-  for (const tool of createMainTools({ host: () => runtime?.commands() ?? null })) {
-    ctx.effect(
-      () => ctx.tools.register(tool),
-      `superagent: tools.register (${tool.name})`,
-    )
-  }
-
-  // ── 体检项：登记进 doctor 的 health 表 ──────────────────────────────────────
-  // doctor 的 pneuma.order 是 3450，早于本插件的 3800，所以 apply 时它已经 provide 了
-  // `health`。doctor 没开（或将来被换掉）时 `ctx.get` 给 undefined，少一项体检而已。
-  const health = ctx.get('health') as HealthService | undefined
-  if (health !== undefined) {
-    const offHealth = health.register(createSuperagentHealth({
-      store: () => store,
-      running: () => runtime?.runningStats() ?? { total: 0, orphaned: 0 },
-    }))
-    ctx.effect(() => offHealth, 'superagent: health.register (orchestrator)')
-    // 飞书那一项单独登记：两项各自有开关与生命周期，合成一条会让一项失败拖掉另一项的读数。
-    const offFeishuHealth = health.register(createFeishuHealth({
-      status: () => feishu?.source.status() ?? null,
-    }))
-    ctx.effect(() => offFeishuHealth, 'superagent: health.register (feishu)')
-    // 机器依赖那一项：git 与 lark-cli 在不在。只读设置、起两个 --version 子进程，缺了只报
-    // warn（见 `health.ts`），不影响插件启动。lark-cli 的默认名从适配器拿，别在这里再写一遍。
-    const offDependenciesHealth = health.register(createDependenciesHealth({
-      larkCli: () => config().feishuCli || DEFAULT_FEISHU_CLI,
-    }))
-    ctx.effect(() => offDependenciesHealth, 'superagent: health.register (dependencies)')
-    // 队友能力那一项：subagent 插件启没启用（它默认关，不启用时收队友静默短路）。
-    const offTeammatesHealth = health.register(createTeammatesHealth())
-    ctx.effect(() => offTeammatesHealth, 'superagent: health.register (teammates)')
-  }
-
+  const runtime = new Runtime(ctx, machine, restart)
+  // 关闭时先停运行期（收会话、关库、放锁）；`stop()` 幂等，重复调用共用同一个 shutdown。
+  ctx.effect(() => async () => { await runtime.stop() }, 'superagent: runtime.stop')
+  // 两个来源在运行期建好之后起来：它们各自的循环先 `await ctx.ready`，setup 没过就先报暂停。
+  // 停止信号用运行期的 `lifetime`：插件停用或运行期关闭都会 abort，循环在秒级内退出。
+  ctx.effect(() => startGithub(runtime, runtime.lifetime), 'superagent: sources.startGithub')
+  ctx.effect(() => startFeishu(runtime, runtime.lifetime), 'superagent: sources.startFeishu')
+  // 面板 RPC：`packages/runtime` 的 superagentPublish 等八条转发到 `ctx.get('superagent')`
+  // （契约 `SuperagentService`）。服务只读运行期的公开成员与视图投影，不碰库的写路径。
+  const api = createApi(runtime)
+  ctx.provide('superagent', api)
+  // 快照面：界面每帧调 `api.surface()`；`ctx.effect` 包住登记，停用插件即摘掉这一格。
+  ctx.effect(() => ctx.surfaces.register('superagent', () => api.surface()), 'superagent: surfaces.register')
+  // 快照失效桥：新树的编排会话是本进程里自己造的 MiniAgent，回合事件不经过 DSC 的会话服务，
+  // 宿主收不到 `dsc/changed`。面板读的是快照，没有这条桥只能在别的插件碰巧发事件时重画。
+  // 旧入口的 `service.tick`（`index.legacy.ts:1396-1419`）就是这件事；这里只留「可见面变了就发」，
+  // 真正的泵（到期 Eval、派工、出站）由新树 `Passes` 自己每 2 秒跑（`app/passes.ts:38`）。
   ctx.effect(() => {
-    const offCommands = registerCommands(ctx, ensure)
+    let last = api.pulse()
     const timer = setInterval(() => {
-      // 泵不触发懒建（见文件头）；运行期建好后它负责兜底：超时取消、到期 Eval、
-      // 待判定候选，并在工单阶段变了时推一次快照（`service.tick`，见 `service.ts`）。
-      if (runtime === null) return
-      try {
-        service.tick()
-      } catch (error) {
-        // 单拍失败只记日志，不中断下一拍（§5.4「泵任务抛错：记日志，不中断下一轮」）。
-        console.warn(`[superagent] 泵失败：${errorText(error)}`)
-      }
-      // 两个来源各自 try/catch：飞书读失败不该把 GitHub 那一拍一起吃掉，反之亦然。
-      try {
-        // GitHub 轮询挂在泵上（不自带定时器）：时间到了、上一拍也没在飞才发。
-        pollGithub()
-      } catch (error) {
-        console.warn(`[superagent] GitHub 轮询失败：${errorText(error)}`)
-      }
-      try {
-        pollFeishu()
-      } catch (error) {
-        console.warn(`[superagent] 飞书轮询失败：${errorText(error)}`)
-      }
-    }, PUMP_INTERVAL_MS)
-    // 每天清一次会话目录。启动那次已经在 `ensure` 里跑过；这里只接「长期开着」的那一段。
-    const sweeper = setInterval(() => {
-      if (runtime === null) return
-      try {
-        runtime.sweep()
-      } catch (error) {
-        console.warn(`[superagent] 会话清理失败：${errorText(error)}`)
-      }
-    }, SWEEP_INTERVAL_MS)
-    return () => {
-      clearInterval(timer)
-      clearInterval(sweeper)
-      offCommands()
-      // 飞书先停：`stop()` 关长连接、关 stdin 并杀子进程。漏了这一步就是「停用插件后还挂着
-      // 进程收消息」，设计文档 §1.1 明确禁止。顺序放在运行期与库之前：循环还在跑时库必须
-      // 还在，否则它最后一次回写游标会打在已关闭的连接上。
-      feishu?.source.stop()
-      feishu = null
-      // 来源先丢：它持有 HTTP 客户端与运行期的桥，留着只会在停用后继续发请求。
-      github = null
-      // 先关运行期（它只释放自己的队列），再关库（库归本文件所有）。
-      runtime?.close()
-      runtime = null
-      store?.close()
-      store = null
-    }
-  }, 'superagent: commands + pump + sweep + runtime')
+      const next = api.pulse()
+      if (next === last) return
+      last = next
+      ctx.emit('dsc/changed')
+    }, SURFACE_PULSE_MS)
+    return () => { clearInterval(timer) }
+  }, 'superagent: surface.changed')
+  await runtime.ready
+  // ── DSC 专有宿主接线（W9-2）：设置分区、/sa 命令、doctor 四项体检 ─────────────
+  // 都放在运行期就绪之后：设置分区读的是运行期里的设置块与来源注册表，命令与体检用的也是
+  // 同一个运行期。登记一律包在 `ctx.effect` 里，停用插件时由 cordis 统一摘掉。
+  ctx.effect(() => ctx.settings.registerSection(createSettingsSection(runtime)), 'superagent: settings.registerSection')
+  ctx.effect(() => registerSaCommand(ctx, api), 'superagent: commands.register')
+  // doctor 的 pneuma.order 早于本插件，启动到这里它已经 provide 了 `health`；doctor 没开
+  // （或将来被换掉）时 `ctx.get` 给 undefined，少四项体检而已。
+  const health = ctx.get('health')
+  if (health !== undefined) {
+    ctx.effect(() => health.register(createSuperagentHealth(runtime)), 'superagent: health.register (orchestrator)')
+    ctx.effect(() => health.register(createFeishuHealth(runtime)), 'superagent: health.register (feishu)')
+    ctx.effect(() => health.register(createDependenciesHealth(runtime)), 'superagent: health.register (dependencies)')
+    ctx.effect(() => health.register(createTeammatesHealth()), 'superagent: health.register (teammates)')
+  }
+  ctx.logger.info(runtime.configured()
+    ? 'superagent ready; the Super Agent panel opens the ticket board'
+    : `superagent is waiting for setup: ${runtime.setupProblem?.detail ?? ''}`)
 }

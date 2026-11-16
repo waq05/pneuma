@@ -7,22 +7,36 @@
  *
  * | 上游（DSH） | 本仓原生 |
  * | --- | --- |
- * | `ctx.get('jobs')`：`list(caller)` / `wait(id, ms, caller, signal)` / `kill(id, caller, reason)` / `events.subscribe` | `ctx.jobs`（`services/types.ts:601-616`）：`list(owner?)` / `running(owner)` / `wait(id, ms, signal)` / `kill(id)`。**没有事件订阅**，所以 `jobsEnd` 用 `wait` 等「最先结束的那个」再复查，语义与上游订阅 `settled`/`removed` 等价（都是「再没有仍在跑的作业」），实现见下 |
+ * | `ctx.get('jobs')`：`list(caller)` / `wait(id, ms, caller, signal)` / `kill(id, caller, reason)` / `events.subscribe` | `ctx.jobs`（`services/types.ts:601-616`）：`list(owner?)` / `running(owner)` / `wait(id, ms, signal)` / `kill(id)`。**没有事件订阅**，所以 `jobsEnd` 给在跑的每一条都挂上 `wait`、取最先结束的那条再整表复查（等价于上游订阅 `settled`/`removed` 的「任一结束就复查」），实现见下 |
  * | `ctx.get('subagents')`：`waitForChildren` / `listChildren` / `drainChildren` | `ctx.team`（`services/types.ts:1026-1064`，subagent 插件提供）：`list()` 的 `TeammateView` 带 `sessionId` 与 `state`（`contract/plugin.ts:113-143`），`stopBySession(sessionId)` 收掉一个会话派出的全部队友。原生没有「等某个队友结束」的等待口，`childrenEnd` 用 250ms 轮询（与旧实现等作业的轮询同一取舍：等的人只有执行器一个，不值得给 subagent 加一套广播） |
  * | `type { Agent } from '@deepseek-ai/dsh-agent'` | worker 会话句柄由 `app/sessions.ts` 定义，这里用 `Awaited<ReturnType<Sessions['ensure']>>` 取，不重声明（同上游从 dsh-agent 取类型） |
  * | `type { SessionId } from '@deepseek-ai/dsh-session'` | 本仓会话 id 就是 `string`（`core/session.ts:26` 的 `SessionMeta.id`） |
  * | 作业的 `label`（首行做名字） | 本仓 `JobView` 只有 `command`（`services/types.ts:579-588`），`named` 取命令首行 |
  * | `kill(id, caller, reason)` | 本仓 `kill(id)` 不收 reason（`services/types.ts:615`）；`reason` 仍用于失败时的 `AggregateError` 文案 |
  *
- * 与上游的三处行为差异，都是「DSH 替我们做过、本仓没有」的那一步：
+ * 与上游的五条行为差异，头三条是「DSH 替我们做过、本仓没有」的那一步，后两条是本仓没有对应状态：
  *
  * 1. **`stopBackground` 多收一个 worker 句柄**（第五参）。上游用 `ctx.agents.get(sessionId)` 现查；
  *    本仓没有全局 agent 注册表（worker 的 `MiniAgent` 归 `app/sessions.ts` 管），由调用方
  *    （`dsh.ts`，手上有 `host.sessions`）把句柄传进来。传 `undefined` 等价于上游查不到会话。
  * 2. **`childrenEnd` 改为轮询**（理由见上表）。上游 `waitForChildren` 不可取消、所以用 `joins`
  *    去重；本仓的轮询可取消，没有并发叠加的问题，`joins` 随之删除。
- * 3. **`jobsEnd` 用 `wait` 代替事件订阅**（理由见上表）：等最先结束的那个作业再复查，直到没有
- *    仍在跑的作业；`signal` 中止或作业表清空时返回 false。上游订阅 `settled`/`removed`。
+ * 3. **`jobsEnd` 用 `wait` 代替事件订阅**（理由见上表）：对每条在跑的作业都挂 `wait`，哪条先结束就醒过来
+ *    再复查全部，直到没有仍在跑的作业；`signal` 中止或作业表清空时返回 false。上游订阅 `settled`/`removed`，
+ *    任一作业结束都复查；只等第一条会漏掉「别的作业先结束」，那一轮最坏要等到它自己的 10 分钟超时。
+ * 4. **`running` 只认 `'running'`**：上游 `:31` 把 `'stopping'` 也算在跑。本仓 `JobView.status` 是
+ *    `'running' | 'completed' | 'failed' | 'killed'`（`services/types.ts:583`），没有 `stopping`——`kill` 一步
+ *    就把作业记成 `killed`（`tools-default/bash.ts:820-823`），没有「正在收但还没收完」的中间态可补。
+ * 5. **`stopSubagents` 的「活队友」判据换成状态**：上游 `:145` 用 `subagents.listChildren(agent.id)` 拿到
+ *    该会话的全部子智能体，再用 `ctx.agents.get(child.id)` 筛出「DSH 注册表里还有 agent」的那些——结束的
+ *    子智能体（one-shot 收工/被移除）已从注册表摘掉，catalog 只剩一行。本仓 `TeamService.list()` 没有
+ *    「本进程还持有 agent」这一项（`subagent/index.ts:963-990` 把内存里在队的与名册里收工的合并成
+ *    `state`），所以判据取**非终态** `working | idle`（终态 `stopped | failed`，`subagent/index.ts:131`、
+ *    `contract/plugin.ts:113-143`）。判据与动作的偏差写在这里：`stopBySession` 只遍历内存里的队友
+ *    （`subagent/index.ts:1028-1040`），而名册里上一进程留下的 continuable 队友也报 `idle`，会被判成活队友
+ *    却收不到——于是多取消一次 worker 回合。取舍取**宁可多取消一次**：漏掉真正 idle 的队友会留到工单
+ *    结束后继续接传话，而多取消的 worker 回合在下一次 idle 会重新判（`dsh.ts` 的 `cancelled` 把这次 idle
+ *    记作停工、不当作它自己的回合结束）。
  *
  * @module dsc/packages/superagent/executor/background
  */
@@ -76,6 +90,13 @@ export const runningJobs = (ctx: Context, sessionId: string, except?: ReadonlySe
 /** How many teammates of `sessionId` still work (the native look at a worker's subagents). */
 const workingChildren = (subagents: Subagents, sessionId: string): number =>
   subagents.list().filter(child => child.sessionId === sessionId && child.state === 'working').length
+/**
+ * How many teammates of `sessionId` are not in a terminal state: `working` runs, `idle` waits for a follow-up, while
+ * `stopped`/`failed` ended (`subagent/index.ts:131`). The stop of a worker's subagents needs this, not just `working`
+ * (see the file header's item 5).
+ */
+const liveChildren = (subagents: Subagents, sessionId: string): number =>
+  subagents.list().filter(child => child.sessionId === sessionId && (child.state === 'working' || child.state === 'idle')).length
 
 /**
  * Wait until no shell job the Session owns runs; false at once when none ran, or when `signal` aborts first. The wait is
@@ -91,9 +112,12 @@ async function jobsEnd(ctx: Context, sessionId: string, signal: AbortSignal, exc
     if (!live.length) return ran
     if (signal.aborted) return false
     ran = true
-    // No event subscription in the native job table: wait on the first live job, then look again. A wait that ends with
-    // the job still running (its timeout) is followed by the next; the look itself ends only when `signal` does.
-    await jobs.wait(live[0]!.id, COLLECT_WAIT_MS, signal)
+    // 本仓作业表没有事件订阅：下一次复查的时机是「任一作业结束」。这一轮给每条在跑的作业都挂 `wait`，
+    // 谁先结束就拿谁回来，再整表复查；本轮没用上的等待随 `round` 一起中止，不会把旧等待堆到下一轮。
+    const round = new AbortController()
+    try {
+      await until(Promise.race(live.map(job => jobs.wait(job.id, COLLECT_WAIT_MS, AbortSignal.any([signal, round.signal])))), signal)
+    } finally { round.abort() }
   }
 }
 /**
@@ -174,8 +198,9 @@ export async function collectJob(ctx: Context, sessionId: string, job: { id: str
 export async function stopSubagents(ctx: Context, agent: BackgroundAgent, keepInbox = false): Promise<void> {
   const subagents = subagentsOf(ctx)
   if (!subagents) return
-  const live = subagents.list().filter(child => child.sessionId === agent.id && child.state === 'working')
-  if (!live.length) return
+  // 上游 `:145` 筛的是「DSH 注册表里还有 agent」的子智能体（结束的已摘掉），不是只看 `working`；本仓的等价判据是
+  // `TeamService.list()` 里的非终态 `working | idle`（判据与动作的偏差见文件头第 5 条）。
+  if (!liveChildren(subagents, agent.id)) return
   try { await until(subagents.stopBySession(agent.id), undefined, DRAIN_LIMIT_MS) }
   finally {
     if (agent.status !== 'idle') cancelled.add(agent)

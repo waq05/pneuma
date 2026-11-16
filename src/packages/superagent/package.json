@@ -11,6 +11,10 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
+    "./sources/*.js": {
+      "types": "./sources/*.d.ts",
+      "default": "./sources/*.js"
+    },
     "./locale/*.json": "./locale/*.json",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -31,7 +35,6 @@
     "executor/**",
     "infra/**",
     "sources/**",
-    "adapters/**",
     "cordis.patch.yml",
     "locale/**",
     "prompts/**",

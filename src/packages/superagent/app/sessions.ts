@@ -18,11 +18,14 @@
  * 3. **preset**：本仓没有 DSH 的 agent preset 注册表（工具目录由全局注册表 + 投影决定）。角色在
  *    `ensure` 时定下，`WORKER_PRESET` / `ROUTER_PRESET` 作为可观测的落账写进会话日志的 note；
  *    `routed()` 读这条 note，读不到时按角色兜底（上游读投影，读不到按 `standard` 兜底，同一取舍）。
+ *    角色模型 `initializeRoleModel` 每次 `ensure` 都调（上游同一行），它在会话已有消息或已有模型状态时
+ *    早退（`role-models.ts:57-61`），所以复用分支重种不会盖掉用户之后手选的模型。
  * 4. **装饰落点**：上游在 agent 的 `systemPrompt.section` / `tools.register` / `restrict` /
  *    `guard` / skill scope 上登记。本仓这些能力都在 `MiniAgent` 的 `AgentDeps` 闭包里：
  *    系统提示 = `systemPrompt()`、工具目录 = `tools()`、守卫 = `guards()`、技能 = 插件级
  *    `ctx.skills.registerProvider`（按当前修订现读，不再按 agent 作用域绑定，故上游的
- *    `bindSkills` 取消）。因此 `decorate` 只做「记账 + 把会话登记进内核会话表」。
+ *    `bindSkills` 取消）。因此 `decorate` 只做「记账 + 把会话登记进内核会话表」，且只在首次
+ *    `ensure` 时登记一次（复用分支不重跑；上游的 decorate 来自 `agent/created`，同样只发生一次）。
  * 5. **`install()`**：上游订阅 `agent/created`/`agent/disposed`/`session/event`/`agent/status`/
  *    `agent-preset/selected` 五路事件。本仓的会话都是本模块自己造的，事件经 `AgentDeps.emit`
  *    直接到手，没有「别人的 agent 被创建」这回事；`routed()` 也不依赖 preset 投影。剩下的
@@ -32,9 +35,14 @@
  * 7. **模型重试账**：`RetryHealth` 是逐字移植的（它要 `{ type, seq, time, data }` 事件）。
  *    本仓 `CoreEvent` 没有序号，`observeRetry` 按会话自己数 turn/step 再合成同样形状的事件；
  *    `restore()` 无法做——本仓会话日志里没有事件序号快照，重启后重试状态从零开始（上游能回放）。
- * 8. **权限**：上游 `permissionPresets.set(..., 'danger-full-access')`；本仓用
- *    `writePermissions(session, { sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'user' })`。
- * 9. **rename**：上游改 DSH 会话标题；本仓写会话 sidecar（`patchSessionMeta`），不碰 append-only 日志。
+ * 8. **权限**：上游 `permissionPresets.set(..., 'danger-full-access')` 每次 `ensure` 都重设；本仓用
+ *    `writePermissions(session, { sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'user' })`，
+ *    同样每次 `ensure` 都调（含复用分支）——它逐字段比对，值没变就返回 false、不追加 state
+ *    （`permission-scope.ts:98-109`），所以复用不会让会话日志长胖。
+ * 9. **rename**：上游每次 `ensure` 都改 DSH 会话标题；本仓用 `patchSessionMeta` 写会话 sidecar，不碰
+ *    append-only 日志，复用分支也写（标题变了才看得出差别；`patchSessionMeta` 会整表重写，
+ *    `ensure` 只在派发 Assignment / 启动主会话时调，频率可接受）。
+
  * 10. **`host.tools`**：上游返回待注册的 `Tool` 定义（DSH 按 agent 注册）。本仓工具是全局注册表，
  *     模型看到的目录按会话挑，所以 host 直接给 `ToolEntry[]`（含 risk，守卫链要用）。
  *
@@ -111,7 +119,7 @@ export interface SessionHandle {
   cancel(options?: { kind: 'user'; keepInbox?: boolean }): void
   /** 投一条消息（下一轮出账）。 */
   followup(text: string): void
-  /** 最后一条非空 assistant 正文（替代上游 `session.snapshotEvents()` 里的 assistant/message）。 */
+  /** 最后一条 assistant 消息的正文（多个 text 块 '\n' 拼、整体 trim，可能是空串；替代上游 `session.snapshotEvents()` 里的 assistant/message，见 `dsh.ts:659-662`）。 */
   lastAssistantText(): string
 }
 
@@ -179,11 +187,11 @@ function effortOf(value: string | undefined): EffortLevel {
   }
 }
 
-/** 取一条 assistant 消息的正文（本仓 content 可能是字符串或多模态数组）。 */
+/** 取一条 assistant 消息的正文（本仓 content 可能是字符串或多模态数组）：多个 text 块用 '\n' 拼，对齐上游 `dsh.ts:661` 的 join。 */
 function textOf(message: { content: string | null | readonly { type: string; text?: string }[] }): string {
   if (typeof message.content === 'string') return message.content
   if (message.content === null) return ''
-  return message.content.flatMap(part => part.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('')
+  return message.content.flatMap(part => part.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('\n')
 }
 
 /**
@@ -229,12 +237,15 @@ class BoundSession implements SessionHandle {
 
   followup(text: string): void { this.agent.followup(text) }
 
+  /**
+   * 最后一条 assistant 消息的正文，对齐上游 `dsh.ts:659-662`：只取最后一条，多个 text 块用 '\n' 拼、整体
+   * `trim()`；最后一条是纯空白就返回 ''，不跳过它、也不回退到更早的 assistant 消息；没有 assistant 消息也返回 ''。
+   */
   lastAssistantText(): string {
     for (let index = this.session.messages.length - 1; index >= 0; index -= 1) {
       const message = this.session.messages[index]
       if (message === undefined || message.role !== 'assistant') continue
-      const text = textOf(message)
-      if (text.trim() !== '') return text
+      return textOf(message).trim()
     }
     return ''
   }
@@ -298,8 +309,20 @@ export class Sessions {
 
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/tools, sets `danger-full-access` permissions, and renames it to `title`. */
   async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker'): Promise<SessionHandle> {
+    const settings = this.host.store.settings()
+    const model = role === 'orchestrator' ? settings.eval.model : settings.executor.model
     const existing = this.handles.get(id)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      // 上游 `ensure` 对已有会话也重跑角色模型、权限预设与改名（`app/sessions.ts:137-155`）；本仓复用分支同样跑，
+      // 三步都幂等：`initializeRoleModel` 在会话已有消息或模型状态时早退（`role-models.ts:57-61`），
+      // `writePermissions` 值没变就返回 false、不追加 state（`permission-scope.ts:98-109`），`rename` 只写 sidecar。
+      // 装饰不在复用分支重跑：它只在首次登记时记 preset、登记内核会话表（`decorate` 的 binding 早退，见文件头第 3、8、9 条）。
+      this.ensureSkillsProvider()
+      await initializeRoleModel(existing.session, model)
+      writePermissions(existing.session, { sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'user' })
+      this.rename(id, title)
+      return existing
+    }
     if (this.llm() === undefined) throw new Error('宿主没有 llm 服务，dsh-superagent 起不了会话')
     this.ensureSkillsProvider()
     const session = this.openSession(id, cwd)
@@ -307,17 +330,22 @@ export class Sessions {
     // deps 的闭包要拿到句柄，句柄的 agent 又要 deps：先造句柄、再填 agent（与上游 create → decorate 同一顺序）。
     handle.agent = new MiniAgent(this.depsFor(handle), session)
     this.handles.set(id, handle)
-    const settings = this.host.store.settings()
-    await initializeRoleModel(session, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
+    await initializeRoleModel(session, model)
     this.decorate(handle)
     // 权限在第一次请求前钉死：本插件的会话跑在自己的信任边界内（上游 permissionPresets 的同一取舍）。
     writePermissions(session, { sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'user' })
-    if (title.trim() !== '') {
-      try { patchSessionMeta(id, { title }) } catch (error) {
-        this.warn('dsh-superagent could not rename session %s: %s', id, String(error))
-      }
-    }
+    this.rename(id, title)
     return handle
+  }
+
+  /** 写会话标题（上游 `sessionController.rename` 的等价口）：空标题不改，写不进去只告警，不拦会话（见文件头第 9 条）。 */
+  private rename(id: string, title: string): void {
+    if (title.trim() === '') return
+    try {
+      patchSessionMeta(id, { title })
+    } catch (error) {
+      this.warn('dsh-superagent could not rename session %s: %s', id, String(error))
+    }
   }
 
   /** Returns whether `sessionId` already holds the message delivered under `requestId`, or `false` if the session does not exist. */

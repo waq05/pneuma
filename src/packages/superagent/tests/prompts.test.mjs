@@ -1,43 +1,25 @@
 /**
- * P6 的包级测试：worker 提示词从「一篇固定文件」改成「两卷可覆盖 + 主会话可存」。
+ * 提示词与上下文的包级测试：测移植版 `app/prompts.ts` + `app/context.ts`，转写自上游
+ * `tests/prompts.spec.ts`（18 条用例）。钉的是：团队段存成版本可回滚、每个角色的固定段顺序、
+ * 提示词文件换行归一、覆盖按角色原位替换、生成段模板填充、非法覆盖被拒、内置文本变更提示、
+ * 旧配置兼容与已删段的处理、原型链名字被拒、执行环境收尾。改坏任何一条的后果都是
+ * 「团队改过的文案悄悄丢」或「升级把覆盖冲掉」这类静默错误。
  *
- * 七组用例，每组钉一件会「悄悄坏掉」的事：
- *   1. 默认两卷的来源都是 `default`，拼起来含工单占位符段与报告工具说明；
- *   2. 六个占位符都替换掉，正文里不留 `{{`；
- *   3. 在临时 `DSC_HOME` 里放一卷覆盖文件：那一卷来源变 `override`、文本就是写进去的，
- *      另一卷仍是 `default`；
- *   4. 包内文件读不到时两卷来源变 `fallback`，且兜底常量与源码树里的两卷 md 逐字一致
- *      （两层都测：兜底路径真的走通、常量与 md 真的没漂移）；
- *   5. `superagent_prompts_save` 正常写时文件真落盘、返回的 path 对；role 不认识 / text 空 /
- *      超 20000 字三种被拒且不落盘；
- *   6. `superagent_read` 的 `prompts` 资源两卷都在、`source` 字段对；
- *   7. worker 会话里调 `superagent_prompts_save` 被拒（主会话身份闸）。
- *
- * 第 5、6 组用真运行期（临时库 + 假执行器）：要证的是「工具 → 运行期 → 磁盘」这条链真的
- * 通，而不是假端口上的一次字符串比较。这里 import 的是 `lib/` 的构建产物，跑之前先
- * `pnpm run build`；`DSC_HOME` 指到 `tmpdir()` 下的临时目录，绝不碰用户真实的 `~/.dsc`。
+ * 全程用临时目录与显式库路径，绝不碰 `~/.dsc`。
+ * 这里 import 的是 `lib/` 的构建产物，跑之前先 `pnpm run build`。
  *
  * @module @pneuma/superagent/tests/prompts
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { after, test } from 'node:test'
-
-const home = mkdtempSync(join(tmpdir(), 'superagent-prompts-home-'))
-process.env['DSC_HOME'] = home
-
-const { buildWorkerPrompt, loadPromptVolumes } = await import('../../../../lib/packages/superagent/adapters/executor.js')
-const { openStore } = await import('../../../../lib/packages/superagent/adapters/store.js')
-const { SuperagentRuntime } = await import('../../../../lib/packages/superagent/runtime.js')
-const { createMainTools } = await import('../../../../lib/packages/superagent/main-tools.js')
 
 /** 通过数：`package-tests.mjs` 只从最后一行「通过 N」里读断言数。 */
 let passed = 0
 
 after(() => {
-  rmSync(home, { recursive: true, force: true })
   console.log(`通过 ${passed}`)
 })
 
@@ -59,215 +41,314 @@ function deepEqual(actual, expected, message) {
   passed += 1
 }
 
-/** 异步拒绝：工具都是 async 的，抛错会变成 rejected promise。 */
-async function rejects(promise, pattern, message) {
-  await assert.rejects(promise, pattern, message)
+const { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, promptParts } =
+  await import('../../../../lib/packages/superagent/app/prompts.js')
+const { guides, handoffPolicy, mainAdmissionPolicy, masterPrompt, sharedPrompt, workerPrompt } =
+  await import('../../../../lib/packages/superagent/app/context.js')
+const { promptFile } = await import('../../../../lib/packages/superagent/app/skill-files.js')
+const { Store } = await import('../../../../lib/packages/superagent/app/store.js')
+const { KV } = await import('../../../../lib/packages/superagent/kv.js')
+const { SettingsSchema, policyVersion } = await import('../../../../lib/packages/superagent/core/policy.js')
+const { USER_ERRORS, UserError } = await import('../../../../lib/packages/superagent/core/index.js')
+
+/** 执行环境（工单之外，setup 完成之后运行期传的那一份）。 */
+const variables = () => [{ key: 'DSH_SUPERAGENT_GITHUB_REPOSITORY', value: 'acme/widgets',
+  description: { zh: '仓库', en: 'The repository' }, owner: 'github' }]
+const ENVIRONMENT_LINE = '- DSH_SUPERAGENT_GITHUB_REPOSITORY = "acme/widgets": The repository.'
+/** 一套提示词服务：真 Store、固定执行环境、飞书已配置。 */
+const promptsOf = (store, maxChars = 100000) => new Prompts(store, () => maxChars, variables, () => true)
+
+/** 一个临时 Store；`body` 回来之后关库删目录。 */
+function withStore(body) {
+  const dir = mkdtempSync(join(tmpdir(), 'superagent-prompts-app-'))
+  const store = new Store(join(dir, 'db'))
+  try { body(store, dir) } finally { store.close(); rmSync(dir, { recursive: true, force: true }) }
+}
+
+/** `toMatchObject` 的等价物：只比写出的键，数组等长逐项匹配。 */
+function matches(actual, expected) {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual) && actual.length === expected.length && expected.every((item, index) => matches(actual[index], item))
+  }
+  if (expected && typeof expected === 'object') {
+    if (!actual || typeof actual !== 'object') return false
+    return Object.entries(expected).every(([name, value]) => name in actual && matches(actual[name], value))
+  }
+  return Object.is(actual, expected)
+}
+
+/** 记一条部分匹配。 */
+function matched(actual, expected, message) {
+  assert.ok(matches(actual, expected), message)
   passed += 1
 }
 
-/** 固定时钟：断言不依赖「跑得快慢」。 */
-const AT = '2026-01-01T00:00:00.000Z'
-
-/** 主会话 id；工具只拿它问 `isWorkerSession`。 */
-const MAIN_SESSION = 'session-main'
-
-/** 一次工具调用的上下文（`ToolContext` 里工具真用到的几项）。 */
-function ctxOf(sessionId = MAIN_SESSION) {
-  return { cwd: '.', sessionId, sessionPath: '', signal: new AbortController().signal }
+/** 记一条同步抛出（正则或校验函数）。 */
+function throws(work, check, message) {
+  assert.throws(work, check, message)
+  passed += 1
 }
 
-/** 一份固定的工单事实：占位符断言全按它算。 */
-const INPUT = {
-  title: '改登录页文案',
-  body: '把「登录」按钮改成「进入」',
-  branch: 'agent/fix-login-8f9a1c69',
-  repo: join(tmpdir(), 'repo'),
-  dir: join(tmpdir(), 'worktrees', 'fix-login-8f9a1c69'),
-  blockedCommands: ['pnpm publish', 'git push'],
+/** 记一条「按 UserError 的 code 拒绝」。 */
+function throwsUserError(work, code, message) {
+  let thrown
+  try { work() } catch (error) { thrown = error }
+  assert.ok(thrown instanceof UserError, message ?? `应以 UserError 拒绝，实际：${String(thrown)}`)
+  assert.equal(thrown.code, code, message)
+  passed += 1
 }
 
-/** 六个占位符换完之后应该出现的那六段值。 */
-const PLACEHOLDER_VALUES = [
-  INPUT.title,
-  INPUT.body,
-  INPUT.branch,
-  INPUT.repo,
-  INPUT.dir,
-  'pnpm publish、git push',
-]
-
-/** 源码树里的 md 正文：文件头注释剥掉、首尾空白去掉（与运行时读法同口径）。 */
-function bodyOf(file) {
-  return readFileSync(new URL(file, import.meta.url), 'utf8')
-    .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
-    .trim()
-}
-
-/** 临时换一个 `DSC_HOME`，跑完无论成败都换回来：覆盖相关的用例各自要一个干净的根。 */
-async function withHome(work) {
-  const previous = process.env['DSC_HOME']
-  const root = mkdtempSync(join(tmpdir(), 'superagent-prompts-run-'))
-  process.env['DSC_HOME'] = root
+test('团队段与技能存成版本，重启后仍在，带历史与回滚', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'superagent-prompt-config-'))
+  let store = new Store(join(dir, 'db'))
   try {
-    return await work(root)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-    if (previous === undefined) delete process.env['DSC_HOME']
-    else process.env['DSC_HOME'] = previous
-  }
-}
-
-/**
- * 装一套真运行期跑完 `work`，结束时按「运行期 → 库」的顺序收尾。
- *
- * 注入假执行器：工具链路的用例不派工、不建会话，`commands()` 里的提示词读写已经够真。
- */
-async function withRuntime(work) {
-  const store = openStore()
-  const runtime = new SuperagentRuntime(store, {
-    now: () => AT,
-    log: () => {},
-    executor: { start() {}, deliver() {}, stop() {} },
-  })
-  try {
-    return await work(runtime)
-  } finally {
-    runtime.close()
+    let prompts = promptsOf(store)
+    deepEqual(prompts.current().config, defaultPrompts(), '没存过时用出厂配置')
+    const config = { ...defaultPrompts(), scope: 'Finish what was asked.', delivery: '', skills: { release: 'Tag releases on Fridays.' } }
+    prompts.save(config, 0, 'panel')
+    ok(composePrompt(prompts.current().config, 'worker').includes('## Ticket scope\nFinish what was asked.'), '团队段进提示词')
+    // 空的团队段离开提示词；固定段留着。
+    ok(!promptParts(config, 'worker').map(part => part.name).includes('delivery'), '空段不占位')
+    deepEqual(store.get('settings-revision'), undefined, '提示词版本不碰设置版本号')
     store.close()
+    store = new Store(join(dir, 'db'))
+    prompts = promptsOf(store)
+    matched(prompts.current(), { revision: 1, config }, '重启后仍在')
+    prompts.save(prompts.version(0).config, 1, 'tool')
+    matched(prompts.current(), { revision: 2, previousRevision: 1, config: defaultPrompts() }, '回滚成出厂配置')
+    matched(prompts.history(0, 1), { revisions: [{ revision: 2 }], next_offset: 1 })
+    equal(prompts.history(2, 1).next_offset, null)
+    matched(prompts.history(1, 1).revisions[0], { revision: 1, changed: ['scope', 'delivery', 'skill/release'] })
+    throws(() => prompts.save(config, 1, 'panel'), /version changed/, '拿旧版本号保存要拒')
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
   }
-}
-
-/** 按名字建工具索引；`host` 每次现取，与 `index.ts` 的注册方式同形。 */
-function toolsOf(host) {
-  return new Map(createMainTools({ host: () => host }).map((tool) => [tool.name, tool]))
-}
-
-test('默认两卷：来源都是 default，拼起来含工单占位符段与报告工具说明', () => {
-  const volumes = loadPromptVolumes()
-  equal(volumes.shared.role, 'shared')
-  equal(volumes.shared.source, 'default', '没存过覆盖文件时共用约定卷来自包内 md')
-  equal(volumes.worker.role, 'worker')
-  equal(volumes.worker.source, 'default', '没存过覆盖文件时执行者卷来自包内 md')
-  ok(volumes.shared.text.includes('<工单>') && volumes.shared.text.includes('{{title}}'), '共用约定卷带工单占位符段')
-  ok(volumes.worker.text.includes('<报告状态>'), '执行者卷带报告状态段')
-  ok(volumes.worker.text.includes('superagent_report') && volumes.worker.text.includes('superagent_ack'), '报告工具说明在执行者卷')
-
-  const prompt = buildWorkerPrompt(INPUT)
-  ok(prompt.text.startsWith('你是超级智能体的执行者'), '拼起来的正文从共用约定卷第一句开始')
-  ok(prompt.text.includes('<交付要求>') && prompt.text.includes('<报告状态>'), '两卷的内容都在最终提示词里')
-  ok(
-    prompt.text.indexOf('<交付要求>') < prompt.text.indexOf('<报告状态>'),
-    '共用约定在前、执行者在后（顺序反了，工具说明会落在「交付要求」前面）',
-  )
-  deepEqual(prompt.sections.map((section) => section.id), ['superagent-shared', 'superagent-worker'], '两卷各一段')
-  equal(prompt.sections[0].chars + prompt.sections[1].chars + 2, prompt.text.length, '两段字数 + 一个空行 = 正文长度')
 })
 
-test('占位符替换：六个都换掉，正文不留 {{', () => {
-  const text = buildWorkerPrompt(INPUT).text
-  for (const value of PLACEHOLDER_VALUES) {
-    ok(text.includes(value), `占位符要换成实际值：${value}`)
+test('每个角色的提示词都由固定段围着团队段拼成，配置说什么都不改顺序', () => {
+  const config = { communication: 'Say little.', scope: '', delivery: 'Attach screenshots.', skills: {} }
+  for (const role of ['orchestrator', 'worker']) {
+    const names = promptParts(config, role, 'env').map(part => part.name)
+    deepEqual(names, ['runtime/shared', `runtime/${role}`, 'communication', 'delivery', 'runtime/subscriptions', 'runtime/replies',
+      role === 'orchestrator' ? 'runtime/dispatch' : 'runtime/work', ...role === 'orchestrator' ? ['runtime/admission'] : [],
+      'runtime/handoff', 'runtime/environment'], `${role} 的段顺序`)
+    const prompt = composePrompt(config, role)
+    for (const fixed of [sharedPrompt, role === 'orchestrator' ? masterPrompt : workerPrompt, guides.subscriptions, guides.replies,
+      handoffPolicy(role)]) ok(prompt.includes(fixed), `${role} 的提示词含固定段`)
+    equal(prompt.endsWith(handoffPolicy(role)), true, `${role} 的提示词以交接规则收尾`)
   }
-  ok(!text.includes('{{'), '六个占位符换完之后正文里不该再有 {{')
+  ok(composePrompt(config, 'orchestrator').includes(mainAdmissionPolicy), '主会话带准入段')
+  ok(!composePrompt(config, 'worker').includes(mainAdmissionPolicy), '执行者不带准入段')
 })
 
-test('覆盖：临时 DSC_HOME 里放 shared.md，共用约定卷来源变 override，执行者卷仍是 default', async () => {
-  await withHome(async (root) => {
-    const dir = join(root, 'superagent', 'prompts')
-    mkdirSync(dir, { recursive: true })
-    const custom = '共用约定（覆盖版）\n\n<工单>\n标题：{{title}}\n</工单>'
-    writeFileSync(join(dir, 'shared.md'), custom, 'utf8')
-
-    const volumes = loadPromptVolumes()
-    equal(volumes.shared.source, 'override', '覆盖文件存在时优先用它')
-    equal(volumes.shared.text, custom, '读到的是写进去的那段（注释剥离后原样）')
-    equal(volumes.worker.source, 'default', '没覆盖的那一卷不受影响')
-
-    const prompt = buildWorkerPrompt(INPUT)
-    ok(prompt.text.startsWith('共用约定（覆盖版）'), '拼装也走同一条读法：覆盖内容在最前面')
-    ok(prompt.text.includes('标题：改登录页文案'), '覆盖卷里的占位符照样替换')
-    equal(prompt.sections[0].chars, custom.replace('{{title}}', INPUT.title).length, '第一段的字数是覆盖卷渲染后的长度')
-  })
+test('提示词文件不管换行与空行怎么排都能读，缺文件或空文件按名字报错', () => {
+  // promptFile 读的是构建产物里的 `prompts/`；临时文件放在它的同级目录，相对路径才能跨平台成立。
+  const promptsRoot = join(import.meta.dirname, '../../../../lib/packages/superagent/prompts')
+  const dir = mkdtempSync(join(import.meta.dirname, '../../../../lib/packages/superagent', '.prompt-file-'))
+  const name = (file) => relative(promptsRoot, join(dir, file))
+  try {
+    writeFileSync(join(dir, 'crlf.md'), 'One.\r\nTwo. \r\n \t\r\n\r\nThree.\r\n')
+    writeFileSync(join(dir, 'blank.md'), ' \n\t\n')
+    equal(promptFile(name('crlf')), 'One. Two.\nThree.')
+    throws(() => promptFile(name('blank')), (error) => error.message === `Empty packaged file: ${join(dir, 'blank.md')}`)
+    throws(() => promptFile(name('absent')), (error) => error.message === `Missing packaged file: ${join(dir, 'absent.md')}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
-test('兜底：包内文件读不到时两卷来源变 fallback，且常量与源码 md 逐字一致', () => {
-  const missing = join(tmpdir(), `superagent-no-prompts-${process.pid}`, 'prompts')
-  equal(existsSync(missing), false, '这个路径必须不存在，否则测的不是兜底')
-
-  const volumes = loadPromptVolumes({ packageDir: missing })
-  equal(volumes.shared.source, 'fallback')
-  equal(volumes.worker.source, 'fallback')
-  equal(volumes.shared.text, bodyOf('../prompts/shared.md'), '兜底常量与 shared.md 逐字一致')
-  equal(volumes.worker.text, bodyOf('../prompts/worker.md'), '兜底常量与 worker.md 逐字一致')
-
-  // 第二层：正常读到的包内 md 与兜底常量也一字不差（产物漏拷 md 时文案才不漂移）。
-  const defaults = loadPromptVolumes({ overrideDir: missing })
-  equal(defaults.shared.source, 'default')
-  equal(defaults.worker.source, 'default')
-  equal(defaults.shared.text, volumes.shared.text, '包内 shared.md 与兜底常量一致')
-  equal(defaults.worker.text, volumes.worker.text, '包内 worker.md 与兜底常量一致')
+test('界面「前后对比」证据交给交付要求，团队可以改', () => {
+  const config = { ...defaultPrompts(), delivery: 'Only capture the finished screen.' }
+  for (const role of ['orchestrator', 'worker']) {
+    ok(!composePrompt(config, role).includes('Before and After visual evidence'), `${role} 的固定段不写死证据要求`)
+  }
 })
 
-test('superagent_prompts_save：正常写落盘、path 对；三种非法输入被拒且不落盘', async () => {
-  await withHome(async (root) => {
-    await withRuntime(async (runtime) => {
-      const byName = toolsOf(runtime.commands())
-      const save = byName.get('superagent_prompts_save')
-      equal(save.risk, 'write', '存提示词是写操作')
-      const dir = join(root, 'superagent', 'prompts')
-
-      await rejects(save.run({ role: 'nope', text: '随便一段' }, ctxOf()), /role 只能是/, 'role 不认识要拒')
-      await rejects(save.run({ role: 'shared', text: '   ' }, ctxOf()), /text 不能为空/, 'text 空要拒')
-      await rejects(
-        save.run({ role: 'worker', text: '一'.repeat(20_001) }, ctxOf()),
-        /最多 20000 字/,
-        '超过 20000 字要拒',
-      )
-      equal(existsSync(dir), false, '三种被拒的调用一个文件都没落盘')
-
-      const body = '共用约定（人工改过）\n\n<工单>\n标题：{{title}}\n</工单>'
-      const out = JSON.parse((await save.run({ role: 'shared', text: body }, ctxOf())).text)
-      equal(out.role, 'shared', '返回里带卷名')
-      equal(out.chars, [...body].length, 'chars 按码点算')
-      equal(out.path, join(dir, 'shared.md'), '返回的 path 就是覆盖文件的位置')
-      equal(readFileSync(out.path, 'utf8'), body, '原样落盘（占位符也留着）')
-      equal(loadPromptVolumes().shared.source, 'override', '存完再读，来源立刻变成 override')
+for (const role of ['orchestrator', 'worker']) {
+  test(`以固定交接规则与执行环境收尾（${role}），主会话还以 Policy 收尾`, () => {
+    withStore((store) => {
+      const prompts = promptsOf(store)
+      const preview = prompts.preview(defaultPrompts())
+      deepEqual(promptParts(defaultPrompts(), role).at(-1), { name: 'runtime/handoff', kind: 'fixed', key: `runtime/handoff/${role}`,
+        text: handoffPolicy(role) })
+      equal(preview[role], prompts.compose(defaultPrompts(), role))
+      ok(preview[role].includes(`${handoffPolicy(role)}\n\nExecution environment`), '交接规则之后是执行环境')
+      if (role === 'worker') equal(preview[role].endsWith(ENVIRONMENT_LINE), true)
+      // 主会话的 Policy 段之后什么都没有，所以 Policy 变了也只改它自己。
+      else equal(preview[role].endsWith(`${ENVIRONMENT_LINE}\n\n${policySection(store.settings()).text}`), true)
+      equal(preview.parts[role].at(-1).name, role === 'orchestrator' ? 'runtime/policy' : 'runtime/environment')
     })
   })
-})
+}
 
-test('superagent_read 的 prompts 资源：两卷都在、source 字段对', async () => {
-  await withHome(async () => {
-    await withRuntime(async (runtime) => {
-      const body = '覆盖后的共用约定\n<工单>\n标题：{{title}}\n</工单>'
-      runtime.commands().savePrompt('shared', body)
-      const byName = toolsOf(runtime.commands())
-      const out = JSON.parse((await byName.get('superagent_read').run({ resource: 'prompts' }, ctxOf())).text)
-      equal(out.roles.length, 2, '两卷都在')
-      deepEqual(out.roles.map((volume) => volume.role), ['shared', 'worker'], '顺序固定：共用约定 → 执行者')
-      equal(out.roles[0].source, 'override', '存过覆盖的那一卷来源是 override')
-      equal(out.roles[0].text, body, '读回来的是模板原文（占位符没被替换）')
-      equal(out.roles[0].chars, [...body].length, 'chars 是这一卷的字数')
-      equal(out.roles[1].source, 'default', '没覆盖的那一卷来源是 default')
-      ok(out.roles[1].text.includes('superagent_report'), '执行者卷的全文也读得到')
-    })
+test('未知键、内置技能名、超长配置都在落盘前被拒', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    throws(() => prompts.save({ ...defaultPrompts(), shared: 'x' }, 0, 'panel'))
+    throws(() => prompts.save({ communication: '', scope: '' }, 0, 'panel'))
+    for (const name of ['github', 'feishu']) throws(() => prompts.save({ ...defaultPrompts(), skills: { [name]: 'mine' } }, 0, 'panel'), /built-in skill/)
+    throws(() => prompts.save({ ...defaultPrompts(), skills: { 'Bad Name': 'x' } }, 0, 'panel'))
+    throws(() => promptsOf(store, 1000).save(defaultPrompts(), 0, 'panel'), /exceeds/)
+    equal(prompts.current().revision, 0, '被拒的保存一个版本都没留')
   })
 })
 
-test('主会话身份闸：worker 会话里调 superagent_prompts_save 被拒', async () => {
-  let saved = 0
-  const host = {
-    isWorkerSession: (sessionId) => sessionId === 'session-worker',
-    savePrompt() {
-      saved += 1
-      return { role: 'shared', path: '/never/written' }
-    },
-  }
-  const save = toolsOf(host).get('superagent_prompts_save')
-  await rejects(
-    save.run({ role: 'shared', text: '偷偷改提示词' }, ctxOf('session-worker')),
-    /只在主会话里可用/,
-    'worker 会话里不能改提示词',
-  )
-  equal(saved, 0, '被拒时一次 savePrompt 都没调')
+test('工单的执行环境列进它的提示词；setup 没完成时说还在等 setup', () => {
+  withStore((store) => {
+    const ticket = [{ key: 'DSH_SUPERAGENT_DIR', value: '/srv/work/fix-1', description: { zh: '', en: 'This ticket\'s directory' },
+      owner: 'executor' }]
+    equal(promptsOf(store).compose(defaultPrompts(), 'worker', ticket)
+      .endsWith('- DSH_SUPERAGENT_DIR = "/srv/work/fix-1": This ticket\'s directory.'), true)
+    deepEqual(promptParts(defaultPrompts(), 'worker', 'env').at(-1), { name: 'runtime/environment', kind: 'generated', key: 'runtime/environment',
+      text: 'env' })
+    ok(new Prompts(store, () => 100000, () => undefined, () => false).compose(defaultPrompts(), 'worker')
+      .includes('dsh-superagent is waiting for setup'), 'setup 没完成时说在等')
+  })
+})
+
+test('内置来源技能按「飞书只在有机器人时」注册，排在团队技能之前', () => {
+  withStore((store) => {
+    const config = { ...defaultPrompts(), skills: { release: 'Tag releases.' } }
+    const skills = promptsOf(store).skills(config)
+    deepEqual(skills.map(([name]) => name), ['feishu', 'github', 'release'])
+    ok(skills[1][1].includes('## CLI usage'), '内置技能带 CLI 用法')
+    equal(skills[2][1], 'Tag releases.')
+    deepEqual(new Prompts(store, () => 100000, variables, () => false).skills(config).map(([name]) => name), ['github', 'release'])
+  })
+})
+
+// ── 内置段覆盖 ──────────────────────────────────────────────────────────────
+
+const overridesConfig = (overrides) => ({ ...defaultPrompts(), overrides })
+const plainSettings = () => SettingsSchema.parse({})
+
+test('覆盖按角色原位替换内置文本：主会话段只换主会话，交接按角色，来源技能也是', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    const edited = prompts.validate(overridesConfig({ 'runtime/shared': { text: 'Shared, the team way.' },
+      'runtime/dispatch': { text: '## dispatch\nRoute well.' }, 'runtime/handoff/worker': { text: 'Hand off as a worker.' },
+      'skill/github': { text: 'GitHub, the team way.' } }))
+    const main = prompts.compose(edited, 'orchestrator'), worker = prompts.compose(edited, 'worker')
+    for (const prompt of [main, worker]) ok(prompt.startsWith('Shared, the team way.\n\n'), '主会话与执行者都换开头')
+    ok(main.includes('## dispatch\nRoute well.'), '主会话用团队的分发规则')
+    ok(!main.includes(guides.dispatch), '内置分发文本不再出现')
+    ok(worker.includes('Hand off as a worker.'), '执行者用团队的交接文本')
+    ok(main.includes(handoffPolicy('orchestrator')), '主会话的交接没被换')
+    deepEqual(prompts.skills(edited).find(([name]) => name === 'github'), ['github', 'GitHub, the team way.'])
+    // 段自己说出被谁编辑。
+    matched(promptParts(edited, 'worker').find(part => part.name === 'runtime/handoff'), { key: 'runtime/handoff/worker',
+      text: 'Hand off as a worker.' })
+  })
+})
+
+test('生成段的模板被覆盖时用数据填充，填充结果仍算生成段', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    const edited = prompts.validate(overridesConfig({ 'runtime/environment': { text: 'Where you work:\n{variables}\nAsk nobody for more.' },
+      'runtime/policy': { text: '## Policy\nRules of {version} in {mode} mode:\n{rules}' },
+      'runtime/policy/none': { text: '## Policy\n{version}, {mode}: nothing to accept.' } }))
+    equal(prompts.compose(edited, 'worker').endsWith(`Where you work:\n${ENVIRONMENT_LINE}\nAsk nobody for more.`), true)
+    const policy = policySection(plainSettings(), edited)
+    deepEqual(policy, { key: 'runtime/policy', text: `## Policy\nRules of ${policyVersion(plainSettings())} in ${plainSettings().eval.mode} mode:\n`
+      + plainSettings().policy.rules.filter(rule => rule.enabled).map(rule => `- ${rule.name} (${rule.id}): ${rule.instruction}`).join('\n') })
+    const none = SettingsSchema.parse({ policy: { rules: [] } })
+    deepEqual(policySection(none, edited), { key: 'runtime/policy/none', text: `## Policy\n${policyVersion(none)}, ${none.eval.mode}: nothing to accept.` })
+    // 规则文本里出现的占位符不会再被填一次。
+    const named = SettingsSchema.parse({ policy: { rules: [{ id: 'x', name: 'X', enabled: true,
+      instruction: 'Keep {mode} and $& as written.' }] } })
+    equal(policySection(named, edited).text.endsWith('- X (x): Keep {mode} and $& as written.'), true)
+  })
+})
+
+test('未知段、丢了占位符的模板、空的段都拒绝；与内置文本相同的覆盖被丢掉', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    throwsUserError(() => prompts.validate(overridesConfig({ 'runtime/nothing': { text: 'x' } })), 'unknownPromptPart')
+    throwsUserError(() => prompts.validate(overridesConfig({ 'runtime/policy': { text: '## Policy\n{version} {mode}' } })), 'promptPlaceholders')
+    throwsUserError(() => prompts.validate(overridesConfig({ 'runtime/environment': { text: 'Where you work.' } })), 'promptPlaceholders')
+    // 回到内置文本：这一段重新跟随内置文本，升级时会跟着更新。
+    ok(!('overrides' in prompts.validate(overridesConfig({ 'runtime/shared': { text: sharedPrompt } }))), '与内置相同就不算覆盖')
+    // 整份配置（含覆盖）不超上限。
+    throws(() => promptsOf(store, 5000).validate(overridesConfig({ 'runtime/shared': { text: 'x'.repeat(5000) } })), UserError)
+  })
+})
+
+test('记下覆盖所依据的内置文本，并列出内置文本此后变过的覆盖', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    // 从今天的内置文本改的覆盖没什么可显示。
+    const saved = prompts.save(overridesConfig({ 'runtime/dispatch': { text: '## dispatch\nRoute well.' } }), 0, 'panel')
+    equal(saved.config.overrides['runtime/dispatch'].base, builtInBase(`## dispatch\n${guides.dispatch}`))
+    deepEqual(prompts.defaultChanged(saved.config), [])
+    // 从更早版本的内置文本改的覆盖：本安装留着那版文本。
+    const earlier = '## replies\nAn earlier built-in text.'
+    store.set(KV.prompts.builtIn(builtInBase(earlier)), earlier)
+    const upgraded = prompts.save(overridesConfig({ ...saved.config.overrides, 'runtime/replies': { text: 'Our replies.', base: builtInBase(earlier) },
+      'runtime/work': { text: 'Our work.', base: 'unknown' } }), saved.revision, 'panel')
+    deepEqual(prompts.defaultChanged(upgraded.config), [{ part: 'runtime/replies', base: builtInBase(earlier), previous: earlier },
+      { part: 'runtime/work', base: 'unknown' }])
+    // 团队文本原样保留：升级从不替换它。
+    ok(prompts.compose(prompts.current().config, 'worker').includes('Our replies.'), '升级不动团队文本')
+  })
+})
+
+test('覆盖出现之前存的配置原样读得懂', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    const saved = prompts.save({ ...defaultPrompts(), communication: 'Ours.' }, 0, 'panel')
+    deepEqual(saved.config, { ...defaultPrompts(), communication: 'Ours.' })
+    equal(prompts.compose(saved.config, 'orchestrator'),
+      prompts.compose({ ...defaultPrompts(), communication: 'Ours.', overrides: {} }, 'orchestrator'))
+  })
+})
+
+test('丢掉后来版本已经没有的段的覆盖（旧版本里存过），并把它标成 removed', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    const config = { ...defaultPrompts(), overrides: { 'runtime/retired': { text: 'Old.', base: 'b' } } }
+    // 只有「存过那一版」里的段才悄悄丢；客户端自己编的段拒绝。
+    throwsUserError(() => prompts.validate(config), 'unknownPromptPart')
+    store.set(KV.prompts.version(1), { revision: 1, previousRevision: 0, savedAt: '', source: 'panel', config })
+    store.set(KV.prompts.revision, 1)
+    deepEqual(prompts.defaultChanged(config), [{ part: 'runtime/retired', base: 'b', removed: true }])
+    deepEqual(prompts.validate(config), defaultPrompts())
+    equal(USER_ERRORS.unknownPromptPart[0], 'refused')
+  })
+})
+
+test('保存时省略 base 就保留已存覆盖的 base；重新对齐 base 算一次变化', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    const first = prompts.save(overridesConfig({ 'runtime/shared': { text: 'Ours.', base: 'earlier' } }), 0, 'panel')
+    const second = prompts.save(overridesConfig({ 'runtime/shared': { text: 'Ours, edited.' } }), first.revision, 'tool')
+    deepEqual(second.config.overrides['runtime/shared'], { text: 'Ours, edited.', base: 'earlier' })
+    // 升级后保留团队文本只改 base，历史里会说出这件事。
+    const rebased = prompts.save(overridesConfig({ 'runtime/shared': { text: 'Ours, edited.', base: builtInBase(sharedPrompt) } }),
+      second.revision, 'panel')
+    deepEqual(prompts.history().revisions.find(version => version.revision === rebased.revision).changed, ['runtime/shared'])
+  })
+})
+
+test('原型链上的名字、空文本都拒绝；原型上的名字不被当成占位符填', () => {
+  withStore((store) => {
+    const prompts = promptsOf(store)
+    for (const part of ['constructor', 'toString']) {
+      throwsUserError(() => prompts.validate(overridesConfig(JSON.parse(`{"${part}": { "text": "x" }}`))), 'unknownPromptPart')
+    }
+    // 解析器会丢掉 `__proto__` 键，它不改原型。
+    deepEqual(prompts.validate(overridesConfig(JSON.parse('{"__proto__": { "text": "x" }}'))), defaultPrompts())
+    throwsUserError(() => prompts.validate(overridesConfig({ 'runtime/shared': { text: ' \n ' } })), 'promptPartEmpty')
+    const edited = prompts.validate(overridesConfig({ 'runtime/environment': { text: '{constructor} {toString}\n{variables}' } }))
+    equal(prompts.compose(edited, 'worker').endsWith(`{constructor} {toString}\n${ENVIRONMENT_LINE}`), true)
+  })
+})
+
+test('执行环境的标题保持原样，并说明 prepare 命令读同一批变量', () => {
+  ok(!composePrompt(defaultPrompts(), 'worker', 'x').includes('The prepare command'), '显式给环境时不带标题')
+  withStore((store) => {
+    ok(promptsOf(store).compose(defaultPrompts(), 'worker')
+      .includes('an empty value means that part is not configured here). '
+        + `The prepare command of a ticket directory reads the same variables:\n${ENVIRONMENT_LINE}`), '默认环境带完整标题')
+  })
 })

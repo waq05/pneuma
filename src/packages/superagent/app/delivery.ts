@@ -28,14 +28,28 @@
  * 7. **投递目标**：唤醒/排队要用 MiniAgent，所以目标从 dsh `Agent` 换成本仓最小结构
  *    `DeliveryTarget`（`session` + `agent`），由 `app/sessions.ts` 的 `SessionHandle` 结构满足。
  * 8. 取消上游的 `deliveryId()`：它认老插件消息来源，本仓没有那套消息来源表。
- * 9. 排队消息出账时按**正文**认回 requestId（上游按消息 id）。同一会话里两条正文完全相同的
- *    排队消息会按先来后到认，正常投递（工单正文、通知正文各不相同）不会撞。
+ * 9. 排队消息出账时按**正文**认回 requestId（上游按消息 id）；本仓收件箱条目没有 id
+ *    （`core/session.ts:172` 的 `AsyncInboxItem` 只有正文 / 图 / 文件 / 来源）。同一条投递的
+ *    「还在不在收件箱里」因此不能只按正文认：用户用 `editAsync`（`core/session.ts:1154`）把排队
+ *    正文改掉之后，正文对不上，重投就会被当成新的一条再入箱一次（已实测复现），`forget` 也撤不掉。
+ *    所以入箱时把那条条目对象和它的下标一起记进内存账（{@link Slot}），查询顺序是
+ *    「对象还在收件箱里 → 正文精确匹配 → 原地换出来的新对象（用户改了正文）」。
+ *    跨重启后内存账没了，只剩正文匹配（KV 里记的是正文，见第 2 条）：重启前改了正文、重启后
+ *    再重投，仍会认不出。要根治得给收件箱条目加 id（`src/core/**` 不在本轮可写范围）。
+ *    还有一条从正文推断出来的边界：这一条当时是**队尾**，用户先把它撤掉、紧接着又排进一条新的
+ *    （新消息追加到队尾，正好落在原下标），而新条目还没被本模块观察到——两条账都分不出来，
+ *    会把新条目当成它的编辑。这个窗口只有「同一次投递模块调用之前连续两个界面动作」那么宽；
+ *    要根治同样得靠条目 id。
+ *
+ * 另有一条已知边界，改不动、只记下来：正文被改过、且改过的那条**已经出账**之后才重投时，
+ * `claim` 仍是按正文认（`app/sessions.ts:532` 只传正文），认不回来 → 永久账漏记，重投会再入箱一次。
+ * 补它要让 `superagent/inbox-claimed` 带上认回的 requestId（`app/sessions.ts` 不在本轮可写范围）。
  *
  * @module dsc/packages/superagent/app/delivery
  */
 /** Idempotent message delivery to Session agents across Session restarts. */
 import type { MiniAgent } from '@pneuma/session-core/loop.js'
-import type { Session } from '@pneuma/runtime/core/session.js'
+import type { AsyncInboxItem, Session } from '@pneuma/runtime/core/session.js'
 import { family } from '../kv.js'
 import type { Store } from './store.js'
 
@@ -64,6 +78,14 @@ export type DeliveryMode = 'queue' | 'steer' | { inject: string }
 export type DeliveryOutcome = 'landed' | 'queued' | 'duplicate'
 
 interface Seen { ids: Set<string> }
+/**
+ * 一条排队投递在收件箱里的落点：入箱那一刻的条目对象 + 下标。
+ *
+ * 为什么记对象：`editAsync` 是**原地换掉**一个条目（`[index] = { text, ... }`），对象变了、下标不变；
+ * 记着旧对象就能认出「这个位置换出来的新对象就是它」，而不用拿正文去猜。下标随收件箱的增删会漂，
+ * 所以每次按对象认回来时一并刷新。
+ */
+interface Slot { item: AsyncInboxItem; index: number }
 
 /**
  * Delivers messages to Session agents at most once per request ID across active and restored Sessions.
@@ -73,6 +95,10 @@ interface Seen { ids: Set<string> }
 export class AgentDelivery {
   private readonly seen = new WeakMap<Session, Seen>()
   private readonly queued = new WeakMap<Session, Map<string, string>>()
+  /** 还没出账的投递 → 它入箱时那条收件箱条目（内存账，见文件头第 9 条与 {@link Slot}）。 */
+  private readonly slots = new WeakMap<Session, Map<string, Slot>>()
+  /** 这个会话收件箱里见过的条目对象：用来判「这个位置上的条目是原地换出来的新对象」。 */
+  private readonly observed = new WeakMap<Session, WeakSet<AsyncInboxItem>>()
 
   constructor(private readonly store: Pick<Store, 'get' | 'set' | 'delete' | 'keys'>) {}
 
@@ -100,19 +126,59 @@ export class AgentDelivery {
     }
     return queued
   }
-  private remember(session: Session, requestId: string, text: string): void {
+  private remember(session: Session, requestId: string, text: string, item: AsyncInboxItem | undefined): void {
     this.pendingOf(session).set(requestId, text)
     this.store.set(PENDING(session.meta.id, requestId), text)
+    const slots = this.slotsOf(session)
+    if (item === undefined) slots.delete(requestId)
+    else slots.set(requestId, { item, index: session.asyncInbox().indexOf(item) })
   }
   private forgetPending(session: Session, requestId: string): void {
     this.pendingOf(session).delete(requestId)
+    this.slotsOf(session).delete(requestId)
     this.store.delete(PENDING(session.meta.id, requestId))
+  }
+  private slotsOf(session: Session): Map<string, Slot> {
+    let slots = this.slots.get(session)
+    if (slots === undefined) { slots = new Map(); this.slots.set(session, slots) }
+    return slots
+  }
+  private observedOf(session: Session): WeakSet<AsyncInboxItem> {
+    let observed = this.observed.get(session)
+    if (observed === undefined) { observed = new WeakSet(); this.observed.set(session, observed) }
+    return observed
+  }
+  /**
+   * 这条排队投递现在在收件箱里的下标；认不出（没排过 / 已出账 / 被撤掉）返回 -1。
+   *
+   * 三条判据按可靠性排：对象还在（正文被改、或被「插话」提过队都认得出）→ 正文精确匹配
+   * （跨重启只剩这一条）→ 记的下标上是个没见过的新对象（用户原地改了正文）。
+   * 最后一条是推断，见文件头第 9 条写的边界：同一下标上「撤掉旧的、又排进一条新的」分不出来。
+   */
+  private indexOf(session: Session, requestId: string): number {
+    const text = this.pendingOf(session).get(requestId)
+    if (text === undefined) return -1
+    const items = session.asyncInbox()
+    const slot = this.slotsOf(session).get(requestId)
+    const observed = this.observedOf(session)
+    const own = slot === undefined ? -1 : items.indexOf(slot.item)
+    let index = own >= 0 ? own : items.findIndex(item => item.text === text)
+    if (index < 0 && slot !== undefined) {
+      // 原地换掉：`editAsync` 只改这一格，下标不动，换出来的是个没见过的对象。
+      const replaced = items[slot.index]
+      const claimed = replaced !== undefined &&
+        [...this.slotsOf(session).values()].some(other => other.item === replaced)
+      if (replaced !== undefined && !claimed && !observed.has(replaced)) index = slot.index
+    }
+    // 这一次看到的条目都记进 observed：下一次「原地换出来的新对象」才判得出来。
+    for (const item of items) observed.add(item)
+    if (index >= 0) this.slotsOf(session).set(requestId, { item: items[index]!, index })
+    return index
   }
   /** Returns whether this Session already holds the message delivered under `requestId`, or has it waiting in its inbox. */
   async holds(target: DeliveryTarget, requestId: string): Promise<boolean> {
     if (this.delivered(target.session).ids.has(messageId(requestId))) return true
-    const text = this.pendingOf(target.session).get(requestId)
-    return text !== undefined && target.session.asyncInbox().some(item => item.text === text)
+    return this.indexOf(target.session, requestId) >= 0
   }
   /**
    * 投一条消息，同一 requestId 至多一次；`authorize` 在动手前调，`accepted` 在投出去后调。
@@ -135,7 +201,9 @@ export class AgentDelivery {
     if (target.agent.isRunning) {
       // 跑动中一律先入箱：queue 等回合收尾出账，steer 在步骤边界出账（见文件头的模式映射）。
       session.enqueueAsync(text, undefined, mode === 'steer' ? 'notice' : 'user')
-      this.remember(session, requestId, text)
+      // `enqueueAsync` 追加在队尾（`core/session.ts:1127-1140`）：刚写进去的那条就是最后一条，
+      // 把它的对象记进内存账，用户改了正文之后还能按 requestId 认回来（见文件头第 9 条）。
+      this.remember(session, requestId, text, session.asyncInbox().at(-1))
       accepted?.()
       return 'queued'
     }
@@ -162,9 +230,7 @@ export class AgentDelivery {
   }
   /** 撤掉一条还没出账的投递；已经出账（或根本没排过）返回 false。 */
   forget(session: Session, requestId: string): boolean {
-    const text = this.pendingOf(session).get(requestId)
-    if (text === undefined) return false
-    const index = session.asyncInbox().findIndex(entry => entry.text === text)
+    const index = this.indexOf(session, requestId)
     if (index < 0) return false
     const removed = session.removeAsync(index)
     if (removed) this.forgetPending(session, requestId)

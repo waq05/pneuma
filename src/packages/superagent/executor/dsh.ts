@@ -17,7 +17,7 @@
  * | `agent.cancel({ kind: 'user' }, { keepInbox })` | 句柄 `cancel({ kind: 'user', keepInbox? })`（两参并一参，见 `app/sessions.ts` 的 `SessionHandle`；`keepInbox:false` 先清空 async-inbox 再取消，`true` 取消后把排队消息重新入箱） |
  * | `agent.whenIdle()` | 句柄同名方法：`MiniAgent` 没有可等待的 idle 事件，由 `app/sessions.ts` 用 `isRunning`/`busy` + `onIdle` 实现（设计文档 G5 同一取舍） |
  * | `agent.inbox.remove(messageId)` | 句柄同名同形：`agent.inbox.remove(promptedId(inputId))` → `app/sessions.ts` 转成 `forget(sessionId, requestId)`。本仓 Session 只能按 async-inbox 下标撤（`src/core/session.ts:1169 removeAsync`），没有「按消息 id 撤」的口，所以 requestId → 排队条目的登记由 `prompt()` 建立、`inbox.remove` 撤销；语义与上游一致：撤掉「按该 requestId 投、但还没出账」的那一条 |
- * | `agent.session.snapshotEvents()` 里最后一条 `assistant/message` 的正文 | 句柄 `lastAssistantText()`：倒序扫 `agent.session.messages` 取最后一条非空 assistant 正文（`src/core/llm.ts:42-76`；旧实现用 `turn/end` 前的 `message` 事件攒 `lastText`，同一份正文） |
+ * | `agent.session.snapshotEvents()` 里最后一条 `assistant/message` 的正文 | 句柄 `lastAssistantText()`：倒序扫 `agent.session.messages` 取**最后一条** assistant 消息，多个 text 块用 `'\n'` 拼、整体 `trim()`（`src/core/llm.ts:42-76`；与上游 `:659-662` 同一取法：纯空白的最后一条也照取、不回退到更早消息） |
  * | `ctx.subprocess` + `runAsWorker` / `verifyDirectory` | 本仓 `infra/environment.ts` 的 `runAsWorker(argv, cwd, signal, env?)` / `verifyDirectory(directory, signal)`（`src/packages/superagent/infra/environment.ts:163`、`:195`）：node 原生 spawn，不再收子进程服务 |
  * | `['sh', '-c', command]` | 平台 shell：Windows 没有 `sh`（旧实现同一处理，`adapters/executor.ts:404-405`），Windows 用 `cmd.exe /d /s /c`，其余平台仍是 `sh -c` |
  * | `ctx.jobs` / `ctx.subagents`（`executor/background.ts`） | 本仓 `background.ts` 原生实现：`ctx.jobs`（`src/services/types.ts:601-616`）+ `ctx.team`（`src/services/types.ts:1026-1064`） |
