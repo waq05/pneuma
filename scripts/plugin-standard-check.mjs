@@ -12,6 +12,8 @@
  *      pneuma.resolution / pneuma.order，库包不需要）；
  *   2. exports 的键集只许 .、./client、./cordis.patch.yml、./package.json、./locale/*.json；
  *      库包另许模块子路径 ./<模块>.js（键与目标一字不差，功能包不给这条）；
+ *      来源契约子路径 ./sources/*.js（只有 types + default 两键、目标固定，见
+ *      CONTRACT_EXPORT_KEY——来源插件要 import 主包的 SourceKind / SourceHost 类型）；
  *   3. 清单本地化：声明了 ./locale/*.json 键，目标文件就必须在、必须是合法 JSON，
  *      且 title / description 都是非空字符串（键在文件不在 = 插件中心少一行字的来源）；
  *   4. 功能包：cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、
@@ -90,6 +92,31 @@ const INTERFACE_LOCALE_FILE = /^ui\.[a-z]{2}(?:-[A-Za-z]{2,4})?\.json$/
  * 每条导出都指向包内真实存在的同名文件。
  */
 const LIBRARY_MODULE_EXPORT_KEY = /^\.\/[a-z0-9][a-z0-9-]*\.js$/
+/**
+ * 来源契约子路径：`./sources/*.js`（键）→ `{ types: './sources/*.d.ts', default: './sources/*.js' }`。
+ *
+ * 为什么要有这一条：第三种来源是**包外**的插件（验收切片 `superagent-webhook`），它只
+ * `import type` 主包的契约类型（`sources/kind.js` 的 `SourceKind` / `FieldSpec`、
+ * `sources/host.js` 的 `SourceHost` / `SourceContext`）。这些类型是给别人写插件用的接缝，
+ * 不导出子路径，第三方作者就只能抄一份类型或摸进包内部路径，两种做法都会在契约变更时静默漂移。
+ *
+ * 为什么只开这一条而不是放开通配：范围钉在 `sources/` 这一层（单段模块名，不跨目录），
+ * 且键与目标两个条件都必须一字不差——不是「随便加个子路径都能过」。别的目录（`core/`、
+ * `infra/` 等）仍然是内部实现，功能包对外的其余入口照旧只有 `.`。
+ * 通配符只在产物目录里过滤时按 `default` 的 `./sources/*.js` 判，见 build-packages。
+ */
+const CONTRACT_EXPORT_KEY = './sources/*.js'
+/** 契约子路径唯一允许的形状：类型条件在前，两个目标都必须是产物里同名文件的通配。 */
+const CONTRACT_EXPORT_TARGET = { types: './sources/*.d.ts', default: './sources/*.js' }
+
+/** 一个 exports 键值是不是来源契约子路径（键与两个目标键都对得上才算）。 */
+function isContractExport(key, target) {
+  if (key !== CONTRACT_EXPORT_KEY) return false
+  if (target === null || typeof target !== 'object' || Array.isArray(target)) return false
+  const keys = Object.keys(target).sort()
+  if (keys.length !== 2 || keys[0] !== 'default' || keys[1] !== 'types') return false
+  return target.types === CONTRACT_EXPORT_TARGET.types && target.default === CONTRACT_EXPORT_TARGET.default
+}
 
 /** cordis 对等依赖的键名：版本区间由 build-packages 统一注入，这里只查有没有。 */
 const CORDIS_PEER = '@deepseek-ai/cordis'
@@ -316,6 +343,8 @@ for (const id of ids) {
       if (ALLOWED_EXPORT_KEYS.has(key) || LOCALE_EXPORT_KEY.test(key)) continue
       // 库包的模块子路径：键与目标一字不差才算（见 LIBRARY_MODULE_EXPORT_KEY）。
       if (pkg.kind === 'library' && LIBRARY_MODULE_EXPORT_KEY.test(key) && exportsField[key] === key) continue
+      // 来源契约子路径：只认唯一那一条键与两个固定目标（见 CONTRACT_EXPORT_KEY）。
+      if (isContractExport(key, exportsField[key])) continue
       keyOk = false
       fail(2, id, `exports 里有计划外的键「${key}」——要不要收由主控定，别在包里偷偷加`)
     }
@@ -554,7 +583,8 @@ for (const id of ids) {
 // ── 6. 依赖方向 ─────────────────────────────────────────────────────────────
 
 // 判据与 plugin-model-check 共用 scripts/plugin-dep-graph.mjs：功能包 → 库包允许；
-// 功能包 → 功能包、库包 → 任何包、core → 任何包都算越界（含 import type）。
+// 功能包 → 功能包、库包 → 任何包、core → 任何包都算越界（core 那条含 import type；
+// 功能包之间只算运行时 import——纯类型 import 是取契约类型，不构成运行时依赖）。
 // 库包与功能包都在这张图里：库包自己 import 了包同样要报。
 const graph = createPackageGraph({
   root,

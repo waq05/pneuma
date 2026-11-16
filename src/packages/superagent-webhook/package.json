@@ -1,0 +1,41 @@
+{
+  "name": "@pneuma/superagent-webhook",
+  "version": "0.9.1",
+  "description": "Super Agent 的第三种来源：只发不收的 webhook 出站渠道（加来源 = 只加一个插件包）",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "webhook.js",
+    "webhook.d.ts",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3810,
+    "resolution": "overridable",
+    "title": "Super Agent Webhook",
+    "description": "只发不收的 webhook 出站渠道；它是 Super Agent 的第三种来源，用来证明加来源是插件级扩展",
+    "toggleable": true
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}

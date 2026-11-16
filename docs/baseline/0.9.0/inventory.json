@@ -425,6 +425,15 @@
       "bundle": null
     },
     {
+      "file": "superagent-webhook",
+      "name": "Super Agent Webhook",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "surfaces",
       "name": "快照片段注册表",
       "enabled": true,

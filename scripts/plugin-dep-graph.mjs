@@ -10,7 +10,9 @@
  *   - 相对路径解析：`./` / `../` 先落成真实文件（`.js` → `.ts` / `.tsx`、目录 → `index.ts`），
  *     再按「文件属于哪一层、哪个包」归类；
  *   - 判定文案：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、core → 任何包
- *     都算越界（`import type` 也是静态依赖，一并算）。
+ *     都算越界。功能包之间的**纯类型** import（`import type` / `export type … from`）
+ *     例外：那是取契约类型，不构成运行时依赖；运行时 import 照拦。core → 包不看类型，
+ *     `import type` 照拦（内核要用共用类型就放 src/contract）。
  *
  * 2026-11-09 补的盲区：此前四条正则只认 `@pneuma/...`，58 个 core→packages 转发垫片
  * 全用相对路径写（`export * from '../packages/...'`），一条都匹配不上，门禁全绿。
@@ -40,6 +42,14 @@ export const IMPORT_PATTERNS = [
   /^\s*import\s+['"](@pneuma\/[^'"]+)['"]/gm,
   /\brequire\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
 ]
+
+/**
+ * 纯类型 import 的写法：`import type … from`、`export type … from`。
+ *
+ * 只认这两种显式写法（任务口径）：`import { type X } from` 这种混合写法按运行时 import 算，
+ * 因为同一条语句里可能还带着运行时的名字；宁可多报一条，也不把一条真依赖判成类型。
+ */
+const TYPE_ONLY_IMPORT = /^\s*(?:import|export)\s+type\b/
 
 /** 相对说明符的四种静态写法，与 {@link IMPORT_PATTERNS} 一一对应。 */
 export const RELATIVE_IMPORT_PATTERNS = [
@@ -254,10 +264,11 @@ export function createPackageGraph(options) {
   }
 
   /**
-   * 一段源码里的静态说明符，带字符下标。
+   * 一段源码里的静态说明符，带字符下标与「是不是纯类型 import」。
    *
    * 行号按说明符本身算（`match[0]` 里可能带上前面的换行），否则多行 import
-   * 或「上一行是注释」时会把行号报偏一行。
+   * 或「上一行是注释」时会把行号报偏一行。`typeOnly` 从匹配到的整句判断
+   * （见 {@link TYPE_ONLY_IMPORT}）：动态 import / 副作用 import / require 不可能是类型。
    * @param source - 文件内容
    * @param patterns - 要匹配的正则组
    */
@@ -266,18 +277,34 @@ export function createPackageGraph(options) {
     for (const importPattern of patterns) {
       importPattern.lastIndex = 0
       for (const match of source.matchAll(importPattern)) {
-        out.push({ specifier: match[1], index: match.index + match[0].indexOf(match[1]) })
+        out.push({
+          specifier: match[1],
+          index: match.index + match[0].indexOf(match[1]),
+          typeOnly: TYPE_ONLY_IMPORT.test(match[0]),
+        })
       }
     }
     return out
   }
 
   /**
+   * 交给 judge 的目标条目：纯类型 import 的边在副本上标 `typeOnly: true`。
+   *
+   * 为什么标在 target 上而不是只放 detail：`plugin-model-check` 的 judge 只收
+   * `(target, where)` 两个参数、拿不到 detail；用副本标注（不动注册表里的原条目），
+   * 两个门禁的判据函数就能看到同一个事实——要不要为它开例外由 `dependencyProblem` 定。
+   * @param target - 解析出的目标包条目
+   * @param typeOnly - 这条 import 是不是纯类型写法
+   */
+  const edgeTarget = (target, typeOnly) => (typeOnly ? { ...target, typeOnly: true } : target)
+
+  /**
    * 扫一个目录，把每条指向包（裸说明符或相对路径）的依赖交给 judge 判。
    *
-   * judge 的第三个参数是线索：`{ specifier, to, relative }`。`to` 是相对说明符
-   * 解析出的仓库相对路径（裸说明符为 null），门禁想打印「→ 目标」时用它；
-   * 现成的两个门禁只取前两个参数，签名保持兼容。
+   * judge 的第三个参数是线索：`{ specifier, to, relative, typeOnly }`。`to` 是相对说明符
+   * 解析出的仓库相对路径（裸说明符为 null），门禁想打印「→ 目标」时用它；`typeOnly` 标
+   * 纯类型 import（判据例外见 {@link dependencyProblem}）。现成的两个门禁只取前两个参数，
+   * 签名保持兼容。
    * @param dir - 目录
    * @param judge - `(target, where, detail) => void`；where 是 `文件:行号`
    */
@@ -289,24 +316,26 @@ export function createPackageGraph(options) {
       } catch {
         continue
       }
-      for (const { specifier, index } of specifiersOf(source, IMPORT_PATTERNS)) {
+      for (const { specifier, index, typeOnly } of specifiersOf(source, IMPORT_PATTERNS)) {
         const target = targetOf(specifier)
         if (target === null) continue
-        judge(target, `${repoPath(root, file)}:${lineAt(source, index)}`, {
+        judge(edgeTarget(target, typeOnly), `${repoPath(root, file)}:${lineAt(source, index)}`, {
           specifier,
           to: null,
           relative: false,
+          typeOnly,
         })
       }
-      for (const { specifier, index } of specifiersOf(source, RELATIVE_IMPORT_PATTERNS)) {
+      for (const { specifier, index, typeOnly } of specifiersOf(source, RELATIVE_IMPORT_PATTERNS)) {
         const resolved = resolveRelativeModule(file, specifier)
         if (resolved === null) continue
         const target = packageAt(resolved)
         if (target === null) continue
-        judge(target, `${repoPath(root, file)}:${lineAt(source, index)}`, {
+        judge(edgeTarget(target, typeOnly), `${repoPath(root, file)}:${lineAt(source, index)}`, {
           specifier,
           to: repoPath(root, resolved),
           relative: true,
+          typeOnly,
         })
       }
     }
@@ -385,20 +414,28 @@ export function kindLabel(kind) {
  *   - 库包 → 功能包 / 库包：库包是被 import 的一侧，它再往下 import 包就成了环的起点；
  *   - core → 包：见 {@link coreDependencyProblem}，内核只许用 src/* 自己的东西。
  *
+ * 纯类型 import（`import type` / `export type … from`）在功能包之间不算这条越界：
+ * 类型在编译后消失，不产生运行时依赖、不会让装配顺序打架；来源插件取主包的
+ * `SourceKind` / `SourceHost` 契约就是这种边。其余两条不放（库包 → 包、core → 包都照原判据）。
+ *
  * 相对路径与 `@pneuma/<id>` 走同一个判据：相对路径只是换了个写法，
  * 跨包时同样绕不过「谁依赖谁」这件事。
  * @param from - 发起 import 的包 `{ id, kind }`
- * @param target - 被 import 的包 `{ id, kind }`
+ * @param target - 被 import 的包 `{ id, kind, typeOnly? }`（纯类型边由 scan 标 `typeOnly`）
  * @param where - `文件:行号`
- * @param detail - `{ specifier, to, relative }`（相对路径时 `to` 是目标文件）
+ * @param detail - `{ specifier, to, relative, typeOnly }`（相对路径时 `to` 是目标文件）
  */
 export function dependencyProblem(from, target, where, detail) {
   // 自己 import 自己不算跨包依赖（包内相对路径本来就不在这里）。
   if (target.id === from.id) return null
+  // 两个门禁拿到的线索不一样：命令行入口传 detail，两个门禁的 judge 只收 target；两处都认。
+  const typeOnly = detail?.typeOnly === true || target.typeOnly === true
   const via =
     detail?.relative === true ? `（相对路径 ${detail.to}，跨包应改用 @pneuma/${target.id}）` : ''
   if (from.kind === 'feature') {
     if (target.kind === 'feature') {
+      // 纯类型边只取契约类型，不算「功能包依赖功能包」；运行时 import 照旧报。
+      if (typeOnly) return null
       return `${where} 功能包「${from.id}」直接 import 了功能包「${target.id}」${via}：功能包只许 import 库包与 @pneuma/runtime/*`
     }
     return null
