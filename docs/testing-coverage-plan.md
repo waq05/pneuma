@@ -198,6 +198,59 @@ branches 49.03 / functions 54.12 / statements 56.29；`src/core` 86.88 / 75.01 /
 `browser`、`subagent`、`remote`、`self-improve/index`（414，纯文件面已备好）、`approval`（385）、
 `ui-sessions` 剩余（359）、`ui-status` 剩余（299）、`desktop-dock`（295）。
 
+### 1.6 W4–W8 大批次（2026-11-16，24 个 spec 批次 / 952 条）
+
+这一轮把「装配层 + 长尾 UI + 小包」一次铺开，八条线并行、逐批验收（定向跑 → 产品 diff 为空 → 反验证
+记录 → 单独提交）。覆盖的主面：
+
+| 批次 | 条数 | 主攻 |
+| --- | ---: | --- |
+| approval + runtime | 43 | 自动裁决全分支、人工卡/升权、AI 复核；runtime 服务契约与插件中心 |
+| self-improve + tool-search | 46 | skill_write/learning/命令/回合事件；三维桥接与检索/转调 |
+| remote + desktop-dock + dock-browser | 64 | 真 HTTP/WS 配对取票、真 git 状态/分支/diff、CDP dock 动作与敏感闸门 |
+| subagent + memory | 48 | 派活/回收/传话/审查；记忆读写/去重/复盘/`/memory` |
+| ui-settings + ui-superagent | 75 | 模型页增删改与连接测试；超级代理六页与设置 |
+| checkpoint + hmr + css + home-paths | 41 | 回合快照/还原命令、HMR 对账、CSS 颜色归一、dsh 家目录映射 |
+| ui-sessions + ui-status | 54 | 分组/右键菜单/工作区/拖拽；摘要链/折叠桶/任务板/输出页签 |
+| ui-boot + ui-composer | 40 | `createBootSession` 队列/失败重试；模型、附件、命令面板、插话 |
+| browser | 47 | 地址闸门、ref 复核、对话框、iframe、下载、设置 |
+| superagent + settings + mcp | 41 | 编排库/体检/`/sa`；内置分区与更新；能力工具/重连/schema 撤挂 |
+| computer-use + sandbox token | 44 | 脚本生成与 PowerShell 生命周期；SID/ACE/限制令牌 |
+| ui-files + palette + terminal | 29 | 变更面板/文件树；命令面板；终端 dock |
+| ui-preview + renderer + layout + actions + tasks | 31 | 五个零覆盖小页 |
+| sandbox + Windows setup | 50 | 后端降级/守卫/`/sandbox`；防火墙脚本与提权安装 |
+| approval-floor + session-search | 44 | 命令结构/熔断/白名单；索引落盘/增量/切词 |
+| tui App | 36 | 三卡键盘、全局键、浮层、会话选择器 |
+| bash + plugin-cli | 49 | 真跑短命令/超时/截断/后台；add/remove/list/builds |
+| ui-core + ui-team | 29 | 槽位表全语义；团队页/阅读器/发话 |
+| ui-plugins + ui-prompt | 30 | 外部卡/信任/配置；提示卡归属/快捷键/多题向导 |
+| ui-dockkit + ui-trace | 25 | 停靠/拖拽/分屏；轨迹轮次/搜索/检查器 |
+| hooks + config-core + lsp | 27 | 脚本信任/外部钩子；预设 CRUD；诊断归属/退出 |
+| ui-layout | 29 | 九槽骨架/页签/侧栏/手机档/诊断 |
+| ui-settings 主界面 + ui-boot main | 22 | 分区路由/保存回执；五种启动诊断 |
+
+实测：**36,043 / 46,646 = 77.26%**（W3 中点 27,449 / 58.84，+8,594 行 / +18.42 点）；
+branches 65.52 / functions 73.73 / statements 74.19；`src/core` 88.15 / 76.32 / 88.62 / 84.49。
+跑法 `pnpm test:coverage`，511 文件（510 通过 / 1 skip）、6,740 用例（6,735 通过 / 5 skip）、exit 0；
+基线抬到 77.2 / 65.5 / 73.7 / 74.1（`src/core` 88.1 / 76.3 / 88.6 / 84.4）。
+0% 文件从 31 降到 7（101 行），只剩 `superagent/core/replies.ts`、`superagent/adapters/store-read.ts`、
+`dsh-compat/credentials.ts` 等点状小件。
+
+同批还清了 **232 个 spec 类型错误**（CI 的 `verify.yml` 会跑 `typecheck:spec`）：根因多是假对象
+`satisfies` 不完整、`MaybePromise` 未 await、交叉类型把参数推成 `never`；统一用真实契约类型与
+窄化修正，零 `@ts-ignore`，测试条数不变。全量跑同时暴露两处测试基建脆弱点并修复：重模块
+`beforeAll` 的 5s 钩子超时、Windows 子进程占目录导致 `rmSync` EPERM（`42334d93` 与 lsp manager 修复）。
+
+**W4–W8 复盘**：界面页单条收益仍最高（20–30 行），装配层 `vi.mock` 一次能点亮整条工具链；
+近零覆盖的小插件包（goal/agent/ptc/llm/presets 等）是下一批最便宜的增量。距 90% 还差 5,939 行，
+下一波按包缺口榜切分：superagent 1,106、sandbox 824、ui-transcript 720、ui-composer 483、
+ui-primitives 434、computer-use 344、ui-settings 313、tools-default 251，以及一批 1k 行内的近零小包。
+
+**本轮发现的产品问题**（各批提交正文有 `file:line`，均未修）：最重要三条是
+`ui-terminal/ui/ui.tsx:228` 的 spawn effect 依赖每次新建的 native，启动失败会无限重试；
+`tui/app/App.tsx:1257` 的 hardline 审批卡键盘仍可放行（与 `ApprovalCard.tsx:157` 矛盾）；
+`ui-settings/ui/models.tsx:230` 的重复模型 id 校验漏了 `seen.add`，永远不触发。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
