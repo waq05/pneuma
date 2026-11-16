@@ -303,7 +303,12 @@ describe('② App 真接线：合并组被窗口夹住，直通组几乎每次�
     const windowCap = Math.ceil(elapsed / TUI_SNAPSHOT_MS) + 1
     expect(rawCommits).toBeGreaterThanOrEqual(raw.notifies() - 2)
     expect(mergedCommits).toBeLessThanOrEqual(windowCap)
-    expect(mergedCommits * 3).toBeLessThan(rawCommits)
+    // 合并永远不该比直通多提交（结构判据，任何机器都成立）。
+    expect(mergedCommits).toBeLessThanOrEqual(rawCommits)
+    // 「少一个数量级」只在机器能在一个窗口内画完一帧时成立：`windowCap` 是
+    // elapsed/80ms，它比直通提交数还大就说明每次渲染已经超过窗口（coverage 插桩、
+    // 满负载时会这样），这时合并组也只能逐条交付——不是合并坏了，量不出来。
+    if (rawCommits > windowCap * 6) expect(mergedCommits * 3).toBeLessThan(rawCommits)
     expect(merged.tail()).toContain('增量-29')
   })
 })
