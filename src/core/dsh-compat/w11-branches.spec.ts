@@ -1,27 +1,23 @@
 /**
  * dsh 兼容层的补盲：呈现数据校验、服务判定表、用量旁路、工具适配的错误与降级分支，
- * 以及解析钩子的重定向/代数戳路径（`core/dsh-compat/*`）。
- *
- * 不碰真插件目录、不 import dsh 包：解析钩子那组在临时 HOME 里造最小应用目录与插件
- * 文件，用动态 import 走到它的 resolve 回调，验的是「重定向到哪、URL 有没有代数戳」。
+ * 事件桥在差 ctx / 回合未开时的派发容错，以及解析钩子的开关与目录登记护栏。
  *
  * @module dsc/core/dsh-compat/w11-branches.spec
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { afterAll, describe, expect, test, vi } from 'vitest'
 import { LLM_STREAM_EVENT, publishDshUsage, toDshUsage } from './llm-usage-event.js'
 import { asCardView, validateOutput } from './presentation.js'
 import {
   bumpGeneration,
   currentGeneration,
-  ensureResolveHook,
   registerGenerationRoot,
   setResolveHookAppRoot,
   setResolveHookCompat,
 } from './resolve-hook.js'
+import { createDshSessionEventBridge, DSH_SESSION_EVENT } from './session-events.js'
 import { describeForeignServices, dshServiceVerdict } from './service-map.js'
 import { dshToolToEntry, dshToolsFacade, type DshToolDefinitionLike } from './tools-facade.js'
 
@@ -381,6 +377,51 @@ describe('tools-facade 补盲', () => {
     facade.register(dshDef())
     facade.register(dshDef({ name: 'second' }))
     expect(risks).toEqual(['exec', 'exec'])
+  })
+})
+
+// ── session-events：差 ctx / 回合未开的派发 ──────────────────────────────────
+
+describe('session-events 容错', () => {
+  const bridge = (ctx: unknown) =>
+    createDshSessionEventBridge({
+      ctx: ctx as never,
+      sessionId: 's1',
+      cwd: '/w',
+      createdAt: 1,
+      route: () => ({ provider: 'p', model: 'm' }),
+    })
+
+  test('ctx 没有 emit / 为 null：事件只进尾巴，不抛错', () => {
+    for (const ctx of [{}, null]) {
+      const b = bridge(ctx)
+      expect(() => {
+        b.publish({ type: 'context' } as never)
+        b.publish({ type: 'message', text: '', reasoning: '', toolCalls: [] } as never)
+        b.publish({ type: 'tool/call', callId: 'c1', name: 'read', args: '{}' } as never)
+        b.publish({ type: 'tool/result', callId: 'c1', text: 'ok' } as never)
+        b.publish({ type: 'error', message: '出了点事' } as never)
+        b.publish({ type: 'unknown-kind' } as never)
+        b.publish({ type: 'turn/start' } as never)
+        b.publish({ type: 'tool/result', callId: 'c2', text: 'bad', error: 'boom' } as never)
+        b.publish({ type: 'turn/end', reason: 'error' } as never)
+      }).not.toThrow()
+    }
+  })
+
+  test('emit 抛错：只写一行 stderr，不影响回合', () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const b = bridge({
+        emit() {
+          throw new Error('listener boom')
+        },
+      })
+      expect(() => b.publish({ type: 'turn/start' } as never)).not.toThrow()
+      expect(write).toHaveBeenCalledWith(expect.stringContaining(`${DSH_SESSION_EVENT} 旁路派发失败`))
+    } finally {
+      write.mockRestore()
+    }
   })
 })
 
