@@ -54,7 +54,7 @@ const cleanups: Array<() => void> = []
 
 beforeAll(async () => {
   index = await import('../index.js')
-})
+}, 60_000)
 
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) {

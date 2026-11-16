@@ -49,7 +49,7 @@ beforeAll(async () => {
   pairingMod = await import('@pneuma/runtime/core/remote/pairing.js')
   ticketsMod = await import('@pneuma/runtime/core/remote/tickets.js')
   uploadsMod = await import('@pneuma/runtime/core/remote/uploads.js')
-})
+}, 60_000)
 
 afterAll(() => {
   delete process.env['DSC_HOME']

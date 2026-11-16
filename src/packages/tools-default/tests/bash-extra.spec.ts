@@ -51,7 +51,13 @@ let scriptNo = 0
 
 afterEach(() => {
   // 真子进程刚被收掉时可能还攥着 cwd 一瞬（Windows 上 rmSync 会 EPERM）。
-  if (dir !== '') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  if (dir !== '') {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    } catch {
+      // 留给系统清，别让清理失败盖住真正的断言结果。
+    }
+  }
   dir = ''
   scriptNo = 0
 })

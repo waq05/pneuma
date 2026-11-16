@@ -27,7 +27,11 @@ afterEach(() => {
     } catch {
       // 已经退了的实例再收一次无害
     }
-    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    } catch {
+      // Windows 上子进程刚退出时还攥着 cwd：临时目录留给系统清，不让收尾拖红用例。
+    }
   }
 })
 
