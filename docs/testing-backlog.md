@@ -73,8 +73,32 @@
 | B37 | P3-E2 / `ui-prompt-cards`[1]–[5][7]、`ui-review-findings` 样式段、`ui-review-notice`[5]–[7]、`ui-sessions-unsaved-row`[3]–[5]、`ui-sidebar-footer`[2][4]、`ui-subagent-page`[1]–[4][5]、`ui-turn-spacer` 整条、`ui-turn-status`[2]–[5]、`ui-update-button` 整条、`ui-usage-layout`[1][2][4]、`ui-welcome-greeting`[1][3]、`ui-round-foot-hover` 整条、`ui-settings-nav` 整条 | 组件接线/样式/滚动几何/产物审计 | 同上；turn-spacer 滚动几何与 usage-layout CSS 算术建议转 shots 截图探针 | **已迁（2026-11-16，R3b）**：15 个文件 97 条（新增 87），行为段全部落地并逐条反向验证。**零探针可整删**——13 条各自还剩 CSS 文本 / 宿主源码字面量 / 产物审计段，jsdom 与渲染层够不到；最接近的两条是 `ui-review-findings`（仅剩 4 条徽标色选择器）与 `ui-welcome-greeting`（仅剩 `text-wrap: balance`），CSS 转 shots 后即可删 |
 | B38 | P3-tui / 三条前提注记 | `chat-style.spec.ts` 依赖 forks 池每文件独立进程 + isolate（FORCE_COLOR 与假 ctx 不泄漏的前提）；`subagent-live` 单文件 20-30s 偏重、落 tui 层是否挪 integration 归 P6 分片时定 | 设计使然，不是缺口 | P6 改 pool/isolate 前必读 chat-style 文件头；P6 分片时复核 subagent-live 落层 |
 | B39 | P3-R1 / 六条探针的残留 CSS 与扫描钉 | paging 的 viewport 几何两条、fold-combo 的 ui.tsx effect 钉、fold-prefs 的 toolDefaultOpen 字段映射、compaction-row [3][5] 与 tool-row-flat [1][2][5][6]、think-markdown [3]–[5] 的 CSS | jsdom 不做布局不吃样式表；扫描钉无行为等价物 | 删探针时记录于此；处置同 B26（转 shots）或 B29（check-ui 长期跑）。六条探针已删（2026-11-14，行为段全闭环） |
-| B40 | P3-e2e / `ui-anchor-e2e`×5、`ui-plugin-disable-e2e`×1 | 六条真机断言与产品现状脱节（DRIVER 找不到 `.select-trigger`；「Super Agent」页签内容对不上） | 产品 UI 改版后探针断言没跟；e2e 迁移版与原探针同环境逐条同红（同红对照已核） | 后续批更新这两条探针的断言（scripts/ 与 tests/e2e/ 两侧同步改）；修好前 e2e 全量有 6 红是**已知态** |
+| B40 | P3-e2e / `ui-anchor-e2e`×5、`ui-plugin-disable-e2e`×1 | 六条真机断言与产品现状脱节（DRIVER 找不到 `.select-trigger`；「Super Agent」页签内容对不上） | 产品 UI 改版后探针断言没跟；e2e 迁移版与原探针同环境逐条同红（同红对照已核） | **已修（2026-11-16，`779498b7`）**：驱动先等 `.settings-nav-item` 出现再逐页点（最多 10s），诊断值从 `executeJavaScript` 返回值带出（页面里没有主进程的 `out`）；`ui-plugin-disable` 的最终侧栏断言补上本用例未停用的 ui-superagent 入口。两文件合跑 **53/53**；全量 e2e **8 文件 / 161 通过 + 1 skip / exit 0** |
 | B41 | P4 / TUI 帧快照 | ① `DiffBlock` 行数 bug（F14，改产品后重生成 golden）；② 建议清单里四个面 TUI 不存在（组头/read 卡/web 卡/编辑中提示属 ui-renderer/桌面层），已换真实存在面；③ 30 场景收在一个 frames.snapshot.ts（共享 tempHome/模块）而非一场景一文件 | 产品/组织取舍 | B41-①：修 F14 时同批 `UPDATE_GOLDEN=1 npx vitest run --project snapshot tests/snapshots/tui`；B41-②：产品补面后再加 4 条；B41-③：要拆文件则重跑生成 |
 | B42 | P6 / CLI C3「无参数 + 一句输入」 | 需要往 TUI 里敲字并回车：管道 stdin 不是 PTY，ink 的 useInput 拿不到按键；`node-pty` 未进依赖 | 缺件 | 加 `node-pty`（要编原生模块，Windows/CI 都要验）后补 C3；或给 CLI 加 `-p/--print` 非交互模式（产品改动，须单独拍板） |
 | B37-R | R3b 迁移后 13 条探针的残留段 | ① CSS 文本/几何：review-findings 四档徽标色、review-notice [6] 块、turn-spacer [4]、turn-status [3][5]、round-foot-hover [1][2][4] 的 opacity/选择器/减少动效、usage-layout [2] 环形图与媒体查询、welcome `text-wrap: balance`、update-button [7] `no-drag`；② 宿主源码字面量漂移：review-notice [5]；③ 产物审计：update-button [6]、subagent-page [5]；④ 宿主侧契约/白名单：sessions-unsaved-row [1][2]、sidebar-footer [3][4] | jsdom 不应用样式表、不布局；产物与宿主文本不在渲染层 | ①按 B26 转 shots（`desktop/shots/*.mjs`）或在 check-ui 长期保留；②提成宿主具名导出后转契约测试（方案 E，须单独提交）；③归 B31/B32 产物层；④已由宿主/集成层覆盖，随残留①处置后整条删除 |
 | B43 | P4 / 浏览器 DOM 快照 | 10 个高频面已落为 golden：欢迎页、会话列表、消息流（思考+工具卡）、设置-模型、设置-用量、插件中心、命令面板、子代理只读页、dock 开始页、窄屏布局；驱动为 `tests/snapshots/browser/drivers/dom-shot.cjs`（真 Electron + `--remote-debugging-port`），产物只写临时目录，两遍逐字节一致、反向验证 3 条（种子/插件产物/设置产物各一）。残留：① 设置-模型只覆盖浏览器只读态（增删端点、填 key 走原生桥，属桌面 e2e）；② 子代理页用种子名册 + 已完成队友日志，未覆盖「在跑」的轮询/流式时序；③ dock 只钉 guide 页，文件/终端/浏览器页签依赖真实原生视图；④ 10 场景收在一个 `dom.snapshot.ts`（共享驱动与种子工具），与 B41-③ 同口径。 | 真机渲染面 / 产品入口与原生视图限制 | 需要时按场景追加：模型写操作走桌面 e2e，运行中队友需 fake LLM + 轮询时序（参考 `desktop/shots/_batch8-fake-llm.mjs`），原生页签走 `tests/e2e/support/host.ts` 的 Electron 通道 |
+
+## 五、2026-11-16 审计新发现（对比详细设计 / DSH / codex）
+
+> 判定口径：**「绿了但没跑」算缺陷，不算完成**。每条都带实跑证据。
+
+| # | 位置 | 现象 | 证据 | 处置 |
+| --- | --- | --- | --- | --- |
+| B44 | `pnpm test` | 全量并行时 `src/packages/runtime/collapse-prefs.spec.ts` 的 `beforeAll` 超 5s 钩子线，1 个 Failed Suite + 12 条连带 skip；单跑 871ms | 2026-11-16 实跑：`1 failed / 294 passed`；修后 `295 文件 / 3251 条全过` | **已修（`b4339f1f`）**：该钩子给 20s 模块装载预算，断言未动 |
+| B45 | `tests/snapshots/session/basic-turn/` | 目录里没有 `session.jsonl`，4 条用例**整段 skip**；「会话回放 1 场景」实际从未回放 | 实跑 `vitest run --project snapshot tests/snapshots/session`：`1 skipped / 4 skipped` | 录一份真会话入库（需 key、产物要人审）；CI 强制 `DSC_SNAPSHOT=replay`；再补 tool-call / compact 场景 |
+| B46 | `.github/workflows/verify.yml` | CI **完全不跑** `test:e2e`、`test:snapshot`、`test:coverage`。e2e 162 条、浏览器快照 10 份、覆盖率门只在本机存在 | `grep` 全文件只有 `pnpm test` / `test:int` / `test:bench` / `test:cli` | 加 job（或并入 probe）：snapshot 先 `build` + Electron；coverage 用专用跑法；e2e 夜跑 |
+| B47 | `coverage-baseline.json` ↔ 三面跑法 | 同一文件混了两套口径：全局 33.77 能由三面复现（33.82），但 `src/core` 记 41.18、三面只有 34.2，四项阈值全红 | 实跑：lines 34.2 < 40.68 / branches 28.43 < 34.56 / functions 33.81 < 42.42 / statements 32.59 < 39.02 | 重定口径（建议全五 project 专用 job）并一次性重录；详见 [testing-coverage-plan.md](testing-coverage-plan.md) §2 |
+| B48 | `scripts/check-ui.mjs` 42 条 + B37-R 13 条残留 | CSS / 源码文本 / 产物审计仍靠字符串匹配；没有真 Chromium computed-style 层。DSH 用真 Chromium web snapshot，codex 用 insta | `check-ui` 清单：`ui-*-test.mjs` 50 个文件里 42 条在跑 | CSS 段转 `tests/snapshots/browser` 的 computed-style 断言；产物段归 B49；源码身份钉留 check-ui 并写长期理由 |
+| B49 | 产物层（B31/B32） | 没有 DSH 式 `.built.e2e.ts`：插件 `lib/ui/plugins/*/client.js` 审计、界面 SDK `.d.ts` 树 + examples 真 `tsc` 仍只在 `check-ui` | `vitest` 主配置只解析 `src`；check-ui 探针自带「壳未构建则 SKIP」 | 新建 `tests/built/*.built.e2e.ts`：子进程 `createRequire`/`import` 真产物，`DSH_EXAMPLE_MODE=lib` 同款；跑前 build |
+| B50 | `tests/cli/entry.cli.e2e.ts` C3 | 无参数 + 一句输入仍是显式 `test.skip`（B42），8 条 CLI 实际只有 7 条在跑 | `grep test.skip` | 按 DSH 的 `pty.fork()` 驱动（Python，仅 POSIX；Windows 显式 skip），把 C3 跑起来；不引 `node-pty` 原生依赖 |
+| B51 | `verify.yml` 聚合门 | `all-checks-passed.needs` 不含 `probe`（夜跑 8 分钟那道）；夜跑红了聚合门仍绿 | `verify.yml:182` | 要么把 `probe` 纳入 needs（夜跑红也红），要么在文件里明确「夜跑不参与分支保护」 |
+| B52 | live / bench / Windows | live 从未对真模型执行（K6）；bench 数值闸在 runner 不符时只记录（D35）；Windows 车道只有 unit/ui/tui，无 integration/e2e | 交接 §5、`verify.yml` windows job | 首次 Actions 跑取证；评估 Windows integration 子集（对齐 DSH `ci-windows-blocking`） |
+| B53 | 文档漂移 | 详细设计头部仍写「尚未实施」；§1.1 列 `vitest.bench.config.ts`（实际 plain node）；§3.2 写四个 project（实际五个）；§8 写 `support/scenario.ts` 与 4 个场景（实际 `recorder.ts` + 1 个且 skip）；§10.1 的 `test` 含 snapshot（实际 unit/ui/tui） | 文档对照 | 随 W1 开工同批订正，避免下一个人按旧图施工 |
+
+## 六、下一阶段（非覆盖率优先）
+
+1. **B44/B40 已闭环**；`pnpm test` 295/3251、全量 e2e 8 文件 / 161+1 skip / exit 0。
+2. 先做 B46 CI 接线、B45 会话录制、B50 C3、B49 产物层、B48 CSS→Chromium、B53 文档订正。
+3. 再启动 [testing-coverage-plan.md](testing-coverage-plan.md) 的 W1–W6，目标整体 lines ≥ 90%。
+

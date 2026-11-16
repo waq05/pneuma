@@ -2,7 +2,10 @@
 
 > 给谁看：要按这份设计写代码的人。
 > 与 [testing-design.md](testing-design.md) 的分工：那份讲「为什么这么做、分几期、多少工」，这份讲「每个文件长什么样、每个配置写什么值、每个接口收什么参数」。
-> 状态：**设计定稿，尚未实施**。文中的代码块是规格与骨架，不是可运行文件。
+> 状态：**已实施（P0–P7），2026-11-16 审计后仍在演进**。本文保留设计时的规格与骨架；
+> 实做与本文不一致的地方以 [testing-handoff.md](testing-handoff.md) / [testing-deviations.md](testing-deviations.md)
+> 与 [testing-backlog.md](testing-backlog.md) 为准（已知漂移见 B53：project 数量、覆盖率口径、
+> `vitest.bench.config.ts`、快照目录与场景数）。
 > 不懂测试基本概念先读 [testing-101.md](testing-101.md)。
 
 ---

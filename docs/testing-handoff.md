@@ -16,10 +16,10 @@
 | **P1b 包级测试** | ✅ | 119 条包级 `.test.mjs` → `.spec.ts`（806 条用例），旧脚手架拆净 |
 | **P2 内核探针** | ✅ | 122 → 7：能迁的迁进 unit/integration，剩下的 7 条是机制上迁不走的（§4） |
 | **P3 ui 层** | ✅ | 九组代理迁移 + 四批渲染测试（R1/R2/R3a/R3b）+ 收尾对账；check-ui 80 → 42（全部是 jsdom 够不到的产物审计/源码闸/CSS） |
-| **P4 快照层** | ✅ | TUI 帧 golden 30 份、录制回放场景、**浏览器 DOM 快照 10 份**、覆盖率基线冻结 |
+| **P4 快照层** | ✅ 部分 | TUI 帧 golden 30 份、**浏览器 DOM 快照 10 份**、覆盖率基线冻结；**会话录制未入库**，会话回放场景只 skip（B45） |
 | **P5 live/bench/契约** | ✅ | live 冒烟 5 条（独立 workflow + 防假绿）、性能基准 4 条（基线 + PR 门）、契约测试 3 份 |
 | **P6 CI/入口** | ✅ | integration 三片并行、Node 22/24 矩阵、真入口 e2e 8 条、flake 治理（K2+/K4）、聚合门 |
-| **P7 收尾** | ✅ | 属性测试 17 条、覆盖率基线门、Windows 车道、文档定稿 |
+| **P7 收尾** | ✅ | 属性测试 17 条、覆盖率基线门、Windows 车道、文档定稿；**2026-11-16 审计**补 B44–B53 与 [90% 计划](testing-coverage-plan.md) |
 
 ## 2 现场
 
@@ -34,17 +34,17 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `pnpm test`（unit + ui + tui） | **294 文件 / 3245 条 / exit 0** |
-| `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0** |
-| `pnpm run test:snapshot` | TUI 帧 30 份 + 会话回放 1 场景 + 浏览器 10 份，全绿（浏览器单跑约 200s） |
-| `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42） |
-| `pnpm run test:e2e` | 143 通过 / **6 红（已知，B40）** / 13 skip |
-| `pnpm run typecheck:spec` | exit 0（两份 tsconfig：node 侧 + 界面半） |
+| `pnpm test`（unit + ui + tui） | **295 文件 / 3251 条 / exit 0**（2026-11-16 审计复跑） |
+| `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0**（交接时记录，审计未重跑） |
+| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 10 全绿；**会话回放 1 场景是 skip**（无 `session.jsonl`，B45） |
+| `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42/B50） |
+| `pnpm run test:e2e` | **8 文件 / 161 通过 + 1 skip / exit 0**（2026-11-16 审计复跑；B40 的 6 红已归零） |
+| `pnpm run typecheck:spec` | exit 0（2026-11-16 审计复跑，两份 tsconfig） |
 | `pnpm run check:style` | exit 0（1500+ 文件） |
 | `node scripts/check-core.mjs` | **7/7 通过**（Vitest 表达不了的探针，§4） |
 | `node scripts/check-ui.mjs` | **42/42 通过** |
 | `pnpm run test:bench` | 4 条 vs 本机基线，全部 ≤1.5×；runner 不符只记录（D35） |
-| `pnpm run test:coverage` | 三面口径 lines 33.77 / branches 26.95 / functions 32.68 / statements 32.2（D37）；逐目录门 `src/core/**` 40.68% 线已生效（D39：设计目标 60% 未达到，待立项） |
+| `pnpm run test:coverage` | **当前口径自相矛盾**：三面跑 `src/core/**` 四项全红（lines 34.2 < 40.68），而基线记 41.18；全局 33.82 对基线 33.77。详见 B47 与 [testing-coverage-plan.md](testing-coverage-plan.md) |
 
 ## 3 这套东西长什么样
 
@@ -86,21 +86,24 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 ## 5 没做到 / 只验证到一半的，明说
 
-1. **e2e 有 6 条已知红**（B40）：`ui-anchor`×5（产品改版后找不到 `.select-trigger`）与
-   `ui-plugin-disable`×1（侧栏页签名对不上）。迁移版与原探针同环境同红，是对照过的
-   **已知态**，不是本体系引入。
-2. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
+1. **e2e 已全绿**：B40 修完（`779498b7`），全量 `8 文件 / 161 通过 + 1 skip / exit 0`。
+   原 6 条已知红（`ui-anchor`×5、`ui-plugin-disable`×1）全部转绿，不再是已知态。
+2. **快照层的会话回放其实没跑**（B45）：`tests/snapshots/session/basic-turn/` 没有
+   `session.jsonl`，4 条用例整段 skip；TUI 帧 30 与浏览器 10 是实跑的。
+3. **CI 不跑 e2e / snapshot / coverage**（B46）：`verify.yml` 只有 `pnpm test`、`test:int`、
+   `test:bench`、`test:cli`；快照与覆盖率门目前只在本机存在。
+4. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
    「无 key 整层跳过（exit 0）」与类型检查。`test-live.yml` 的 key 预检 / 非零用例断言
    也没在 Actions 上跑过——首次夜间跑才算实证。
-3. **CI 没有真跑过**：`verify.yml` 的全部 job（core / integration 三片 / bench / cli /
+5. **CI 没有真跑过**：`verify.yml` 的全部 job（core / integration 三片 / bench / cli /
    windows / ui / desktop / probe）与 `test-live.yml` 只在本机按同一脚本验证过命令，
    GitHub 上没跑过一次。Windows 车道与 Ubuntu 的差异（路径、ConPTY、Electron）要等首跑。
-4. **覆盖率基线口径是三面**（unit+ui+snapshot，D37），不含 integration/tui：它们全量
-   并行时会因负载自红，把它们的覆盖算进数值基线会让门禁随机器忙闲红绿。full 跑只会
-   更高，基线只做地板。
-5. **F13 ConPTY Ctrl+C** 仍是 `test.skip`（B25）：当前环境 3/3 稳定红、老探针同红。
-6. **浏览器快照 4 条残留**（B43）：模型页写操作、运行中队友、dock 原生页签、键盘路径。
-7. **C3 无参数 + 一句输入**没有自动化（B42）：需要 PTY；当前显式 `test.skip`。
+6. **覆盖率口径与阈值互斥**（B47）：三面跑 `src/core/**` 四项全红（lines 34.2 < 40.68），
+   基线却记 41.18；全局 33.82 对基线 33.77。90% 目标按
+   [testing-coverage-plan.md](testing-coverage-plan.md) 重定口径后再抬。
+7. **F13 ConPTY Ctrl+C** 仍是 `test.skip`（B25）：当前环境 3/3 稳定红、老探针同红。
+8. **浏览器快照 4 条残留**（B43）：模型页写操作、运行中队友、dock 原生页签、键盘路径。
+9. **C3 无参数 + 一句输入**没有自动化（B42/B50）：需要 PTY；当前显式 `test.skip`。
 
 ## 6 源码层已修 / 还欠什么
 
@@ -114,10 +117,17 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 **还欠（要拍板）**：
 
-- **F14** `DiffBlock` 可用行数算错（4 行 hunk 显示「… 还有 10 行」）。golden 如实记录了
-  错态；修产品时同批 `UPDATE_GOLDEN=1` 重生成 `12-approval-diff.txt`（B41-①）。
-- **B37-R**：R3b 迁移后 13 条探针的 CSS 与源码残留，按 B26 转 shots 或留 check-ui。
-- **B31/B32**：界面 SDK 产物层与插件产物审计是留 scripts 还是单开产物 project。
+- **F14** `DiffBlock` 可用行数算错（4 行 hunk 显示「… 还有 10 行」）——**已修**（`dabfe652`），
+  新增 `DiffBlock.spec.ts` 6 条整屏帧断言，golden `12-approval-diff.txt` 同批重生成。
+
+**还欠（要拍板 / 下一阶段）**：
+
+- **B45**：会话回放没有录制文件，整段 skip；要一份真会话入库。
+- **B46**：CI 接 e2e / snapshot / coverage 三个入口。
+- **B47**：覆盖率口径与阈值互斥，90% 计划见 [testing-coverage-plan.md](testing-coverage-plan.md)。
+- **B37-R / B48**：R3b 迁移后 13 条探针的 CSS 与源码残留；CSS 转真 Chromium computed-style。
+- **B31/B32 / B49**：界面 SDK 产物层与插件产物审计——建 `tests/built/*.built.e2e.ts`，对齐 DSH。
+- **B50**：C3 用 Python `pty.fork()` 驱动补上（POSIX 跑、Windows 显式 skip）。
 - **B13/B21**：桌面主进程（更新检查、dock 浏览器）要不要真主进程测试通道——本轮判定
   不做（D38）。
 
@@ -148,13 +158,16 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 ```sh
 git status --porcelain          # 应为空
-git log --oneline -10           # 本阶段的提交（P3–P7）
-pnpm test                       # 294 文件 / 3245 条
-pnpm run test:int               # 先 build；integration 全量
-pnpm run test:snapshot          # TUI 30 + 回放 + 浏览器 10（约 4 分钟，需 Electron）
+git log --oneline -10           # 本阶段的提交（P3–P7 + 2026-11-16 审计修复）
+pnpm test                       # 295 文件 / 3251 条
+pnpm run test:int               # 先 build；integration 全量（114 / 1883 + 1 skip）
+pnpm run test:snapshot          # TUI 30 + 浏览器 10；会话回放当前 skip（B45）
 pnpm run test:cli               # 8 + 1 skip
-pnpm run test:e2e               # 143 通过 / 6 已知红
+pnpm run test:e2e               # 8 文件 / 161 通过 + 1 skip
 pnpm run typecheck:spec && pnpm run check:style
 node scripts/check-core.mjs     # 7/7
 node scripts/check-ui.mjs       # 42/42
 ```
+
+**覆盖率目前不要照抄旧预期**：`pnpm run test:coverage` 的三面跑法会让 `src/core/**`
+四项阈值变红（B47），先按 [testing-coverage-plan.md](testing-coverage-plan.md) 定口径。
