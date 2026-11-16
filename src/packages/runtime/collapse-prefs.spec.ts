@@ -86,7 +86,9 @@ function uiMethods(service: Record<string, unknown>): {
 beforeAll(async () => {
   prefs = await import('@pneuma/runtime/core/prefs.js')
   runtime = await import('@pneuma/runtime/packages/runtime/index.js')
-})
+  // 动态 import 要拉整条 runtime 依赖链；全量并行时 5 秒钩子会抖红（单独跑 871ms）。
+  // 这不是放宽断言，是给「模块首次装载」一个不被邻居挤爆的预算。
+}, 20_000)
 
 describe('① 读档：缺键给默认值', () => {
   test('没这两项时 collapseTiming = completion、foldedReplies = final', () => {
