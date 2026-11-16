@@ -22,6 +22,7 @@ import { RuntimeProvider, type HostChannel } from '@dsc/ui-runtime'
 import type { HostSnapshot, SlotRenderApi, TranscriptEntry, UiPluginApi } from '@dsc/ui'
 import { type TranscriptChildSlot } from './shared.js'
 import plugin from './ui.js'
+import zh from '../locale/ui.zh.json'
 
 /**
  * TranscriptFlow 不直接导出（对外面是 `defineUiPlugin` 的定义对象）：经 `apply` 把它
@@ -192,5 +193,47 @@ describe('设置下发链：shell.uiprefs 事件同步进壳（ui-fold-prefs [6]
       await Promise.resolve()
     })
     expect((container.querySelector('.think-head') as HTMLElement).getAttribute('aria-expanded')).toBe('false')
+  })
+})
+
+describe('首屏招呼语按时段渲染、到整点自动换档（ui-welcome-greeting [3] 行为化）', () => {
+  /** 一条开场系统提示：让空会话进欢迎态（请求账单卡不算真内容）。 */
+  const promptEntry = (): TranscriptEntry =>
+    ({
+      kind: 'system-prompt',
+      id: 1,
+      prompt: { hash: 'abcdef0123456789', chars: 10, sections: [] },
+    }) as TranscriptEntry
+
+  const h1Of = (container: HTMLElement): string | undefined => container.querySelector('.welcome h1')?.textContent ?? undefined
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 10, 2, 15, 0, 0))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('15:00 画「下午好」；到 18:00 的换档整点自己变成「晚上好」', () => {
+    const { container } = renderFlow([promptEntry()])
+    expect(h1Of(container)).toBe(zh['transcript.welcome.hello.afternoon'])
+    act(() => {
+      vi.setSystemTime(new Date(2026, 10, 2, 18, 0, 0))
+      vi.advanceTimersByTime(3 * 3_600_000)
+    })
+    expect(h1Of(container)).toBe(zh['transcript.welcome.hello.evening'])
+  })
+
+  test('开场账单卡不把欢迎态顶掉；有真人消息才不画欢迎态', () => {
+    const onlyPrompt = renderFlow([promptEntry()])
+    expect(h1Of(onlyPrompt.container)).toBeDefined()
+    cleanup()
+    const withUser = renderFlow([
+      promptEntry(),
+      { kind: 'user', id: 2, text: '问一句', ts: 1 } as TranscriptEntry,
+    ])
+    expect(h1Of(withUser.container)).toBeUndefined()
   })
 })

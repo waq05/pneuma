@@ -10,12 +10,15 @@
  *
  * @module dsc-ui-transcript/ui/foot.spec
  */
-import { afterEach, describe, expect, test } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { act, cleanup, render } from '@testing-library/react'
 import type { RoundInfo } from './timing.js'
 import { RoundFoot, TurnStatusLine } from './rows/foot.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 /** 一轮元信息：有起止时刻（算得出用时与时刻）。 */
 const roundOf = (over: Partial<RoundInfo> = {}): RoundInfo =>
@@ -84,5 +87,49 @@ describe('回合进行中的直播行（TurnStatusLine）', () => {
     const stage = container.querySelector('.turn-status-stage') as HTMLElement
     expect(stage.textContent).toBe('Numa 工作中')
     expect(stage.textContent).not.toContain('NaN')
+  })
+})
+
+describe('直播行是一行、自带时钟、挂扫光（ui-turn-status [2] 行为化）', () => {
+  test('不再渲染旧分割线与第二行的活动名', () => {
+    const { container } = render(<TurnStatusLine text="Numa 工作中" startedAt={null} />)
+    expect(container.querySelector('.turn-status-rule')).toBeNull()
+    expect(container.querySelector('.turn-status-activity')).toBeNull()
+  })
+
+  test('自己带每秒时钟：用时读数每秒跳一次（不带着消息流重排）', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(100_000)
+    const { container } = render(<TurnStatusLine text="Numa 工作中" startedAt={95_000} />)
+    const stage = container.querySelector('.turn-status-stage') as HTMLElement
+    const first = stage.textContent
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    expect(stage.textContent).not.toBe(first)
+    expect(stage.textContent).toContain('Numa 工作中')
+  })
+
+  test('具体活动收进悬停提示（行面不重复组头）', () => {
+    const { container } = render(<TurnStatusLine text="Numa 工作中" startedAt={null} hint="正在调用 bash" />)
+    expect((container.querySelector('.turn-status') as HTMLElement).getAttribute('title')).toBe('正在调用 bash')
+  })
+})
+
+describe('轮尾用量 / 时刻 / 分隔点由组件画出来（ui-round-foot-hover [3] 行为化）', () => {
+  test('停下后三者都在 DOM；跑动中一个都不画（不是透明占位）', () => {
+    const stopped = render(
+      <RoundFoot round={roundOf()} running={false} usage={usage} tokens={900} onFork={() => undefined} />,
+    )
+    expect(stopped.container.querySelector('.round-tokens')).toBeTruthy()
+    expect(stopped.container.querySelector('.round-clock')).toBeTruthy()
+    expect(stopped.container.querySelector('.round-sep')).toBeTruthy()
+
+    const running = render(
+      <RoundFoot round={roundOf()} running={true} usage={usage} tokens={900} onFork={() => undefined} />,
+    )
+    expect(running.container.querySelector('.round-tokens')).toBeNull()
+    expect(running.container.querySelector('.round-clock')).toBeNull()
+    expect(running.container.querySelector('.round-sep')).toBeNull()
   })
 })
