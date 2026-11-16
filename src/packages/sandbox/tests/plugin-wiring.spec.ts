@@ -129,7 +129,8 @@ interface SandboxServiceLike {
 beforeAll(async () => {
   sandboxPlugin = (await import('../index.js')).sandboxPlugin
   policyModule = await import('../policy.js')
-})
+  // 动态 import 要拉整条 sandbox 依赖链；全量并行时 5 秒钩子会抖红（单跑 ~1.2s）。
+}, 20_000)
 
 function boot(options: { mode?: string; networkAccess?: boolean } = {}) {
   const cwd = join(HOME, 'work')
