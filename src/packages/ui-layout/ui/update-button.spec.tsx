@@ -16,9 +16,7 @@
  */
 import { afterEach, describe, expect, test } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import type { UpdateButton } from './update-button.js'
-
-type UpdateButtonComponent = typeof UpdateButton
+import { UpdateButton } from './update-button.js'
 
 interface Bridge {
   calls: { op: string; args: unknown[] }[]
@@ -53,11 +51,6 @@ function installBridge(replies: Record<string, () => Promise<unknown>> = {}): Br
   }
 }
 
-/** 组件从模块里 import；`useHostNative` 每次调用都重读全局，所以桥可以在 import 前后装。 */
-async function loadButton(): Promise<UpdateButtonComponent> {
-  return (await import('./update-button.js')).UpdateButton
-}
-
 const query = (container: HTMLElement): HTMLButtonElement | null =>
   container.querySelector('.update-btn') as HTMLButtonElement | null
 
@@ -74,7 +67,6 @@ afterEach(() => {
 
 describe('只有真有新版才出现（[1][2]）', () => {
   test('没有原生桥（浏览器 / 远程页）整块不渲染，也不问 checkUpdate', async () => {
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     expect(query(container)).toBeNull()
@@ -82,7 +74,6 @@ describe('只有真有新版才出现（[1][2]）', () => {
 
   test('桥在但状态不是 available：不出现', async () => {
     const bridge = installBridge({ checkUpdate: () => Promise.resolve({ status: 'latest' }) })
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     expect(query(container)).toBeNull()
@@ -91,7 +82,6 @@ describe('只有真有新版才出现（[1][2]）', () => {
 
   test('available：按钮出现，带版本号与「更新」文案', async () => {
     installBridge({ checkUpdate: () => Promise.resolve({ status: 'available', version: '1.2.3', size: 2_500_000 }) })
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     const button = query(container)
@@ -106,7 +96,6 @@ describe('只有真有新版才出现（[1][2]）', () => {
 describe('两种取数都要：问一次 + 订阅（[3]）', () => {
   test('挂载时问过一次；之后 update-status 推来 available 也能出现', async () => {
     const bridge = installBridge({ checkUpdate: () => Promise.resolve({ status: 'latest' }) })
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     expect(query(container)).toBeNull()
@@ -119,7 +108,6 @@ describe('两种取数都要：问一次 + 订阅（[3]）', () => {
 
   test('卸载时两条订阅都退掉', async () => {
     const bridge = installBridge({ checkUpdate: () => Promise.resolve({ status: 'latest' }) })
-    const UpdateButton = await loadButton()
     const { unmount } = render(<UpdateButton />)
     await flush()
     unmount()
@@ -138,7 +126,6 @@ describe('点击走 installUpdate 并画进度（[4]）', () => {
           resolveInstall = resolve
         }),
     })
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     const button = query(container) as HTMLButtonElement
@@ -165,7 +152,6 @@ describe('点击走 installUpdate 并画进度（[4]）', () => {
       checkUpdate: () => Promise.resolve({ status: 'available', version: '1.2.3' }),
       installUpdate: () => Promise.resolve({ ok: false, error: '下载失败：网络断了' }),
     })
-    const UpdateButton = await loadButton()
     const { container } = render(<UpdateButton />)
     await flush()
     const button = query(container) as HTMLButtonElement
