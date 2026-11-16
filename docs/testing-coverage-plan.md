@@ -116,6 +116,26 @@ config-store + sandbox 的 review / net-proxy / execpolicy / plugin-wiring / win
 （需要真 Docker / 受限令牌才能走到的路径）。这两块不硬凑单测，按 D42 挪到 W6 的
 「带理由的排除 + 替代验证」或后续 Windows 集成层。W2 起转向 0% 的界面/外部面。
 
+### 1.3 W2 首轮（2026-11-16，进行中）
+
+先把「纯决策面 / 协议面」打完，再碰装配层。新增 5 个 spec、68 条：
+
+| spec | 条数 | 钉住的行为 |
+| --- | ---: | --- |
+| `packages/lsp/tests/protocol.spec.ts` | 29 | Content-Length 分帧（半包/粘包/超限）、URI↔路径、Location/hover/diagnostics 归一、行位移 LCS、服务器解析合并 |
+| `packages/config-core/tests/market.spec.ts` | 6 | ClawHub/skills.sh 源识别、榜单/搜索地址、GitHub tree、市场视图 |
+| `packages/self-improve/tests/draft.spec.ts` | 10 | 草稿回答解析（新建/修订/NONE/非法）、整理节流与一次整理的边界 |
+| `packages/ui-composer/ui/attachments.spec.ts` | 12 | 类型判定/名字兜底、XHR 上传协议、20 张预算与帧裁剪 |
+| `packages/approval/tests/review.spec.ts` | 11 | 判官 JSON 收口（白名单/矛盾/重复字段）、改动前预览的 diff 推演 |
+
+实测：**24,053 / 46,646 = 51.56%**（W1 收尾 23,745 / 50.90，+308 行 / +0.66 点）；
+branches 42.75 / functions 46.45 / statements 49.42；`src/core` 保持 86.75 / 74.91 / 86.17 / 83.07。
+跑法 `pnpm test:coverage`，439 文件通过 / 1 skip、5,568 用例通过 / 5 skip、exit 0；基线抬到
+51.5 / 42.6 / 46.4 / 49.3（`src/core` 不动）。首轮收益小是因为挑的是小文件；W2 剩余量在
+`ui-status/ui.tsx`（618）、`browser/index.ts`（495）、`subagent/index.ts`（439）、`remote/index.ts`（429）、
+`self-improve/index.ts`（414）、`hooks/index.ts`（342）、`lsp/client.ts`（277）、`tools-default/bash.ts`（262）、
+`session-core/hooks.ts`（258）、`config-core/market.ts`（257）这些装配/长尾文件，下一批按此顺序推进。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
