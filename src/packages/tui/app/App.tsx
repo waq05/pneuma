@@ -73,6 +73,7 @@ import {
   focusableRows,
   isFocusableRow,
   settingsWindowStart,
+  tableRecordsOf,
   type SettingsGroupRef,
   type SettingsRow,
 } from './settings-model.js'
@@ -87,6 +88,14 @@ import { BORDER, GAP, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
 const EXIT_WINDOW_MS = 2000
 /** 双击 Esc 撤回上一轮的判定窗口（对齐 dsh 的 3 秒）。 */
 const REWIND_WINDOW_MS = 3000
+/** 记录表文本列的 `pattern` 校验：正则写坏了按通过处理（最终校验在宿主 save）。 */
+const matchesSettingsPattern = (pattern: string, value: string): boolean => {
+  try {
+    return new RegExp(pattern).test(value)
+  } catch {
+    return true
+  }
+}
 /** 子代理转录跟活的节流：队友在写的时候最多每 400ms 重放一次它的运行记录。 */
 const PEEK_REFRESH_MS = 400
 /** 子代理只读转录的提示行（比主回看多一句「只读」）。 */
@@ -269,7 +278,14 @@ export function App({
   const [settingsValues, setSettingsValues] = useState<Record<string, SettingsValues>>({})
   /** 焦点在 focusables（可聚焦行号表）里的位置。 */
   const [settingsIndex, setSettingsIndex] = useState(0)
-  const [settingsEdit, setSettingsEdit] = useState<{ sectionId: string; key: string; draft: string } | null>(null)
+  const [settingsEdit, setSettingsEdit] = useState<{
+    sectionId: string
+    key: string
+    draft: string
+    /** 记录表用：正在编辑第几行 / 哪一列（普通字段不带这两位）。 */
+    row?: number
+    column?: string
+  } | null>(null)
   const [settingsNotice, setSettingsNotice] = useState<{ ok: boolean; text: string } | null>(null)
   /** 当前展开的设置子页（null = 根页；dsh 式一层分组，Esc 先退子页再关页）。 */
   const [settingsGroup, setSettingsGroup] = useState<SettingsGroupRef | null>(null)
@@ -584,9 +600,10 @@ export function App({
     }))
 
   // ---- 设置页（/settings）的行模型与窗口切片（几何与 SettingsOverlay 共表）----
+  // values 也进来一份：`rows` 字段（记录表）的行数由它决定，行模型不自己存值。
   const settingsRows = useMemo(
-    () => buildSettingsRows(settingsSections, settingsSection, settingsGroup),
-    [settingsSections, settingsSection, settingsGroup],
+    () => buildSettingsRows(settingsSections, settingsSection, settingsGroup, settingsValues),
+    [settingsSections, settingsSection, settingsGroup, settingsValues],
   )
   const settingsFocusables = useMemo(
     () => focusableRows(settingsRows, settingsSections),
@@ -758,6 +775,30 @@ export function App({
     return field !== undefined ? { sectionId: row.sectionId, field } : null
   }
 
+  /**
+   * 记录表单元格定位（行模型里的 `table-cell`）：字段、它所在那一行的记录、这一列。
+   * 定位不到（值还没装填 / 宿主换了字段表）返回 null，调用方按「没有这一行」处理。
+   */
+  const settingsTableCellAt = (
+    row: SettingsRow | undefined,
+  ): {
+    sectionId: string
+    field: Extract<SettingsField, { type: 'rows' }>
+    column: Extract<SettingsField, { type: 'rows' }>['columns'][number]
+    records: Record<string, string>[]
+    rowIndex: number
+  } | null => {
+    if (row === undefined || row.kind !== 'table-cell') return null
+    const section = settingsSections.find((entry) => entry.id === row.sectionId)
+    const field = section?.fields[row.fieldIndex]
+    if (field === undefined || field.type !== 'rows') return null
+    const column = field.columns[row.columnIndex]
+    if (column === undefined) return null
+    const records = tableRecordsOf(settingsValues[row.sectionId], field.key)
+    if (records[row.rowIndex] === undefined) return null
+    return { sectionId: row.sectionId, field, column, records, rowIndex: row.rowIndex }
+  }
+
   /** 行的主动作（Enter 与「点击该行」共用）：switch/select 改值即存，text/number 进编辑。 */
   const activateSettingsRow = (row: SettingsRow | undefined, direction: 1 | -1): void => {
     if (row?.kind === 'section') {
@@ -791,6 +832,36 @@ export function App({
       }
       return
     }
+    if (row?.kind === 'table-add') {
+      // 记录表末尾那行：「加一条」= 追加一条空记录，值由宿主在 save 里补默认。
+      const section = settingsSections.find((entry) => entry.id === row.sectionId)
+      const field = section?.fields[row.fieldIndex]
+      if (field === undefined || field.type !== 'rows') return
+      const records = tableRecordsOf(settingsValues[row.sectionId], field.key)
+      applySetting(row.sectionId, field.key, [...records, {}])
+      return
+    }
+    const cell = settingsTableCellAt(row)
+    if (cell !== null) {
+      // 记录表单元格：下拉按 ←→ 循环选项；文本进编辑态（草稿初值 = 这一格的当前值）。
+      const current = cell.records[cell.rowIndex]?.[cell.column.key] ?? ''
+      if (cell.column.type === 'select') {
+        const options = cell.column.options
+        if (options.length === 0) return
+        const at = options.findIndex((option) => option.value === current)
+        const next = options[(((at + direction) % options.length) + options.length) % options.length] ?? options[0]
+        if (next !== undefined) {
+          applySetting(
+            cell.sectionId,
+            cell.field.key,
+            cell.records.map((entry, index) => (index === cell.rowIndex ? { ...entry, [cell.column.key]: next.value } : entry)),
+          )
+        }
+        return
+      }
+      setSettingsEdit({ sectionId: cell.sectionId, key: cell.field.key, draft: current, row: cell.rowIndex, column: cell.column.key })
+      return
+    }
     const hit = settingsFieldAt(row)
     if (hit === null) return
     const { sectionId, field } = hit
@@ -822,6 +893,28 @@ export function App({
   /** 编辑态 Enter：number 先校验（非法留编辑态弹红，对齐 dsh），text 直接入库。 */
   const commitSettingsEdit = (): void => {
     if (settingsEdit === null) return
+    if (settingsEdit.row !== undefined && settingsEdit.column !== undefined) {
+      // 记录表的文本格：把这一格写回整张表（数组整体保存，宿主收的是完整记录表）。
+      const cell = settingsTableCellAt(settingsRows[settingsFocusRow])
+      if (cell === null || cell.field.key !== settingsEdit.key || cell.rowIndex !== settingsEdit.row || cell.column.key !== settingsEdit.column) {
+        setSettingsEdit(null)
+        return
+      }
+      const typed = settingsEdit.draft
+      // 正则只在非空时提示性检查；宿主 save() 仍会再校验一次（这里不假装把住了关）。
+      const pattern = cell.column.type === 'text' ? cell.column.pattern : undefined
+      if (typed !== '' && pattern !== undefined && !matchesSettingsPattern(pattern, typed)) {
+        setSettingsNotice({ ok: false, text: `${cell.column.label} 这一格不符合格式：${typed}` })
+        return
+      }
+      setSettingsEdit(null)
+      applySetting(
+        cell.sectionId,
+        cell.field.key,
+        cell.records.map((entry, index) => (index === cell.rowIndex ? { ...entry, [cell.column.key]: typed } : entry)),
+      )
+      return
+    }
     const hit = settingsFieldAt(settingsRows[settingsFocusRow])
     if (hit === null || !('key' in hit.field) || hit.field.key !== settingsEdit.key) {
       setSettingsEdit(null)
@@ -1126,7 +1219,17 @@ export function App({
       const slice = row - 1 - SETTINGS_LIST_TOP
       if (slice < 0 || slice >= settingsViewport) return null
       const target = settingsRows[settingsWindow + slice]
-      if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group' && target.kind !== 'section')) return null
+      if (
+        target === undefined ||
+        (target.kind !== 'field' &&
+          target.kind !== 'hint' &&
+          target.kind !== 'group' &&
+          target.kind !== 'section' &&
+          target.kind !== 'table-cell' &&
+          target.kind !== 'table-add')
+      ) {
+        return null
+      }
       const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
       if (!isFocusableRow(target, fields)) return null
       activateSettingsRow(target, 1)
@@ -1528,6 +1631,20 @@ export function App({
           }
         }
         return
+      }
+      if (key.delete) {
+        // 记录表：焦点在某个单元格上按 Delete = 删掉它所在那一行（下拉格没法进编辑态，
+        // 所以删除不能只挂在编辑态里）。删完焦点由窗口夹住，不会停在不存在的行上。
+        const cell = settingsTableCellAt(settingsRows[focusRow])
+        if (cell !== null) {
+          setSettingsEdit(null)
+          applySetting(
+            cell.sectionId,
+            cell.field.key,
+            cell.records.filter((_, index) => index !== cell.rowIndex),
+          )
+          return
+        }
       }
       if (key.escape) {
         // 逐级退栈（dsh 同款：子页里 Esc 是「返回上级」）：组子页 → 分区页 → 根页 → 关页

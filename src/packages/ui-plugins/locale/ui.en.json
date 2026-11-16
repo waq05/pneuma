@@ -122,5 +122,13 @@
   "plugins.err.openDesktopOnly": "Opening with a system app is available in the desktop app only (a browser has no such bridge)",
   "plugins.err.open": "Open failed: {message}",
   "plugins.config.open": "Open",
-  "plugins.config.unrecognized": "{value} · Unrecognized"
+  "plugins.config.unrecognized": "{value} · Unrecognized",
+  "plugins.config.fact.empty": "(no value)",
+  "plugins.config.rows.add": "Add row",
+  "plugins.config.rows.cellAria": "Row {row}, {column}",
+  "plugins.config.rows.empty": "No records yet. Use “Add row” to create the first one.",
+  "plugins.config.rows.invalid": "{column} does not match the expected format: {value}",
+  "plugins.config.rows.pick": "Select",
+  "plugins.config.rows.remove": "Remove",
+  "plugins.config.rows.removeTip": "Remove this row"
 }

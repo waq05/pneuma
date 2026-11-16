@@ -12,7 +12,9 @@
  * 宿主加一个内置分区、或某个插件声明 `inSettings`，导航里自动多一项。渲染分三类：
  *
  * - **声明式**（`fields` 非空）：走 {@link GenericFields}，text / number / select / switch /
- *   info / button 六种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
+ *   fact / rows / info / button 八种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
+ *   `fact` 是只读一行（值来自 values，没有就占位），`rows` 是记录表（每行按 columns
+ *   出输入框/下拉、可增删行，值是一组 `Record<string,string>`）；
  * - **结构化**（`custom: true`）：模型 / 模式 / 技能 / 归档 / 用量这五个由桌面端手画。这一版
  *   搬了**模式（预设）**与**模型**（模型只做只读端点 + 选默认模型，增删端点与写 key 被
  *   有意排除），其余给一条**诚实的说明**（说清去哪做、为什么壳里没有），不假装有界面；
@@ -165,6 +167,38 @@ function sectionIcon(id: string): ReactNode {
 const settingsOpen = createSignal(false)
 function setSettingsOpen(next: boolean): void {
   settingsOpen.set(next)
+}
+
+/**
+ * `rows` 字段的值表：宿主给的是 `Record<string,string>[]`，但旧宿主 / 插件实现可能给别的
+ * 形状（字符串、null、数组里混进非对象）。这里统一收成安全的记录数组，界面永远不崩。
+ */
+function rowValuesOf(value: SettingsValue | undefined): Record<string, string>[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is Record<string, string> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+}
+
+/**
+ * `fact` 行的展示文本：只读值只认标量；宿主塞了对象/数组就给空串（别画成 `[object Object]`）。
+ */
+function scalarTextOf(value: SettingsValue | undefined): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+/** 改表里某一格：返回新数组（不改原数组，React 状态才认得出变化）。 */
+function withCellValue(rows: Record<string, string>[], rowIndex: number, column: string, value: string): Record<string, string>[] {
+  return rows.map((record, index) => (index === rowIndex ? { ...record, [column]: value } : record))
+}
+
+/** 校验列的 `pattern`（字符串）：正则写坏了按通过处理（宿主那边还会再校验一次）。 */
+function matchesPattern(pattern: string, value: string): boolean {
+  try {
+    return new RegExp(pattern).test(value)
+  } catch {
+    return true
+  }
 }
 
 export default defineUiPlugin({
@@ -649,6 +683,174 @@ function GenericFields({
                 })}
               </span>
             ) : null}
+          </div>
+        </div>
+      )
+    }
+    if (field.type === 'fact') {
+      // 只读事实行（从上游来源设置卡移植）：值就在 values 里，没有就给占位。
+      // 宿主用 `settings: 'deployment'` 标记这类值来自部署检查——壳不认那个标记，
+      // 只认 values：产值的分工在宿主，界面不猜。
+      const shown = scalarTextOf(values[field.key])
+      return (
+        <div className="setting-row info" key={field.key}>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+          </div>
+          <div className="setting-info">
+            <span>{shown === '' ? t('settings.ui.fact.empty') : shown}</span>
+          </div>
+        </div>
+      )
+    }
+    if (field.type === 'rows') {
+      const list = rowValuesOf(values[field.key])
+      /** 这组表格的草稿键前缀：按「行号 + 列 key」存，删/加行时整组清掉免得错位。 */
+      const draftPrefix = `${field.key}#`
+      const clearDrafts = (): void => {
+        setDraft((current) => {
+          const next: Record<string, string> = {}
+          for (const [key, value] of Object.entries(current)) {
+            if (!key.startsWith(draftPrefix)) next[key] = value
+          }
+          return next
+        })
+      }
+      /**
+       * 写回整张表：先落到界面（表格是「跟手」的控件，等 IPC 回来才变会一顿），
+       * 再让宿主存；无论成败都回读一次宿主那份（失败时把乐观值收回来，不留假象）。
+       */
+      const saveRows = (next: Record<string, string>[]): void => {
+        setValues((current) => ({ ...current, [field.key]: next }))
+        setNote(null)
+        void channel
+          .invoke<SettingsMutation>('setSettingValue', [section.id, field.key, next])
+          .then((result) => {
+            if (!result.ok) {
+              setNote({ tone: 'error', text: t('settings.ui.saveFailed', { message: result.error }) })
+            } else if (result.notice !== undefined) {
+              setNote({ tone: 'ok', text: result.notice })
+            }
+            reload()
+            onChanged?.()
+          })
+          .catch((error: unknown) => {
+            setNote({ tone: 'error', text: t('settings.ui.saveFailed', { message: text(error) }) })
+            reload()
+          })
+      }
+      return (
+        <div className="setting-row" key={field.key} style={{ alignItems: 'flex-start' }}>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+          </div>
+          <div
+            className="setting-control"
+            style={{ alignItems: 'stretch', flex: '1 1 auto', gap: 8, maxWidth: '68%', minWidth: 0 }}
+          >
+            {list.length === 0 ? <div className="setting-help">{t('settings.ui.rows.empty')}</div> : null}
+            {list.map((record, rowIndex) => (
+              <div
+                key={`row-${String(rowIndex)}`}
+                style={{ alignItems: 'center', display: 'flex', gap: 6, minWidth: 0 }}
+              >
+                {field.columns.map((column) => {
+                  const cellAria = t('settings.ui.rows.cellAria', { row: String(rowIndex + 1), column: column.label })
+                  if (column.type === 'select') {
+                    const current = record[column.key] ?? ''
+                    // 宿主给了选项外的值也要看得见（与单行 select 同一条口径）。
+                    const options =
+                      current === '' || column.options.some((option) => option.value === current)
+                        ? column.options
+                        : [...column.options, { value: current, label: t('settings.ui.unknownOption', { value: current }) }]
+                    return (
+                      <select
+                        key={column.key}
+                        className="setting-input"
+                        aria-label={cellAria}
+                        style={{ flex: '0 0 auto', minWidth: 0, width: 'auto' }}
+                        value={current}
+                        onChange={(event) => {
+                          clearDrafts()
+                          saveRows(withCellValue(list, rowIndex, column.key, event.target.value))
+                        }}
+                      >
+                        {current === '' ? <option value="">{t('settings.ui.rows.pick')}</option> : null}
+                        {options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )
+                  }
+                  const draftKey = `${draftPrefix}${String(rowIndex)}#${column.key}`
+                  const stored = record[column.key] ?? ''
+                  return (
+                    <input
+                      key={column.key}
+                      className="setting-input"
+                      style={{ flex: '1 1 0', minWidth: 0 }}
+                      aria-label={cellAria}
+                      value={draft[draftKey] ?? stored}
+                      placeholder={column.placeholder}
+                      onChange={(event) => {
+                        const next = event.target.value
+                        setDraft((current) => ({ ...current, [draftKey]: next }))
+                      }}
+                      onBlur={() => {
+                        const typed = draft[draftKey] ?? stored
+                        if (typed === stored) return
+                        // 正则只在非空时提示性检查；最终校验在宿主 save()。
+                        if (typed !== '' && column.pattern !== undefined && !matchesPattern(column.pattern, typed)) {
+                          setDraft((current) => {
+                            const next = { ...current }
+                            delete next[draftKey]
+                            return next
+                          })
+                          setNote({ tone: 'error', text: t('settings.ui.rows.invalid', { column: column.label, value: typed }) })
+                          return
+                        }
+                        saveRows(withCellValue(list, rowIndex, column.key, typed))
+                        setDraft((current) => {
+                          const next = { ...current }
+                          delete next[draftKey]
+                          return next
+                        })
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                      }}
+                    />
+                  )
+                })}
+                <button
+                  type="button"
+                  className="text-btn"
+                  aria-label={t('settings.ui.rows.removeTip')}
+                  data-tip={t('settings.ui.rows.removeTip')}
+                  onClick={() => {
+                    clearDrafts()
+                    saveRows(list.filter((_, index) => index !== rowIndex))
+                  }}
+                >
+                  {t('settings.ui.rows.remove')}
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="text-btn"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => {
+                clearDrafts()
+                saveRows([...list, {}])
+              }}
+            >
+              {t('settings.ui.rows.add')}
+            </button>
           </div>
         </div>
       )

@@ -10,14 +10,52 @@ import type { EffortMap, Modality, ThinkingLevel, ThinkingParam } from './mode.j
 
 // ── 设置界面 ──────────────────────────────────────────────────────────────────
 
-/** 设置项的值类型（要过 IPC，只能是这三类）。 */
-export type SettingsValue = string | number | boolean
+/**
+ * 设置项的值类型（要过 IPC，必须可 JSON 序列化）。
+ *
+ * 前三种是标量控件（text / number / select / switch）的值；数组那一支只给 `rows`
+ * 字段用——记录表的值就是一组记录，元素形状见 {@link SettingsRowValue}。
+ */
+export type SettingsValue = string | number | boolean | SettingsRowValue[]
+
+/**
+ * 记录表（`rows` 字段）的一行：列 key → 单元格文本。
+ *
+ * 为什么单元格统一是字符串：表格控件的输入框本来就产出文本，下拉的值也是字符串；
+ * 宿主收到后自己转数字/布尔（与 `setSettingValue` 老链路一致——插件给声明与回调）。
+ */
+export type SettingsRowValue = Record<string, string>
 
 /** 下拉选项。 */
 export interface SettingsOption {
   value: string
   label: string
 }
+
+/**
+ * `rows` 字段的一列：文本列画输入框，下拉列画选择器。
+ *
+ * 与 {@link SettingsField} 同一条边界：这张表要过 IPC，所以列只给声明，不给组件。
+ */
+export type SettingsRowColumn =
+  | {
+      key: string
+      label: string
+      type: 'text'
+      placeholder?: string
+      /**
+       * 校验正则（字符串形式，因为要 JSON 序列化；界面用 `new RegExp(pattern)` 现编）。
+       * 界面只在非空时拿它做一次提示性检查，**最终校验仍在宿主 save()**。
+       */
+      pattern?: string
+      /** true = 这一格允许空着。壳今天不拦空值（新加的行本来就全是空格），由宿主判。 */
+      optional?: boolean
+      /** 这一格建议从候选里挑（如目录 / 仓库名）；壳可给提示，今天不改变控件形状。 */
+      choose?: boolean
+      /** 改这一格要重新读一次分区（值由宿主现算，例如部署检查结果）。 */
+      refresh?: boolean
+    }
+  | { key: string; label: string; type: 'select'; options: SettingsOption[] }
 
 /**
  * 设置分区里的一个控件。内置分区与外部插件声明的分区共用这一张渲染表，
@@ -42,6 +80,40 @@ export type SettingsField =
       group?: string
     }
   | { type: 'switch'; key: string; label: string; help?: string; group?: string }
+  /**
+   * 只读事实行（`fact`）：值来自分区 `values()` 的 `values[key]`，没有就画占位。
+   * 它不是输入框——用户改不了，宿主也不收它的写入（写不回时界面只展示）。
+   *
+   * `settings: 'deployment'` 是从上游来源设置卡带过来的标记：这个值由**部署检查结果**
+   * 算出来（上游 `kind.facts(deployment)`），不是用户填的。本仓的分工不变：宿主负责把
+   * 检查结果算进 `values[key]`，壳只负责画那一行。
+   */
+  | {
+      type: 'fact'
+      key: string
+      label: string
+      help?: string
+      /** 值来自部署检查结果（上游同名字段；值仍由分区 values() 给）。 */
+      settings?: 'deployment'
+      /** 高级项标记（上游同名字段；壳今天不折叠，保留声明免得转换层丢信息）。 */
+      advanced?: boolean
+      group?: string
+    }
+  /**
+   * 记录表（`rows`）：值是一组记录，第一列习惯当键（如「准入表」「多仓库表」）。
+   * 每行按 `columns` 出输入框/下拉、可增删行；写回 `values[key]` 的是
+   * {@link SettingsRowValue}`[]`（元素是 `Record<string,string>`）。
+   */
+  | {
+      type: 'rows'
+      key: string
+      label: string
+      columns: SettingsRowColumn[]
+      help?: string
+      /** 高级项标记（同 fact）。 */
+      advanced?: boolean
+      group?: string
+    }
   | {
       type: 'info'
       label?: string
