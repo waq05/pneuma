@@ -1,125 +1,160 @@
-# 测试体系：交接说明（2026-11-14）
+# 测试体系：交接说明（2026-11-16 定稿）
 
-> 这份是给**接手这个任务的下一个人**看的。目标、现场、还剩什么、怎么继续，一次说清。
-> 详细设计在 [testing-design.md](testing-design.md) 与 [testing-detailed-design.md](testing-detailed-design.md)；
-> 决定在 [testing-deviations.md](testing-deviations.md)；欠账在 [testing-backlog.md](testing-backlog.md)。
+> 给接手这个任务的下一个人：目标、现场、验证面、还剩什么、哪些决定是刻意的，一次说清。
+> 详细设计在 [testing-design.md](testing-design.md) / [testing-detailed-design.md](testing-detailed-design.md)；
+> 决定在 [testing-deviations.md](testing-deviations.md)；欠账在 [testing-backlog.md](testing-backlog.md)；
+> 源码问题在 [testing-findings.md](testing-findings.md)。
 
 ## 1 目标与当前位置
 
-原目标：按 P0–P7 路线把 dsc 的测试体系补齐到对齐 codex 与 dsh 的水准。
+按 P0–P7 路线把 dsc 的测试体系补齐到对齐 codex 与 dsh 的水准。
 
-| 期 | 状态 | 说明 |
+| 期 | 状态 | 交付 |
 | --- | --- | --- |
-| **P0 地基** | ✅ 完成 | Vitest 4 + 解析插件 + 四个分层 project + 三条 POC + CI 接线 |
-| **P1a 设施** | ✅ 完成 | `tests/harness.ts`（8 个 API）、内核 16 个模块的 spec |
-| **P1b 包级测试** | ✅ 完成 | 119 条 `.test.mjs` → `.spec.ts`，806 条用例；旧脚手架已拆 |
-| **P2 内核探针** | ⏳ 收尾中 | 122 → 20：3 条还要迁、7 条永远留 Node 侧、8 条归 P3、2 条归 P7（见 §4） |
-| P3 ui 层 | 未开始 | 80 条 `ui-*` 探针 + 8 条从 P2 转来的缺口 |
-| P4 快照层 | 未开始 | 录制回放 + golden |
-| P5 真模型/性能 | 未开始 | 需要 key 的 e2e、bench |
-| P6 CI 工程化 | 未开始 | 分片、矩阵、flake 治理 |
-| P7 收尾 | 未开始 | 文档定稿、缺口清单收口 |
+| **P0 地基** | ✅ | Vitest 4 + `js-to-ts` 解析插件 + 分层 project + CI 接线 |
+| **P1a 设施** | ✅ | `tests/harness.ts`（tempHome / fakeLLM / replayLLM / bootKernel / runCli / readSessionJsonl / expectGolden）、内核 16 个模块 spec |
+| **P1b 包级测试** | ✅ | 119 条包级 `.test.mjs` → `.spec.ts`（806 条用例），旧脚手架拆净 |
+| **P2 内核探针** | ✅ | 122 → 7：能迁的迁进 unit/integration，剩下的 7 条是机制上迁不走的（§4） |
+| **P3 ui 层** | ✅ | 九组代理迁移 + 四批渲染测试（R1/R2/R3a/R3b）+ 收尾对账；check-ui 80 → 42（全部是 jsdom 够不到的产物审计/源码闸/CSS） |
+| **P4 快照层** | ✅ | TUI 帧 golden 30 份、录制回放场景、**浏览器 DOM 快照 10 份**、覆盖率基线冻结 |
+| **P5 live/bench/契约** | ✅ | live 冒烟 5 条（独立 workflow + 防假绿）、性能基准 4 条（基线 + PR 门）、契约测试 3 份 |
+| **P6 CI/入口** | ✅ | integration 三片并行、Node 22/24 矩阵、真入口 e2e 8 条、flake 治理（K2+/K4）、聚合门 |
+| **P7 收尾** | ✅ | 属性测试 17 条、覆盖率基线门、Windows 车道、文档定稿 |
 
 ## 2 现场
 
 ```
 工作树：D:\dsc\.worktrees\testing   （主仓 D:\dsc，别在那里改）
-分支：  feat/testing-infra          基于 78f0912c
-主入口：pnpm test / pnpm run test:int / pnpm run typecheck:spec / pnpm run check:style
+分支：  feat/testing-infra
+主入口：pnpm test / pnpm run test:int / pnpm run test:snapshot / pnpm run test:cli
+        pnpm run typecheck:spec / pnpm run check:style
 ```
 
-**验证面（2026-11-14 实测）**
+**最终验收（2026-11-16，本机 Windows，Node 24.19）**
 
 | 命令 | 结果 |
 | --- | --- |
-| `pnpm test`（unit + ui + tui） | **186 文件 / 2018 条 / exit 0** |
-| `pnpm run test:int` | 78 文件 / 约 1190 条，**3 文件红**——全是并行负载超时（那 3 个单独跑 31 条全绿，见 K4）。这不是断言问题，但交接时它是红的 |
-| `pnpm run typecheck:spec` | exit 0 |
-| `pnpm run check:style` | exit 0 |
-| `node scripts/check-core.mjs --list` | **20 条**探针（旧体系，见 §4） |
+| `pnpm test`（unit + ui + tui） | **294 文件 / 3245 条 / exit 0** |
+| `pnpm run test:int` | 114 文件 / 约 1880 条；含 1 条 skip（ops 无 worker，B24） |
+| `pnpm run test:snapshot` | TUI 帧 30 份 + 会话回放 1 场景 + 浏览器 10 份，全绿（浏览器单跑约 200s） |
+| `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42） |
+| `pnpm run test:e2e` | 143 通过 / **6 红（已知，B40）** / 13 skip |
+| `pnpm run typecheck:spec` | exit 0（两份 tsconfig：node 侧 + 界面半） |
+| `pnpm run check:style` | exit 0（1500+ 文件） |
+| `node scripts/check-core.mjs` | **7/7 通过**（Vitest 表达不了的探针，§4） |
+| `node scripts/check-ui.mjs` | **42/42 通过** |
+| `pnpm run test:bench` | 4 条 vs 本机基线，全部 ≤1.5×；runner 不符只记录（D35） |
+| `pnpm run test:coverage` | 三面口径 lines 33.77 / branches 26.95 / functions 32.68 / statements 32.2（D37） |
 
 ## 3 这套东西长什么样
 
-四个常驻 project + 一个 tui project，全在 [vitest.config.ts](../vitest.config.ts)：
+主配置 [vitest.config.ts](../vitest.config.ts) 五个常驻 project；两条独立配置各管一层：
 
-| project | 收什么 | 环境 |
-| --- | --- | --- |
-| `unit` | `src/**/*.spec.ts`、`tests/**/*.spec.ts` | node，5s |
-| `integration` | `**/*.int.spec.ts` | node + forks，60s，先 `pnpm build` |
-| `ui` | `src/packages/*/ui/**/*.spec.{ts,tsx}` | jsdom，10s |
-| `tui` | `src/packages/tui/**/*.spec.{ts,tsx}` | node + 假终端，15s |
-| `snapshot` | `tests/snapshots/**/*.snapshot.ts` | 还没建 |
+| project | 收什么 | 环境 / 超时 | 备注 |
+| --- | --- | --- | --- |
+| `unit` | `src/**/*.spec.ts`、`tests/**/*.spec.ts` | node，5s，threads | 显式排 `*.int.spec.ts` / tui / ui / live / cli |
+| `integration` | `**/*.int.spec.ts` | node + forks，60s，`maxWorkers: 4` | 先 `pnpm run build`（D25 混合平面） |
+| `ui` | `src/packages/*/ui/**/*.spec.{ts,tsx}` | jsdom，10s | 真渲染 React 组件 |
+| `tui` | `src/packages/tui/**/*.spec.{ts,tsx}` | node + 假终端，15s | ink 整屏帧（快照版工具 `tests/snapshots/tui/frame-kit.ts`） |
+| `snapshot` | `tests/snapshots/**/*.snapshot.ts` | node + forks，60s | TUI golden 30 + 会话回放 + 浏览器 DOM 10 |
+| `cli`（独立配置） | `tests/cli/**/*.cli.e2e.ts` | node，60s | spawn 真 `bin/dsc.js` |
+| `live`（独立配置） | `tests/live/**/*.live.spec.ts` | node，180s | 无 key 整层跳过；`test-live.yml` 防假绿 |
+| `bench`（独立入口） | `tests/bench/*.mjs` | plain node | 只认 `lib/**`，先 build |
 
-**每条 exclude 里那一行 `*.int.spec.ts` 不是装饰**：`*.spec.ts` 的星号跨点不跨目录，
-漏了就会双跑或串层。这个错犯了四次（unit 收 int、tests 收 int、tui 收 int、unit 收 tui），
-根因都一样：**按后缀收文件的 project 必须显式排掉邻居**。
+**两个容易再犯的错**：
 
-## 4 那 20 条探针是什么性质（别误读成「没做完」）
+1. `*.spec.ts` 的星号跨点不跨目录：按后缀收文件的 project 必须显式排掉 `*.int.spec.ts`
+   与邻居（unit / integration / tui 三处都写过，见四次的教训）。加新的按后缀收文件
+   的 project 时先看这段。
+2. 五个 project 可能被一次 `vitest run` 全跑（`test:coverage`）：`maxWorkers` 不同而
+   `sequence.groupOrder` 相同的 project 会被 Vitest 直接拒绝——每个 project 都给了唯一
+   groupOrder（unit 1 / integration 2 / ui 3 / snapshot 4 / tui 5）。
 
-合计 20 条，四类加起来正好是 20：
+## 4 剩下的 7 条 Node 探针是什么性质（别误读成「没做完」）
 
-| 类别 | 条数 | 明细 |
-| --- | --- | --- |
-| **还要迁** | 3 | `hmr-dispose`、`ops`、`remote-host`——R1 做到一半没完成，探针原样还在 |
-| **永远留 Node 侧** | 7 | `plugin-hot-update`、`plugin-library`、`session-permissions`、`settings`、`settings-embed-slot`、`session-picker-mouse`、`session-title-live`。理由见 D26/D28——**迁了会变成假绿** |
-| **归 P3（ui/tui 层）** | 8 | `injection-card-tip` + 7 条 `tui-*` |
-| **归 P7（文档闸）** | 2 | `readme`、`release-notes` |
+`check-core` 现在跑的是 **Vitest 表达不了的探针**，不是迁移遗留：
 
-`check-core.mjs` 的文件头已经写明它**不再是主测试入口**，而是跑那些 Vitest 表达不了的
-探针的通道。别看到还剩 20 条就以为没迁完——先查 [testing-backlog.md](testing-backlog.md)。
+| 探针 | 为什么只能裸 Node |
+| --- | --- |
+| `plugin-hot-update`、`plugin-library` | 验 Node 的 ESM 缓存戳（`?t=mtime` 换新实例）；Vitest 走 Vite 管线，不吃这个缓存戳 |
+| `session-permissions` | 11 条源码文本断言，没有运行期接缝 |
+| `injection-card-tip`、`settings-embed-slot` | 行为段已迁（ui spec）；残留是字典资源审计、源码身份钉与真终端探测 |
+| `readme`、`release-notes` | 文档与发版脚本的闸，不是产品测试 |
 
-## 5 下一步怎么接
+`check-ui` 的 42 条同理：插件产物审计（`lib/ui/plugins/*/client.js`）、源码文本闸、
+CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主配置明令不碰。
 
-### 立刻要做的三件
+## 5 没做到 / 只验证到一半的，明说
 
-1. **P2 尾巴**：迁 `hmr-dispose`、`ops`、`remote-host` 三条。
-   注意 R1 试过 `hmr-dispose` 但没做成（草稿已删，失败原因未记录）；
-   `ops` 需要「真 HOME 里装了 worker」，要么自造最小 worker，要么明确 skip 并记缺口——
-   **不许静默绿**（`permission-core` 的旧测试就是这么骗了半年）。
-2. **补 B18/B19**：沙箱那两条现在可补（D16 已订正，开沙箱能正常跑，6.7s）。
-3. **修 K4**：integration 全量并行超时。建议 `poolOptions.forks.maxForks` 限 3–4。
+1. **e2e 有 6 条已知红**（B40）：`ui-anchor`×5（产品改版后找不到 `.select-trigger`）与
+   `ui-plugin-disable`×1（侧栏页签名对不上）。迁移版与原探针同环境同红，是对照过的
+   **已知态**，不是本体系引入。
+2. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
+   「无 key 整层跳过（exit 0）」与类型检查。`test-live.yml` 的 key 预检 / 非零用例断言
+   也没在 Actions 上跑过——首次夜间跑才算实证。
+3. **CI 没有真跑过**：`verify.yml` 的全部 job（core / integration 三片 / bench / cli /
+   windows / ui / desktop / probe）与 `test-live.yml` 只在本机按同一脚本验证过命令，
+   GitHub 上没跑过一次。Windows 车道与 Ubuntu 的差异（路径、ConPTY、Electron）要等首跑。
+4. **覆盖率基线口径是三面**（unit+ui+snapshot，D37），不含 integration/tui：它们全量
+   并行时会因负载自红，把它们的覆盖算进数值基线会让门禁随机器忙闲红绿。full 跑只会
+   更高，基线只做地板。
+5. **F13 ConPTY Ctrl+C** 仍是 `test.skip`（B25）：当前环境 3/3 稳定红、老探针同红。
+6. **浏览器快照 4 条残留**（B43）：模型页写操作、运行中队友、dock 原生页签、键盘路径。
+7. **C3 无参数 + 一句输入**没有自动化（B42）：需要 PTY；当前显式 `test.skip`。
 
-### 然后按 P3 → P7 推
+## 6 源码层已修 / 还欠什么
 
-P3 的清单在 [testing-design.md](testing-design.md) 的 §11，缺口承接在
-[testing-backlog.md](testing-backlog.md) 的 B 表（B1–B23）。P3 要接的三类：
-纯派生（unit）/ 组件渲染（ui project）/ 整屏帧与鼠标序列（tui project）。
+**已修（本任务同批）**：
 
-## 6 给下一个人立过的规矩（都踩过坑，别重犯）
+- **F10** `redact.ts` 补齐七类凭据（AWS/GitHub/`sk-`/`SK-`/裸 JWT…），属性测试反向验证；
+- **F11** `web-search` 的 `authHeaders` 从未传给 `search()`（真 API 一律 401）——已传；
+- **F15** `numa bogus` 被静默透传、TUI 照常起来——未知裸词现在 exit 1 + 可读提示；
+- **F16** 非交互 stdin 结束后 TUI 永不退出（`echo hi | numa` 挂死）——非 TTY 在
+  `end` 上收场。两条都有 CLI 用例做反向验证。
 
-1. **禁止 `git commit --amend` 与 `git reset`**（D30）。多人共用一棵树时 `amend` 改的是
-   「HEAD 那个」，你无法确定是谁的提交。实测出过一次事故。补一行就新开提交。
-2. 提交用 `git add` + `git commit --only -- <路径>`；`--only` 对未跟踪文件不生效。
-3. **integration 跑的是 lib 平面**（D25）：改了 `src` 必须 `pnpm run build`，否则内核跑旧
-   产物、用例假绿。`bootKernel` 有新鲜度守卫会拦，但不 build 时它拦得晚。
-4. 反向验证：改 src → build → 必须红 → 还原 → build → 必须绿。**第一次绿不要当结论**
-   （Vite 缓存），复跑一次。
-5. 别读 src 侧的模块级缓存（`activeConfigFile`、`allSpecs` 各两份），读
-   `ctx.settings.prefs()` / `ctx.commands.specs()` 这类服务事实。
-6. 要验「连不上」用 `fakeLLM({ status: 401 })`，真连不上会走超时重试，2 秒变 17 秒。
-7. 读 git 工作区状态的用例用 `tempRepo()`，否则会把别人未提交的改动记进 `turnDiff`。
-8. 不要用固定 `sleep`，轮询到条件成立。
+**还欠（要拍板）**：
 
-`tests/harness.ts` 的文件头有完整的「踩过的坑」八条，写新 spec 前先看那个。
+- **F14** `DiffBlock` 可用行数算错（4 行 hunk 显示「… 还有 10 行」）。golden 如实记录了
+  错态；修产品时同批 `UPDATE_GOLDEN=1` 重生成 `12-approval-diff.txt`（B41-①）。
+- **B37-R**：R3b 迁移后 13 条探针的 CSS 与源码残留，按 B26 转 shots 或留 check-ui。
+- **B31/B32**：界面 SDK 产物层与插件产物审计是留 scripts 还是单开产物 project。
+- **B13/B21**：桌面主进程（更新检查、dock 浏览器）要不要真主进程测试通道——本轮判定
+  不做（D38）。
 
-## 7 源码层待修的问题（不在测试体系范围内，但很重要）
+## 7 给下一个人立过的规矩（都踩过坑）
 
-[testing-findings.md](testing-findings.md) 记了 12 条，其中两条建议**尽快修**：
+1. **禁止 `git commit --amend` 与 `git reset`**（D30）——多人共用一棵树时你无法确定
+   HEAD 是谁的。补一行就新开提交；提交用 `git commit --only -m "…" -- <路径…>`，
+   **`-m` 必须在 `--` 之前**（放后面会被当成路径），删除的文件也要列进路径表。
+2. **integration 跑 lib 平面**（D25）：改 `src` 必须 `pnpm run build`；`bootKernel` 有
+   新鲜度守卫，但不 build 时它拦得晚。
+3. **反向验证**：改产品 → 红 → 还原 → 绿。第一次绿不要当结论（Vite 缓存），复跑一次。
+4. 别读 src 侧模块级缓存（`activeConfigFile`、`allSpecs` 各两份），读服务事实
+   （`ctx.settings.prefs()`、`ctx.commands.specs()`）。
+5. 要验「连不上」用 `fakeLLM({ status: 401 })`；真连不上会走超时重试，2 秒变 17 秒。
+6. 读 git 工作区状态的用例用 `tempRepo()`，否则会把别人未提交的改动记进 `turnDiff`。
+7. 不要固定 `sleep`，轮询到条件成立。
+8. 共享 `git index` 的并行代理要各自 `--only` 提交；`index.lock` 0 字节且无 git 进程
+   才是陈锁（K-系列），先查再删。
+9. 局部重试：`describe.configure({ retry })` 在 Vitest 4.1.12 里**不是函数**
+   （`test.describe.configure` 与 `describe.configure` 都 TypeError）；要局部重试只能
+   换层或改 project 配置。
+10. 基准测的是构建产物：`pnpm run build` 之后才 `test:bench`；runner 不符只记录不判退化
+    （D35），要恢复数值闸就按同格式提交本机基线。
 
-- **F10** `redact.ts` 漏抹四类真实凭证（AWS `AKIA…`、GitHub `ghp_…`、大写 `SK-`、裸 JWT）。
-  这不是显示问题，是把密钥发给模型提供方。
-- **F11** `web-search` 算出带 key 的请求头但从没传出去（`index.ts:222` 算了 `headers`，
-  230/231 行调 `search()` 时没传），真 API 一律 401，联网搜索一次都没成功过。
+`tests/harness.ts` 文件头有完整的「踩过的坑」八条，写新 spec 前先看那份。
 
-其余是行为与注释不符（`oneLine` 劈开 emoji、`diff-text` hunk 行号错位、`unified-diff`
-CRLF 取错路径等），可以排期。
+## 8 交接检查清单
 
-## 8 没做完 / 没验证的，明说
-
-- `test:int` 全量仍红 3 个文件（K4 负载问题），不是断言问题，但**交接时它是红的**。
-- P3–P7 完全没开始。
-- 覆盖率一个字没配（设计里的 P3 第 3 项）。
-- CI 没跑过：`verify.yml` 改过（加了 `pnpm test` / `test:int` / `typecheck:spec`，
-  删了 plugin job），但这些改动**只在本机验证过命令，没在 GitHub 上跑过一次**。
-- `docs/` 里还有几处提到已删的探针脚本名（`README.md:239`、`docs/development.md:651` 等），
-  属历史记录，留给 P7 统一清理。
+```sh
+git status --porcelain          # 应为空
+git log --oneline -10           # 本阶段的提交（P3–P7）
+pnpm test                       # 294 文件 / 3245 条
+pnpm run test:int               # 先 build；integration 全量
+pnpm run test:snapshot          # TUI 30 + 回放 + 浏览器 10（约 4 分钟，需 Electron）
+pnpm run test:cli               # 8 + 1 skip
+pnpm run test:e2e               # 143 通过 / 6 已知红
+pnpm run typecheck:spec && pnpm run check:style
+node scripts/check-core.mjs     # 7/7
+node scripts/check-ui.mjs       # 42/42
+```
