@@ -179,7 +179,7 @@ jobs:
     # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
     # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
     if: always()
-    needs: [core, ui, desktop, integration, bench, cli]
+    needs: [core, ui, desktop, integration, bench, cli, windows]
     runs-on: ubuntu-latest
     steps:
       - name: 聚合判定
@@ -190,6 +190,38 @@ jobs:
             echo "存在未成功的 job，聚合门红。"
             exit 1
           fi
+
+  windows:
+    name: Windows 车道（unit + ui + tui）
+    # P7 的平台面：路径分隔符、cmd 参与的命令判定、ConPTY/假终端这些「Linux 上永远
+    # 绿、Windows 上才红」的地方，只有真 Windows runner 能覆盖。范围刻意收窄到纯测试
+    # 三层（不跑 integration：起真内核 + 60s×N 会把单 job 拖到 20 分钟以上；集成层的
+    # 平台差异靠开发机与 probe 夜跑兜底）。
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 测试代码的类型检查
+        run: pnpm run typecheck:spec
+      - name: 单元 / 界面 / TUI 测试
+        run: pnpm test --reporter=default --reporter=junit --outputFile.junit=reports/unit-windows.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-windows
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
 
   ui:
     name: 界面壳编译

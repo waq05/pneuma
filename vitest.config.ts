@@ -35,6 +35,32 @@ import { jsToTsFallback } from './tests/plugins/js-to-ts.js'
  * `scripts/build-plugins.mjs` 都读这张表，测试侧再抄就是第三个事实源。漏改的表现不是报错，
  * 是测试里解析出另一份 React 实现，hooks 直接崩。
  */
+/**
+ * 覆盖率基线（P4 冻结）：阈值从 `coverage-baseline.json` 读，**初始即当前值**。
+ *
+ * 为什么留 0.5 个百分点余量：覆盖率的抖动来自「走得到走不到某条错误分支」的时序，
+ * 不是代码改动；贴着基线卡会让无关提交红。0.5 以内视为噪声，降超过 0.5 才是真的掉了。
+ * 文件缺失时不给阈值（首次检出 / 未跑过覆盖率的人不该被卡住）。
+ */
+const coverageBaseline = (() => {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('./coverage-baseline.json', import.meta.url), 'utf8')) as {
+      lines: number
+      branches: number
+      functions: number
+      statements: number
+    }
+    return {
+      lines: parsed.lines - 0.5,
+      branches: parsed.branches - 0.5,
+      functions: parsed.functions - 0.5,
+      statements: parsed.statements - 0.5,
+    }
+  } catch {
+    return null
+  }
+})()
+
 const uiAliases = Object.fromEntries(
   Object.entries(
     JSON.parse(readFileSync(new URL('./ui-shell/packages.json', import.meta.url), 'utf8')) as Record<
@@ -76,7 +102,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      include: ['src/core/**', 'src/packages/**'],
+      // 只收代码文件：'src/packages/**' 会把 README.md / locale/*.json / *.yml 也收进来，
+      // V8 provider 会把它们当 JS 解析并在日志里刷 PARSE_ERROR（覆盖率数字同时归零）。
+      include: ['src/core/**/*.ts', 'src/packages/**/*.ts', 'src/packages/**/*.tsx'],
       exclude: [
         'src/**/*.spec.ts',
         'src/**/*.int.spec.ts',
@@ -84,6 +112,8 @@ export default defineConfig({
         'src/packages/tui/**', // tui 由 tui project 单独跑，coverage 汇总口径随 P4 基线再定
         '**/node_modules/**',
       ],
+      // 阈值见 coverage-baseline.json 的说明：只降不升，留 0.5 个百分点余量。
+      ...(coverageBaseline === null ? {} : { thresholds: coverageBaseline }),
     },
     /**
      * 每个 project 的 `extends: true` 都是必需的，不是保险丝。
@@ -98,6 +128,10 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
+          // 五个 project 可能被一次 `vitest run` 全跑（test:coverage）：
+          // maxWorkers 不同但 groupOrder 相同的 project 会被 Vitest 拒绝
+          // （实测 integration 的 maxWorkers: 4 与 snapshot 的默认值撞车）。
+          sequence: { groupOrder: 1 },
           include: ['src/**/*.spec.ts', 'tests/**/*.spec.ts'],
           // `*.int.spec.ts` 的结尾同样是 `.spec.ts`，不显式排掉会被 unit 连跑一遍：
           // 5 秒超时 + 线程池，起真内核的用例在那套设置下必红，而且红得莫名其妙。
@@ -127,6 +161,8 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'integration',
+          // groupOrder 必须唯一（见 unit 的说明）：integration 限了 maxWorkers，更要显式。
+          sequence: { groupOrder: 2, concurrent: false },
           // tests/ 下也会有集成用例（tests/harness.int.spec.ts 这类起真内核/真 CLI 的），
           // 两处都收，语义一致：`*.int.spec.ts` 就是集成层。
           include: ['src/**/*.int.spec.ts', 'tests/**/*.int.spec.ts'],
@@ -147,8 +183,6 @@ export default defineConfig({
           // 旋钮是 `maxWorkers`（Vitest 4 的用户面字段）；`poolOptions.forks.maxForks`
           // 在 4.x 的运行时里已经没人读（4.1.12 实测 14 倍并行照跑），别写回那个。
           maxWorkers: 4,
-          // 同一文件内串行，避免两条用例争用同名临时目录。
-          sequence: { concurrent: false },
           setupFiles: ['tests/setup/temp-home.ts'],
         },
       },
@@ -158,6 +192,7 @@ export default defineConfig({
         plugins: [react()],
         test: {
           name: 'ui',
+          sequence: { groupOrder: 3 },
           include: ['src/packages/*/ui/**/*.spec.{ts,tsx}'],
           exclude: ['**/node_modules/**'],
           environment: 'jsdom',
@@ -171,6 +206,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'snapshot',
+          sequence: { groupOrder: 4, concurrent: false },
           include: ['tests/snapshots/**/*.snapshot.ts'],
           environment: 'node',
           testTimeout: 60_000,
@@ -181,7 +217,6 @@ export default defineConfig({
           retry: 1,
           // 录制回放要读写磁盘文件，线程间共享工作目录会互相覆盖。
           pool: 'forks',
-          sequence: { concurrent: false },
         },
       },
       {
@@ -195,6 +230,7 @@ export default defineConfig({
         // 浏览器桩。
         test: {
           name: 'tui',
+          sequence: { groupOrder: 5 },
           include: ['src/packages/tui/**/*.spec.ts', 'src/packages/tui/**/*.spec.tsx'],
           // `*.spec.ts` 的星号跨点不跨目录：`scroll-model.int.spec.ts` 同样以 `.spec.ts`
           // 结尾，不排掉会被 tui project 再跑一遍（integration 那份才是它的主）。

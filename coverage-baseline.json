@@ -1,0 +1,8 @@
+{
+  "note": "覆盖率基线（P4 冻结，P6 逐目录抬杠）。口径：unit + ui + snapshot 三个稳定 project——integration 与 tui 要起真内核/假终端，全量并行时自身会因负载抖动，把它们算进数值基线会让门禁随机器忙闲红绿（详见 docs/testing-deviations.md D37）。数值是全仓汇总行（v8，include 见 vitest.config.ts 的 coverage.include）。只降不升：抬基线须手动跑 `pnpm test:coverage` 后改这里并 review。",
+  "updatedAt": "2026-11-16",
+  "lines": 33.77,
+  "branches": 26.95,
+  "functions": 32.68,
+  "statements": 32.2
+}
