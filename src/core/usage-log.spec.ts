@@ -132,3 +132,60 @@ describe('⑤ 日志读写与折叠', () => {
     expect(log.foldSessionUsage('{}', '')).toBeNull()
   })
 })
+
+describe('⑥ 设置页聚合（aggregateUsage / buildUsageStats）', () => {
+  test('localDateKey 是本地 YYYY-MM-DD，且昨天与今天不同', () => {
+    const now = Date.now()
+    expect(log.localDateKey(now)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(log.localDateKey(now)).not.toBe(log.localDateKey(now - 86_400_000))
+  })
+
+  test('合计、逐模型排序、缓存两栏、连续天数与峰值日', () => {
+    const now = Date.now()
+    const records: UsageRecord[] = [
+      { t: now - 86_400_000, provider: 'deepseek', model: 'deepseek-flash', i: 1_000, o: 100, sid: 's1', ch: 700, cm: 300 },
+      { t: now - 86_400_000 + 1_000, provider: 'deepseek', model: 'deepseek-flash', i: 500, o: 50, sid: 's1' },
+      { t: now, provider: 'other', model: 'm', i: 10, o: 5, sid: 's2' },
+    ]
+    const stats = log.aggregateUsage(records)
+    expect(stats).toMatchObject({
+      totalInputTokens: 1_510,
+      totalOutputTokens: 155,
+      totalTurns: 3,
+      totalCacheHitTokens: 700,
+      totalCacheMissTokens: 300,
+      activeDays: 2,
+      currentStreakDays: 2,
+      longestStreakDays: 2,
+      sinceTs: now - 86_400_000,
+    })
+    expect(stats.models.map((model) => model.key)).toEqual(['deepseek/deepseek-flash', 'other/m'])
+    expect(stats.peakDay?.date).toBe(log.localDateKey(now - 86_400_000))
+    expect(stats.days.at(-1)?.date).toBe(log.localDateKey(now))
+    // DeepSeek 端点给花费；只有别家端点时没有 costCny。
+    expect(stats.totalCostCny).toBeGreaterThan(0)
+    expect(log.aggregateUsage([{ t: now, provider: 'openrouter', model: 'x', i: 1, o: 1, sid: 's' }]).totalCostCny).toBeUndefined()
+  })
+
+  test('空记录：零合计、无峰值日、days 为空', () => {
+    expect(log.aggregateUsage([])).toMatchObject({
+      sinceTs: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTurns: 0,
+      activeDays: 0,
+      currentStreakDays: 0,
+      longestStreakDays: 0,
+      peakDay: null,
+      days: [],
+    })
+  })
+
+  test('buildUsageStats 从真实文件读一遍再聚合（本文件前面写的 3 条请求行）', () => {
+    const stats = log.buildUsageStats()
+    expect(stats.totalInputTokens).toBe(220)
+    expect(stats.totalOutputTokens).toBe(34)
+    expect(stats.totalTurns).toBe(3)
+    expect(stats.models.map((model) => model.key)).toEqual(['p/m'])
+  })
+})
