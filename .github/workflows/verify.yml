@@ -174,10 +174,109 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  snapshot:
+    name: 快照层（TUI 帧 + 浏览器 DOM）
+    # 设计 §7.4/§8：快照层是夜跑门。TUI 帧不需要显示器；浏览器 DOM 快照要真 Electron，
+    # Linux runner 上用 xvfb 起虚拟显示。会话回放当前没有录制文件（B45），会显式 skip。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳（浏览器快照读 lib/ui 产物）
+        run: pnpm run build && pnpm -C ui-shell build
+      - name: 快照层
+        run: xvfb-run --auto-servernum pnpm run test:snapshot --reporter=default --reporter=junit --outputFile.junit=reports/snapshot.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  e2e:
+    name: 真机 e2e（Electron + bin/dsc.js）
+    # 设计 §10.2：e2e 是夜跑层，单条 10–60 秒，不进 PR 门。Linux 上 Electron 要虚拟显示。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳（e2e 故意验产物平面）
+        run: pnpm run build && pnpm -C ui-shell build
+      - name: 真机 e2e
+        run: xvfb-run --auto-servernum pnpm run test:e2e --reporter=default --reporter=junit --outputFile.junit=reports/e2e.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  coverage:
+    name: 覆盖率门（全五 project）
+    # D40/B47 定案：覆盖率门跑全部五个 project。integration/tui 是 core 覆盖的主要来源，
+    # 三面口径会让 src/core 的 90% 只能靠重复单测堆。插桩跑要真 Electron（浏览器快照），
+    # 所以同样套 xvfb。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳
+        run: pnpm run build && pnpm -C ui-shell build
+      - name: 覆盖率（阈值来自 coverage-baseline.json）
+        run: xvfb-run --auto-servernum pnpm run test:coverage --reporter=default --reporter=junit --outputFile.junit=reports/coverage.xml
+      - name: 上传覆盖率报告与测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage/
+            reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
   all-checks-passed:
     name: all-checks-passed（分支保护只认这一个）
     # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
     # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
+    #
+    # 刻意不把 probe / snapshot / e2e / coverage 放进 needs（B51）：这四个只在夜跑与手动
+    # 触发，PR 上不执行；放进 needs 会让「skipped」把每个 PR 的聚合门判红。它们的红灯
+    # 通过夜跑通知看，分支保护只守 PR 能跑的那批。
     if: always()
     needs: [core, ui, desktop, integration, bench, cli, windows]
     runs-on: ubuntu-latest

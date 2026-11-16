@@ -44,7 +44,7 @@
 | `node scripts/check-core.mjs` | **7/7 通过**（Vitest 表达不了的探针，§4） |
 | `node scripts/check-ui.mjs` | **42/42 通过** |
 | `pnpm run test:bench` | 4 条 vs 本机基线，全部 ≤1.5×；runner 不符只记录（D35） |
-| `pnpm run test:coverage` | **当前口径自相矛盾**：三面跑 `src/core/**` 四项全红（lines 34.2 < 40.68），而基线记 41.18；全局 33.82 对基线 33.77。详见 B47 与 [testing-coverage-plan.md](testing-coverage-plan.md) |
+| `pnpm run test:coverage` | **全五 project / 412 文件 / 5,179 条 / exit 0**：lines **45.56** / branches 37.07 / functions 41.81 / statements 43.52；`src/core` lines 68.07。基线已按此重录（D40/B47）；90% 目标见 [testing-coverage-plan.md](testing-coverage-plan.md) |
 
 ## 3 这套东西长什么样
 
@@ -98,9 +98,9 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 5. **CI 没有真跑过**：`verify.yml` 的全部 job（core / integration 三片 / bench / cli /
    windows / ui / desktop / probe）与 `test-live.yml` 只在本机按同一脚本验证过命令，
    GitHub 上没跑过一次。Windows 车道与 Ubuntu 的差异（路径、ConPTY、Electron）要等首跑。
-6. **覆盖率口径与阈值互斥**（B47）：三面跑 `src/core/**` 四项全红（lines 34.2 < 40.68），
-   基线却记 41.18；全局 33.82 对基线 33.77。90% 目标按
-   [testing-coverage-plan.md](testing-coverage-plan.md) 重定口径后再抬。
+6. **覆盖率距 90% 还有 44.4 个点**（B47/D40 已定口径）：全五实测 lines 45.56，到 90% 需
+   再覆盖 20,719 行；78 个文件仍是 0%。按 [testing-coverage-plan.md](testing-coverage-plan.md)
+   的 W1–W6 推进，每批抬一次逐目录门。
 7. **F13 ConPTY Ctrl+C** 仍是 `test.skip`（B25）：当前环境 3/3 稳定红、老探针同红。
 8. **浏览器快照 4 条残留**（B43）：模型页写操作、运行中队友、dock 原生页签、键盘路径。
 9. **C3 无参数 + 一句输入**没有自动化（B42/B50）：需要 PTY；当前显式 `test.skip`。
@@ -169,5 +169,5 @@ node scripts/check-core.mjs     # 7/7
 node scripts/check-ui.mjs       # 42/42
 ```
 
-**覆盖率目前不要照抄旧预期**：`pnpm run test:coverage` 的三面跑法会让 `src/core/**`
-四项阈值变红（B47），先按 [testing-coverage-plan.md](testing-coverage-plan.md) 定口径。
+**覆盖率预期**：`pnpm run test:coverage` 跑全五 project，当前 lines 45.56；90% 战役
+按 [testing-coverage-plan.md](testing-coverage-plan.md) 分批推进，别拿单批数字当整体结论。

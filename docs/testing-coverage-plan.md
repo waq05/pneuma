@@ -6,84 +6,77 @@
 
 ## 1 现在差多少（实测，不是估算）
 
-命令（三面口径，本次审计实跑）：
+命令（**全五 project**，2026-11-16 定案口径）：
 
 ```sh
-pnpm exec vitest run --coverage --project unit --project ui --project snapshot \
-  --hookTimeout=20000 --testTimeout=20000
+pnpm test:coverage
+# = vitest run --coverage --project unit --project integration --project ui --project snapshot --project tui
 ```
 
-结果：`coverage/coverage-summary.json`
+结果：`coverage/coverage-summary.json`（412 文件 / 5,179 条，exit 0）
 
 | 指标 | 数值 |
 | --- | --- |
 | 报告内可执行行 | **46,627** |
-| 已覆盖行 | **15,772** |
-| 行覆盖率 | **33.8%** |
-| 到 90% 还需新覆盖 | **+26,192 行**（允许剩余 4,663 行未覆盖） |
-| 0% 文件 | 93 个 / 5,766 行 |
+| 已覆盖行 | **21,245** |
+| 行覆盖率 | **45.56%** |
+| 到 90% 还需新覆盖 | **+20,719 行**（允许剩余 4,663 行未覆盖） |
+| 0% 文件 | 78 个 / 4,657 行 |
 
 按目录（未覆盖行降序；完整表在 `coverage/coverage-summary.json`）：
 
 | 区域 | 行数 | 已覆盖 | 未覆盖 |
 | --- | ---: | ---: | ---: |
-| `src/core` | 9,364 | 34.2% | 6,161 |
-| `sandbox` | 2,426 | 14.6% | 2,071 |
-| `superagent` | 3,399 | 55.5% | 1,512 |
+| `src/core` | 9,364 | 68.1% | 2,990 |
+| `sandbox` | 2,426 | 26.5% | 1,782 |
+| `superagent` | 3,399 | 61.3% | 1,316 |
 | `ui-composer` | 1,380 | 15.4% | 1,167 |
 | `lsp` | 1,014 | 9.2% | 921 |
 | `ui-primitives` | 1,670 | 48.3% | 864 |
 | `self-improve` | 1,124 | 31.6% | 769 |
 | `ui-transcript` | 2,895 | 75.1% | 720 |
-| `remote` | 695 | 1.7% | 683 |
-| `tools-default` | 847 | 25.1% | 634 |
-| `cdp` / `ui-status` | 744 / 679 | 16.9% / 9.0% | 618 / 618 |
-| `session-core` | 853 | 33.5% | 567 |
-| `ops` | 549 | 3.1% | 532 |
+| `cdp` | 744 | 16.9% | 618 |
+| `ui-status` | 679 | 9.0% | 618 |
 | `ui-settings` | 1,127 | 53.5% | 524 |
-| `browser` / `ui-core` / `hooks` | 557 / 581 / 523 | 11.1% / 16.9% / 9.2% | 495 / 483 / 475 |
+| `remote` | 695 | 26.8% | 509 |
+| `browser` | 557 | 11.1% | 495 |
+| `hooks` | 523 | 9.2% | 475 |
 | `ui-boot` | 474 | 0% | 474 |
+| `subagent` | 596 | 22.8% | 460 |
+| `ui-sessions` | 732 | 37.3% | 459 |
+| `tools-default` | 847 | 46.0% | 457 |
 
-单文件最大的十个缺口：`ui-status/ui/ui.tsx`（0%，618）、`core/plugin-loader.ts`（1.9%，608）、
-`core/ui-bundles.ts`（7.5%，577）、`remote/index.ts`（1.7%，514）、`browser/index.ts`（11.1%，495）、
-`subagent/index.ts`（16.2%，439）、`approval/index.ts`（18.9%，416）、`self-improve/index.ts`（20.8%，414）、
-`sandbox/win/runner-entry.ts`（0%，400，子进程入口）、`core/plugin-watch.ts`（0%，393）。
+单文件最大的缺口：`ui-status/ui/ui.tsx`（0%，618）、`ui-composer/ui/ui.tsx`（0%，360）、
+`ui-boot/ui/boot.ts`（0%，316）、`ui-plugins/ui/ui.tsx`（0%，243）、`ui-prompt/ui/ui.tsx`（0%，238）、
+`ui-composer/ui/model-controls.tsx`（0%，209）、`ui-skills/ui/ui.tsx`（0%，209）、
+`ui-composer/ui/attachments.ts`（0%，191）、`lsp/manager.ts`（166）、`checkpoint/index.ts`（165）。
+0% 文件集中在 ui 半边与 lsp/checkpoint 的入口文件——先导入、再补行为，是最便宜的一批。
 
-## 2 先定口径：现在的口径与阈值互斥
+## 2 口径已定案（D40/B47）
 
-本次审计实跑三面口径后，`src/core/**` 四项全红：
+2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
+`src/core` lines 68.07，全部通过旧阈值。三面口径只有 33.8%、core 34.2，四项全红——旧基线注释里的
+「三面口径」是错的，数值实际来自全五跑法。现已：
 
-```
-lines 34.2% < 40.68%   branches 28.43% < 34.56%
-functions 33.81% < 42.42%   statements 32.59% < 39.02%
-```
-
-`coverage-baseline.json` 里 `src/core` 记的是 41.18% lines，且注释写「口径：unit + ui + snapshot」——
-但三面跑只有 34.2%。41.18% 只能来自 integration/tui 也参与的那次跑法（integration 大量经过 core，
-且不把 lib 算进分母）。**同一个文件同时写了两套口径的数值**，这是 D39 之外的新问题。
-
-结论（建议，待拍板）：
-
-1. **覆盖率门用「全部五个 project」的专用跑法**，而不是三面。integration 与 tui 是 core 覆盖的
-   主要来源，把它们排除在外，core 的 90% 几乎只能靠重复单测堆出来。专用跑法要沿用
-   `maxWorkers: 4` / `retry: 1` 的稳定性设置，并像 DSH 的 `coverage-partitions` 一样限制并发。
-2. `coverage-baseline.json` 的数值与注释按新口径**一次性重录**，不再混用。
-3. 90% 的判据先定成 **lines ≥ 90**；branches / functions / statements 各自抬到 80% 以上并只升不降。
-   逐目录门（`src/core/**` 等）每批抬一次，防止大文件补贴小文件。
+1. `test:coverage` 显式列出五个 project，不再依赖默认值；
+2. `coverage-baseline.json` 按本次实测值重录（lines 45.5 / branches 37.0 / functions 41.8 / statements 43.5；
+   src/core 68.0 / 57.7 / 68.3 / 64.7），阈值再减 0.5 作噪声余量；
+3. 90% 判据：**lines ≥ 90** 硬线；branches / functions / statements ≥ 80 且只升不降。
+   逐目录门每批抬一次，防止大文件补贴小文件。
 
 ## 3 六批推进（每批约 +10 个全局百分点）
 
-每一批的退出条件相同：新增覆盖 ≥ 4,700 行、全局 lines 至少 +8 个点、该批涉及的目录门已抬、
+每一批的退出条件相同：新增覆盖 ≥ 4,600 行、全局 lines 至少 +8 个点、该批涉及的目录门已抬、
 新增 spec 都做过反向验证（改产品 → 红 → 还原 → 绿）。
 
 | 批 | 主攻 | 预计新覆盖 | 落点 |
 | --- | --- | ---: | --- |
-| **W1 core 根模块** | `plugin-loader`、`plugin-watch`、`ui-bundles`、`schedule/*`、`session`、`config-core` | ~4,800 | unit + integration（loader/装配走真 `lib` 平面） |
-| **W2 进程与外部面** | `sandbox`（含 `win/runner-entry` 子进程）、`lsp`、`cdp`、`hooks`、`remote` | ~4,900 | integration + 子进程；`runner-entry` 用 built/子进程层 |
-| **W3 前端高频面** | `ui-composer`、`ui-status`、`ui-boot`、`ui-core`、`ui-plugins`、`ui-prompt`、`ui-skills`、`ui-files`、`ui-superagent` | ~4,800 | ui（jsdom + RTL），0% 文件优先 |
-| **W4 工具与宿主** | `ui-primitives`、`self-improve`、`tools-default`、`session-core`、`ops`、`browser`、`subagent` | ~4,900 | unit + integration + ui |
-| **W5 长尾 UI 与会话** | `ui-transcript`、`ui-settings`、`ui-sessions`、`approval`、`computer-use`、`desktop-dock`、`ui-dockkit`、`ui-trace`、`ui-layout`、`session-search` | ~4,800 | ui + integration |
-| **W6 剩余与排除台账** | `superagent`、`mcp`、`memory`、`goal`、`schedule`、`checkpoint`、零散包；剩余确属不可测的写排除理由 | ~4,700 | 混合；达不到 90% 时只允许「带理由的排除」补差 |
+| **W1 core + sandbox** | core 剩余（loader / plugin-watch / ui-bundles / schedule / session）、`sandbox`（含 `win/runner-entry` 子进程） | ~4,770 | unit + integration；`runner-entry` 用 built/子进程层 |
+| **W2 外部面与工具** | `superagent`、`ui-composer`、`lsp`、`hooks`、`config-core`、`tools-default` | ~4,660 | unit + integration + ui（0% 文件优先） |
+| **W3 前端高频面** | `ui-primitives`、`self-improve`、`ui-status`、`ui-settings`、`ui-boot`、`ui-superagent`、`ui-sessions`、`ui-core` | ~4,600 | ui（jsdom + RTL） |
+| **W4 会话与浏览器面** | `ui-transcript`、`cdp`、`remote`、`browser`、`subagent`、`approval`、`computer-use`、`session-core`、`mcp`、`ui-dockkit` | ~4,600 | ui + integration + 子进程 |
+| **W5 长尾 UI 与宿主** | `desktop-dock`、`ui-trace`、`dock-browser`、`tool-search`、`memory`、`ui-layout`、`ui-team`、`ui-palette`、`ui-terminal` 等 | ~4,600 | ui + integration |
+| **W6 剩余与排除台账** | 剩余零散包；确属不可测的写排除理由并逐条反向验证替代覆盖 | ~4,500 | 混合；只允许「带理由的排除」补差 |
 
 **W6 之后的硬判据**：`coverage-summary.json` 的 total lines ≥ 90.0，且没有新的 0% 文件（除排除台账里的）。
 
