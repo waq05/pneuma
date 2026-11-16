@@ -11,13 +11,13 @@
 
 | # | 来源 | 原来钉什么 | 为什么迁不动 | 该补在哪 |
 | --- | --- | --- | --- | --- |
-| B1 | D26 / `session-picker-mouse` | ink 整屏 39 行帧、滚轮与 PgUp 回看、DECSET 鼠标模式、选择器两级导航、审批卡与提问卡点击 | 靠假 stdin/stdout 逐帧断言，integration 禁止真桌面 | `tui` project（node 环境 + 假终端），或 e2e |
-| B2 | D26 / `session-title-live` | 示例插件起标题；「只有用户消息时不请求」「消息没变不重复请求」 | 必须观察**回合进行中**，`fakeLLM` 没有慢响应接缝；且与内置 `session-title` 抢 `meta.autoTitle` | 插件层（`tests/plugins/`），要先给 fakeLLM 加「按内容延迟应答」 |
+| B1 | D26 / `session-picker-mouse` | ink 整屏 39 行帧、滚轮与 PgUp 回看、DECSET 鼠标模式、选择器两级导航、审批卡与提问卡点击 | 靠假 stdin/stdout 逐帧断言，integration 禁止真桌面 | **已迁（2026-11-16）**：`tui/app/session-picker-mouse.spec.ts` 14 条（假终端 + SGR 鼠标序列 + 整屏帧），反向验证 1 条；探针已删 |
+| B2 | D26 / `session-title-live` | 示例插件起标题；「只有用户消息时不请求」「消息没变不重复请求」 | 必须观察**回合进行中**，`fakeLLM` 没有慢响应接缝；且与内置 `session-title` 抢 `meta.autoTitle` | **已迁（2026-11-16）**：`session-title/session-title-live.int.spec.ts` 1 条（覆盖原 6 段检查点，`fakeLLM` 按请求序号应答），反向验证 1 条；探针已删 |
 | B3 | D29 / `plugin-model` | 界面按 `row.experimental === true` 渲出「实验」档与分组标题 | ui-plugins 的包级 spec 只查清单、不渲染 | ui project，给插件列表行加渲染断言 |
 | B4 | P2-G / `teammate-notice` | 壳的收件箱角标 = `queued + notices` 相加 | 源码文本；等价行为要在真渲染里数角标 | ui project（输入框下方队列条） |
 | B5 | P2-G / `teammate-notice` | 终端状态栏条数表达式同上 | 源码文本 | `tui` project 帧断言 |
-| B6 | P2-C / `injection-card-tip` | `ui-transcript` 的 tsx 源码 + 中英字典断言 | 主体是界面呈现；真机 DOM 那一半本来就在 `desktop/shots/_verify-prompt-cards.mjs` | ui project，或并入那条 shots |
-| B7 | P2-D / `settings-embed-slot` | ui-settings 与 tools-default 的 11 条源码文本（槽位接线、组件挂载） | 源码文本 | ui project（嵌槽渲染断言） |
+| B6 | P2-C / `injection-card-tip` | `ui-transcript` 的 tsx 源码 + 中英字典断言 | 主体是界面呈现；真机 DOM 那一半本来就在 `desktop/shots/_verify-prompt-cards.mjs` | **部分迁（2026-11-16）**：`ui-transcript/ui/injection-card-tip.spec.tsx` 3 条（收起/展开 title 行为）；残留＝字典资源审计（中英键与英文文案）、源码身份钉（title 长在 `.entry-injection-head` 上且真的走 `t()`）、真机 DOM 半仍在 shots。探针保留 |
+| B7 | P2-D / `settings-embed-slot` | ui-settings 与 tools-default 的 11 条源码文本（槽位接线、组件挂载） | 源码文本 | **部分迁（2026-11-16）**：`ui-settings/ui/embed-slot.spec.tsx` 5 条（嵌槽渲染 + 子分区写回）；残留＝宿主侧声明（terminal-env 注册/字段序）、真终端探测的「当前：…」、字典一一对应审计。探针保留 |
 
 ## 二、转给 P7（收尾期决定）
 | # | 来源 | 原来钉什么 | 为什么迁不动 | 备注 |
@@ -27,7 +27,7 @@
 | B10 | P2-B / `open-in` | 21 条源码文本：模型终端起进程目录、MCP `fallbackCwd`、审批 `baseCwd`、LSP `baseCwd`、壳的 `newSessionIn` 调用点 | 每条都要真起 shell / MCP / LSP 才观察得到 | 默认「留在 `check-core`」，除非 P7 判定值得另开行为电池 |
 | B11 | P2-E / `sandbox-parity` | 24 条源码文本：ASKABLE_RULES 内容、审批里沙箱 check 的先后、替换式骨架过滤器、持久 shell 的 presets | 需要真审批 + 真沙箱才观察得到 | 同上 |
 | B12 | P2-F / 待回收 | 见 P2-F 报告 | — | **已补齐（2026-11-14，P2 收尾判定）**：`tui-compacting`、`tui-features`、`tui-subagent-live`、`tui-transcript-scroll`、`tui-transcript-style` 五条是整屏帧 / 真 App 链路，归 P3 批 8（tui project）；`injection-card-tip` 归 P3（ui，B6 已记）；`settings`（42 条帧）、`session-picker-mouse`、`session-title-live` 同前（B1/B2/B13）；P2 收口时 check-core 应剩 17 条：readme、release-notes（P7）+ plugin-hot-update、plugin-library、session-permissions（永远留 Node）+ 上述 12 条（P3） |
-| B13 | P2-I / `update-check` | 19 条桌面侧断言：主进程登记两个原生操作、上电排期、退出停定时器、下载地址只挑自己资产、装完启动安装程序 | 全在 `desktop/electron/main/`，进程内没有接缝，只能读源码文本。迁进 unit 时按「源码文本一律不搬」删了 | 要补得先有桌面主进程的测试通道（`desktop/` 目前只有 typecheck + shots）。P7 决定要不要做 |
+| B13 | P2-I / `update-check` | 19 条桌面侧断言：主进程登记两个原生操作、上电排期、退出停定时器、下载地址只挑自己资产、装完启动安装程序 | 全在 `desktop/electron/main/`，进程内没有接缝，只能读源码文本。迁进 unit 时按「源码文本一律不搬」删了 | **未做（P7 判定不做）**：桌面主进程测试通道需要真 Electron 主进程 harness（shutdown/排期/安装器都不可 mock），收益低于维护成本；同批的 `settings-test` 42 帧已迁（`tui/app/settings.spec.ts` 15 条覆盖约 61 check 点），更新检查的行为面由 `ui-layout/ui/update-button.spec.tsx` 承接 |
 | B14 | P2-I / `skills-roots` | 界面：两类全局技能各有标签、三个作用域筛选项、按发现根分组、行内不再打来源徽章 | 要渲染技能页，not in-process | ui project（技能页渲染断言） |
 | B15 | P2-I / `readme` `release-notes` | README 的块形态/相对路径/锚点/数字口径；发版脚本的纯函数 | 被测对象是文档与 `scripts/*.mjs`，不是 `src/**` 产品代码 | 留 `scripts/`，P7 决定是否并进文档闸门（`check:style` 那类） |
 | B16 | P2-F / `permission-presets` | 6 条界面渲染断言：settings 与 ui-plugins 的 `derived` 出口、未识别值的兜底展示 | 要渲染设置页与插件页，集成层没有接缝 | ui project |

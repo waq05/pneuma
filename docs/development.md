@@ -648,7 +648,7 @@ pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconf
 pnpm run check:ui                  # 42 条纯 Node 探针（含插件产物审计 / 源码文本闸，jsdom 与渲染层够不到）
 pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 12 条 Node 侧探针（ESM 缓存戳 / ink 帧 / 会话库 / 源码文本），见 testing-backlog §三
+pnpm run check:core                # 7 条 Node 侧探针（ESM 缓存戳 / 源码文本 / 文档闸），见 testing-backlog §三
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
 pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（77 包/77 行/0 缺口）+ 包标准八条硬项 + 89 个包用例 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 组合门禁（77 包/63 实挂/0 失败）+ 17 条换包 e2e
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json

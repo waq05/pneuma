@@ -11,14 +11,17 @@
  *
  *   - `plugin-hot-update` / `plugin-library`：验 Node 的 ESM 缓存戳（`?t=mtime` 换新实例）。
  *     Vitest 的动态 import 走 Vite 管线、不吃这个缓存戳，硬迁只会得到恒绿或恒红的假证据；
- *   - `settings` / `session-picker-mouse` / `tui-*`：ink 整屏帧与 SGR 鼠标事件的端到端形态。
- *     其中可迁的行为段已由 `src/packages/tui/app/*.spec.ts` 承接（帧工具见
- *     `tests/snapshots/tui/frame-kit.ts`），这里留下的是帧级细节与真 App 计数；
+ *   - `injection-card-tip` / `settings-embed-slot`：渲染段已由 ui spec 承接
+ *     （`ui-transcript/ui/injection-card-tip.spec.tsx`、`ui-settings/ui/embed-slot.spec.tsx`），
+ *     留下的是字典资源审计、源码身份钉与真终端探测那几段——jsdom 与宿主桩够不到；
  *   - `session-permissions` / `readme` / `release-notes`：验的是源码文本、文档与发版脚本，
  *     没有运行期接缝；`readme` / `release-notes` 属于文档闸，不属于产品测试。
  *
- * P3 收尾批（2026-11-16）对账过一轮：能搬的行为段全部搬完并逐条反向验证，搬不动的在
- * 探针头部与 backlog 里留了理由。看到清单还剩这几条时，先读那张表，别当成没迁完。
+ * P3 收尾批（2026-11-16）对账过一轮：session-picker-mouse / session-title-live /
+ * tui-gutter-hover / tui-snapshot-coalesce / settings 五条的行为段已整条迁进
+ * tui / integration 层（逐条反向验证），探针已删；本条通道从 12 条降到 7 条。
+ * 搬不动的在探针头部与 backlog 里留了理由——看到清单还剩这几条时先读那张表，
+ * 别当成没迁完。
  *
  * 与 `check-ui.mjs` 的分工按目录约定来，不按重要性：
  *   - `ui-*` 归 `check:ui`（眨眼级，改壳的人随时跑）；
