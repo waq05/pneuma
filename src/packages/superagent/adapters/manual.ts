@@ -9,7 +9,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { key } from '../core/ids.js'
-import type { Trigger } from '../core/model.js'
+import { threadKey, type ThreadRef, type Trigger } from '../core/model.js'
 import type { ScopeResult, SourceScope } from '../core/ports.js'
 import { DEFAULT_ACTOR, MANUAL_SOURCE } from './settings.js'
 
@@ -63,6 +63,60 @@ export function manualTrigger(input: ManualRequest, now: string): Trigger {
     at: now,
     text: body,
     meta: { title },
+  }
+}
+
+/**
+ * 面板上回话的入参：回到哪条线程、说什么、回给哪张工单（只用于 `meta` 里的排查信息）。
+ */
+export interface AnswerRequest {
+  /** 工单已经订阅着的那条线程；运行期从线程表里挑最新有动静的那一条。 */
+  thread: ThreadRef
+  /** 回答正文。 */
+  text: string
+  /** 回给哪张工单：只记进 `meta` 便于排查，核心不读它。 */
+  ticketId?: string
+  /** 发送者；缺省用占位发送者 `operator`（与 `manualTrigger` 同一条规则）。 */
+  actor?: string
+}
+
+/**
+ * 把面板上的一句话包成一条**挂到已有线程**的 Trigger。
+ *
+ * 与 {@link manualTrigger} 的区别只有一条，但很关键：
+ *   - `manualTrigger` 开**新线程**、开新工单——`threads` 里那条 id 是它自己现造的；
+ *   - 这里挂到工单**已经订阅着**的那条线程上。于是 `Intake` 的订阅扇出会把它变成那张工单
+ *     的一条 Input 并 `wake` 它（`core/intake.ts:38-59`）——与 GitHub 评论进来走同一条路，
+ *     核心里没有「面板回话」的第二条分支。
+ *
+ * 另外两点与 `manualTrigger` 同源、各有理由：
+ *   1. `id` 掺 `randomUUID()`：同一个人把同一句话连发两次，两条都要进工单。核心 `key()`
+ *      是内容哈希，不掺随机量的话第二次会被 `Intake` 判 `duplicate` 静默吞掉。
+ *   2. `addressed: 'direct'`：这是人对它说的话，准入闸才给 `explicit` 强度；不带会掉进
+ *      准入表那几格，回答反而「不够明确」。
+ *
+ * @param input - 目标线程、正文、可选的工单 id 与发送者
+ * @param now - 当前时刻，`Date#toISOString` 形式
+ * @returns 一条 `human` 的 Trigger
+ * @throws 正文为空时抛错——调用点应在服务层先给可操作的提示
+ */
+export function answerTrigger(input: AnswerRequest, now: string): Trigger {
+  const text = input.text.trim()
+  if (text === '') throw new Error('answer trigger needs non-empty text')
+  // 线程也在哈希输入里：同一条回答发到两条不同线程上必须是两条 Trigger。
+  const id = key('trigger', MANUAL_SOURCE, now, threadKey(input.thread), text, randomUUID())
+  const actor = input.actor?.trim()
+  return {
+    id,
+    source: MANUAL_SOURCE,
+    threads: [input.thread],
+    actor: { source: MANUAL_SOURCE, id: actor === undefined || actor === '' ? DEFAULT_ACTOR : actor },
+    human: true,
+    addressed: 'direct',
+    at: now,
+    text,
+    // 不写 `title`：那是「开新工单」的元数据。工单 id 只用于排查「这句是面板回给哪张单的」。
+    meta: input.ticketId === undefined ? {} : { ticketId: input.ticketId },
   }
 }
 

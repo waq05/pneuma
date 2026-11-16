@@ -47,3 +47,14 @@ export function sessionsDir(ticketId: string): string {
 export function worktreesDir(): string {
   return join(superagentRoot(), 'worktrees')
 }
+
+/**
+ * 可在运行期覆盖的提示词目录：`<DSC_HOME>/superagent/prompts`。
+ *
+ * 为什么和包内 `prompts/` 分开：包内那份是出厂文案（安装目录可能只读），主会话要改提示词
+ * 就得写用户的数据根。读的时候先看这里、没有再退回包内，包内也读不到才用内置兜底
+ * （`adapters/executor.ts` 的 `loadPromptVolumes`）。
+ */
+export function promptsDir(): string {
+  return join(superagentRoot(), 'prompts')
+}

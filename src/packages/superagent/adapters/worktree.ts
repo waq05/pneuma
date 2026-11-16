@@ -91,6 +91,25 @@ export function slugOf(name: string): string {
   return slug === '' ? 'ticket' : slug
 }
 
+/**
+ * 一个工作树名的落点：slug、目录、分支名。与 `ensureWorktree` 同一套算法。
+ *
+ * 为什么要单独抽出来：建单那一刻（`WorkerExecutor.prepare`，跑在 `Tickets.create` 的数据库
+ * 事务里）就要把目录写进 `Ticket.execution`，而那时不能建目录、不能跑 git。只留一份算法，
+ * 工单上记的目录与派工时 `ensureWorktree` 真建出来的那棵树才不会漂移——两处各写一遍的话，
+ * 改一处忘另一处，症状是「工单说目录在 A，worker 实际在 B」，没有任何报错。
+ *
+ * 纯函数：只拼路径，不碰文件系统、不跑 git。
+ *
+ * @param input.name - 工作树名（还没 slug 化）
+ * @param input.root - 工作树根；缺省 `<DSC_HOME>/superagent/worktrees`
+ */
+export function worktreePathOf(input: { name: string; root?: string }): { slug: string; dir: string; branch: string } {
+  const slug = slugOf(input.name)
+  const dir = join(resolve(input.root ?? worktreesDir()), slug)
+  return { slug, dir, branch: `agent/${slug}` }
+}
+
 /** 一条 git 命令的结果。`status` 统一成数字：`spawnSync` 在起不来进程时给的是 `null`。 */
 interface GitResult {
   status: number
@@ -189,10 +208,11 @@ function normalizePath(value: string): string {
  */
 export function ensureWorktree(input: EnsureWorktreeInput): WorktreeHandle {
   const repo = resolve(input.repo)
-  const slug = slugOf(input.name)
-  const branch = `agent/${slug}`
+  // `worktree add` 会自己建最后一级目录，但不会建整条父路径。
   const root = resolve(input.root ?? worktreesDir())
-  const dir = join(root, slug)
+  // 名字 → 目录 / 分支只认 `worktreePathOf` 一份：`prepare` 在事务里算 `execution.directory`
+  // 用的是同一个函数，两边必须逐字节一致（理由见那个函数的注释）。
+  const { branch, dir } = worktreePathOf({ name: input.name, root })
 
   // 路径 1：目录已在。先确认它真是这个仓库的 worktree——只凭「目录存在」就复用，会把
   // 智能体放进一个普通目录（甚至仓库外面），改动既不在分支上，也没人收得到。

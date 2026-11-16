@@ -13,8 +13,9 @@
  *
  * @module dsc/packages/superagent/adapters/github/bind
  */
+import { liveTicket } from '../../core/model.js'
 import type { ThreadRef, Ticket } from '../../core/model.js'
-import { agentPull, pullOf, ticketBranch } from './pull.js'
+import { agentPull, pullOf, pullsOf, ticketBranch, type Pull } from './pull.js'
 import { SOURCE } from './trigger.js'
 
 /** 一张开着的 PR 里，判归属用得到的三个字段（`agentPull` / `ticketBranch` 的入参）。 */
@@ -87,6 +88,86 @@ export async function bindAgentPulls(deps: BindPullsDeps): Promise<BoundPull[]> 
     }
   }
   return bound
+}
+
+/** `claimPull` 要的五个动作。少一个就判不了，所以全是必填；测试给假的就能跑。 */
+export interface ClaimPullDeps {
+  /** 读一张 PR；抛了算认领失败。 */
+  pull(number: number): Promise<Pull>
+  /** 本仓库的机器人身份（`agentPull` 的第二个参数）。 */
+  account: { login: string; repository: string }
+  /** 按 id 读工单（工单层的事实只在工单层读）。 */
+  ticket(id: string): Ticket | undefined
+  /** 所有开着的工单（查「这张 PR 已经属于别人」）。 */
+  openTickets(): readonly Ticket[]
+  /** 让工单关注一个线程；`own` 指「这是智能体自己开的」。 */
+  bind(ticketId: string, thread: { source: string; id: string }, own: boolean): void
+}
+
+/**
+ * 这张工单是不是由那张 PR 的消息开的（上游 `claimPull` 的 `started`）。
+ *
+ * 上游读来源 Trigger 的 `meta.isPr` / `meta.number`（`sources/github-pull.ts:39`），这里只读
+ * 得到工单的渠道：`Ticket.channels` 记着它被接单时那些消息的线程，PR 的线程键就是
+ * `github:<number>`（`github/trigger.ts:37-41`）。GitHub 的 Issue 与 PR 共用一套编号，同一个
+ * 号码不可能既是 Issue 又是 PR，所以这条与上游的 `meta.number` 等价，也不会把 Issue 单
+ * 错认成 PR。
+ */
+function startedFrom(ticket: Ticket, number: number): boolean {
+  return ticket.channels.some(channel => channel.source === SOURCE && channel.thread === `${SOURCE}:${String(number)}`)
+}
+
+/**
+ * 认领一张 PR：报告带 `pr_number` 时先走这里，通过了才写报告（上游 `claimPull`，
+ * `sources/github-pull.ts:35-50`；工具侧接线见 `app/tools/executor.ts:88-92`）。
+ *
+ * 判定顺序照上游，一条都不能换：
+ * 1. **工单还开着**：结束的工单不再认领，否则报告写不进去，认领却会留下一条订阅；
+ * 2. **读得到 PR**：读失败（404 / 网络 / 令牌）算认领失败，不猜；
+ * 3. **这张 PR 是这张单的**：来源 PR（`started`）或机器人自己开的、分支末段等于工单短名
+ *    （`opened`），二者满足一个。`agentPull` 还要 head 在自己仓库，挡掉 fork 里的冒充；
+ * 4. **没被别的活工单绑着**：一张 PR 只属于一张还开着的单，否则两张单会抢同一份 CI；
+ * 5. **开着的 PR 才绑**：关掉 / 合并了的 PR 绑上去也等不到后续，还会让「PR 合并 → 工单结束」
+ *    误判成已发生。`own` 只给 `opened`——来源 PR 是这张单开在的线程，不是它自己开的。
+ *
+ * 已经是这张单的 follow（且开着、`own` 对得上）时不重复绑：重复绑只会多几条同键订阅。
+ *
+ * @param deps - 读 PR、读工单、绑线程的五个动作
+ * @param ticketId - 要认领的工单
+ * @param number - PR 号
+ * @returns 拒绝原因（中文，说清为什么不行、该传什么）；认领成功或本来就绑着 → undefined
+ */
+export async function claimPull(deps: ClaimPullDeps, ticketId: string, number: number): Promise<string | undefined> {
+  const ticket = deps.ticket(ticketId)
+  if (ticket === undefined) return `没有这张工单（${ticketId}）：先确认这张单还在，再报 pr_number`
+  if (!liveTicket(ticket)) {
+    return '这张工单已经结束了：结束的工单不再认领 PR。要接着干就先在工单线程里回一条消息让它重新打开'
+  }
+  let pull: Pull
+  try {
+    pull = await deps.pull(number)
+  } catch (error) {
+    return `读 PR #${String(number)} 失败（${errorText(error)}）：确认这个号是这张单的 PR；拿不准就先把 pr_number 去掉`
+  }
+  const started = startedFrom(ticket, number)
+  const opened = agentPull(pull, deps.account) && ticketBranch(ticket, pull.head.ref)
+  if (!started && !opened) {
+    return `PR #${String(number)} 不属于这张工单：要么传这张单来源的那条 PR，要么传机器人（${deps.account.login}）` +
+      `自己开的、分支末段是这张单短名（${ticket.execution?.name ?? '还没有定名'}）的 PR；没有 PR 就别传 pr_number`
+  }
+  const owner = deps.openTickets().find(item => pullsOf(item, true).includes(number))
+  if (owner !== undefined && owner.id !== ticketId) {
+    return `PR #${String(number)} 已经属于另一张还开着的工单（${owner.id.slice(0, 8)}）：` +
+      '一张 PR 只能绑一张工单，把 pr_number 留空，或者在属于它的那张工单里报'
+  }
+  const follow = ticket.follows?.find(item => item.thread === `${SOURCE}:${String(number)}`)
+  // 与上游同一条判据（`sources/github-pull.ts:48`）：已绑着且没关就什么都不做；绑过又关掉的
+  // （PR 重新打开）要补回来；`own` 由来源 PR 变成机器人自开时也要把 `own` 纠正过来。
+  if (pull.state === 'open' && (follow === undefined || follow.closed !== undefined || (opened && !follow.own))) {
+    // 线程 id 用 PR 号，与 `bindAgentPulls` 和适配器报 `threadClosed` 时一致。
+    deps.bind(ticketId, { source: SOURCE, id: String(number) }, opened)
+  }
+  return undefined
 }
 
 /** 一张该看 CI 的 PR：哪个工单、第几号。 */

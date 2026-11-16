@@ -1,17 +1,18 @@
 /**
- * superagent 插件对外露的服务（`ctx.superagent`）：快照面 + 五个可调方法。
+ * superagent 插件对外露的服务（`ctx.superagent`）：快照面 + 一组可调方法。
  *
  * 为什么要有这一层：内核的 `packages/runtime` 不能 import 插件的类（依赖方向只能
  * packages → contract），界面通道只能经 `ctx.get('superagent')` 转发。所以这里把
  * 运行期包成一个服务，方法与快照面都从它走。
  *
- * **薄**是这一层的规矩：五个方法只做「取运行期 → 调对应方法 → 通知快照失效」，
+ * **薄**是这一层的规矩：每个方法只做「取运行期 → 调对应方法 → 通知快照失效」，
  * 不拼 SQL、不判定工单、不建目录。业务在 `runtime.ts` 与 `core/`；
  * 装配在 `surface.ts`。
  *
  * @module dsc/packages/superagent/service
  */
 import type {
+  SuperagentAnswerInput,
   SuperagentPublishInput,
   SuperagentService as SuperagentServicePort,
   SuperagentSurface,
@@ -19,6 +20,15 @@ import type {
 } from '@pneuma/runtime/contract.js'
 import { buildSurface, readSessionTranscript } from './surface.js'
 import type { SuperagentRuntime } from './runtime.js'
+
+/**
+ * 一条回答最多多少字。
+ *
+ * 为什么服务层还要卡一次（界面通道的 `UI_ARG_SPECS` 已经按字节数拦过）：那一道是通道闸，
+ * 管的是「页面最多能往宿主灌多少字节」；这一道是业务规则——4000 字是 worker 读一句回答的
+ * 合理上限，超了不是「更大的回答」，是贴错了别处的内容。界面输入框的 `maxLength` 同值。
+ */
+export const ANSWER_MAX_CHARS = 4000
 
 /** 服务从插件装配处拿的四件东西（全是回调，服务自己不持有库）。 */
 export interface SuperagentServiceDeps {
@@ -130,6 +140,23 @@ export class SuperagentService implements SuperagentServicePort {
   /** 重试一张失败 / 卡住的工单。 */
   async retry(id: string): Promise<void> {
     this.require().retry(this.idOf(id))
+    this.notify()
+  }
+
+  /**
+   * 回答工单当前的那个问题。
+   *
+   * 「空回答」与「超长回答」在这里就拒：前者没有意义（worker 会拿着空白继续），后者是
+   * 贴错了东西。真正的入口校验在界面通道（字节上限）与运行期（工单在不在、线程找不找得到）。
+   */
+  async answer(input: SuperagentAnswerInput): Promise<void> {
+    const source = (input ?? {}) as Partial<SuperagentAnswerInput>
+    const text = typeof source.text === 'string' ? source.text.trim() : ''
+    if (text === '') throw new Error('回答不能为空')
+    if (text.length > ANSWER_MAX_CHARS) {
+      throw new Error(`回答太长：最多 ${String(ANSWER_MAX_CHARS)} 字，现在 ${String(text.length)} 字`)
+    }
+    this.require().answer(this.idOf(source.ticketId ?? ''), text)
     this.notify()
   }
 

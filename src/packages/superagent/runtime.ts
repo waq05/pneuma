@@ -11,32 +11,36 @@
  *
  * @module dsc/packages/superagent/runtime
  */
-import { existsSync, rmSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@pneuma/runtime/core/session.js'
-import type { SuperagentSettingsChangeView } from '@pneuma/runtime/contract.js'
-import { Engine, latestAssignment, latestReport, ticketStage, type AssessmentOutcome, type ChannelRef, type DomainEvent,
-  type Executor, type OutboundMessage, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketStage,
+import type { SuperagentSettingsChangeView, SuperagentSurface } from '@pneuma/runtime/contract.js'
+import { Engine, followupOwners, latestAssignment, latestReport, liveTicket, threadKey, ticketStage,
+  type AssessmentOutcome, type ChannelRef, type Decision, type DomainEvent, type Executor, type OutboundMessage, type Outcome,
+  type Reply, type ReplyRequest, type SourceScope, type Thread, type ThreadRef, type Ticket, type TicketInput, type TicketStage,
   type Trigger, type WorkerReport } from './core/index.js'
 import { policyVersion, settingsPolicy, type RoleModel, type Settings } from './core/policy.js'
 import { selectAssessor, type SuperagentAssessor } from './adapters/assessor-select.js'
 import type { AssessorComplete, HeldCandidate } from './adapters/assessor-model.js'
 import type { GithubApi } from './adapters/github/api.js'
+import { claimPull } from './adapters/github/bind.js'
+import { readPull } from './adapters/github/pull.js'
 import { readThreadWindow, type ThreadWindow } from './adapters/github/read.js'
 import { OutboxDispatcher, type MessageSender } from './adapters/dispatch.js'
 import { EffectQueue } from './adapters/effects.js'
 import type { FeishuThreads } from './adapters/feishu/loops.js'
 import { POLL_HORIZON_MS } from './adapters/feishu/loops.js'
-import { WorkerExecutor, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
-import { manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
+import { WorkerExecutor, loadPromptVolumes, worktreeNameOf, type UnattendedMode, type WorkerModel } from './adapters/executor.js'
+import { answerTrigger, manualScope, manualTrigger, type ManualRequest } from './adapters/manual.js'
 import { StoreNotifier, type RecentNotice } from './adapters/notify.js'
 import { StoreOutbox } from './adapters/outbox.js'
 import { StoreRepositories } from './adapters/repositories.js'
 import { defaultSettings, GITHUB_SOURCE } from './adapters/settings.js'
 import type { DscStore, CandidateRecord } from './adapters/store.js'
-import { removeWorktree, slugOf } from './adapters/worktree.js'
-import { sessionsDir, worktreesDir } from './paths.js'
+import { removeWorktree, worktreePathOf } from './adapters/worktree.js'
+import { promptsDir, sessionsDir } from './paths.js'
+import { buildSurface } from './surface.js'
 
 /** 命令层要的一行工单：只给列表要用的四样，别把整个 Ticket 聚合摊出去。 */
 export interface TicketView {
@@ -52,6 +56,13 @@ export interface TicketView {
    * 命令层（`commands.ts`）不读这一项，多一个可选字段不影响它。
    */
   summary?: string
+  /**
+   * 工单等人回答的那个问题原话（`Ticket.attention.question`）。
+   *
+   * 为什么要在视图里给：工单停在「等你回答」时，界面会给一个回话输入框；框上面不写
+   * 在问什么，用户就是在盲回。摘要说的是「干到哪了」，不能代替问题本身。
+   */
+  question?: string
 }
 
 /** 日志出口；默认丢弃，测试与 `index.ts` 传宿主控制台。 */
@@ -127,11 +138,145 @@ export interface WorkerRuntimeOptions {
   root?: string
 }
 
+/**
+ * 设置分区的一个字段，投影给主会话工具看。
+ *
+ * 为什么值与声明要合成一条：工具得「先看现场再改」，`superagent_read` 的 settings 资源
+ * 与 `superagent_settings_save` 的 key 校验读的是同一份；分两次问就多一条会漂移的口径。
+ */
+export interface SettingsFieldView {
+  /** 设置分区里的键（与 `SettingsSectionSpec` 字段的 key 同名）。 */
+  key: string
+  /** 控件标题：模型据此看懂这一项管什么。 */
+  label: string
+  /** 值类型：text → 字符串，number → 数字，boolean → 布尔，list → 字符串数组。 */
+  type: string
+  /** 当前值（现读设置分区，不是构造时的快照）。 */
+  value: unknown
+  /** 控件下面那句说明（下拉字段会把可选值拼在末尾）。 */
+  help?: string
+}
+
+/** 线程上的一条消息：工具侧只读得到这三样（候选现场与 worker 读上下文共用）。 */
+export interface CandidateMessageView {
+  /** 消息正文。 */
+  text: string
+  /** 说话人（来源自己的身份串，如 GitHub 登录名 / 飞书 open_id）。 */
+  actor: string
+  /** 发生时刻（ISO）。 */
+  at: string
+}
+
+/**
+ * 一条候选的现场：候选本身 + 触发它的那条消息 + 它线程上最近的消息。
+ *
+ * 为什么在运行期就装配好：候选记录只存了 trigger id 与线程键，消息正文与线程上下文只有
+ * 运行期能按库查（`trigger` / `trigger_thread` 两张表的读法在仓储层）。工具拿到的是一份
+ * 自足的现场，不必认识仓储，也就不用为它开一条读库的路。
+ */
+export interface CandidateContextView {
+  /** 候选 id（就是 Eval 的 id）。 */
+  id: string
+  /** 触发它的那条消息 id。 */
+  triggerId: string
+  /** pending = 等人拍板；accepted / ignored = 已经有结论。 */
+  state: 'pending' | 'accepted' | 'ignored'
+  /** 判定出来的时间（ISO）。 */
+  at: string
+  /** 卡片标题（判定模型给的）。 */
+  title: string
+  /** 为什么判成可以接。 */
+  reason: string
+  /** 工单范围。 */
+  scope: string
+  /** 来源（`github` / `feishu` / `manual`）。 */
+  source: string
+  /** 触发它的那条消息。 */
+  trigger: CandidateMessageView
+  /** 它所在线程上的消息，按时间升序（旧 → 新），最多最近 {@link CANDIDATE_THREAD_LIMIT} 条。 */
+  thread: CandidateMessageView[]
+}
+
+/**
+ * worker 读上下文的 `ticket` 资源：这张工单本身 + 它的输入清单。
+ *
+ * 为什么正文取起始 Trigger、输入再单列一份：worker 的系统提示词里只有工单标题与正文
+ * （`prompts/shared.md` 的 `<工单>` 段），它看不到「这张单后来还收到了什么」；而含糊的需求
+ * 往往要靠后面那几条才看得懂。这里给的是**摘要**，完整原文走 `input:<id>`。
+ */
+export interface WorkerTicketContextView {
+  /** 工单 id（与输入 id 一起构成「读自己这张单」的范围）。 */
+  id: string
+  /** 工单标题。 */
+  title: string
+  /** 建单时刻（ISO）。 */
+  createdAt: string
+  /** 人写的要求原文：起始 Trigger 的正文。 */
+  body: string
+  /** 输入清单（最近的 {@link WORKER_TICKET_INPUT_LIMIT} 条，旧的在前），每条带来源、时间、正文摘要。 */
+  inputs: WorkerTicketInputView[]
+  /** 输入总条数；比 {@link WorkerTicketContextView.inputs} 长时说明清单被截过。 */
+  inputTotal: number
+}
+
+/** `ticket` 资源里的一条输入摘要。 */
+export interface WorkerTicketInputView {
+  /** 输入 id（`input:<id>` 资源用的就是它）。 */
+  id: string
+  /** 来源：`github` / `feishu` / `manual`，或 `main`（主会话写的）/ `system`（工单内部事件）/ `policy`。 */
+  source: string
+  /** 进工单的时刻（ISO）。 */
+  at: string
+  /** 正文摘要；超过上限就截断并注明总字数。 */
+  text: string
+}
+
+/**
+ * worker 读上下文的 `thread` 资源：这张工单所在线程的一页消息。
+ *
+ * 为什么一页一页给：一条长话题可能有上百条评论，一次全塞进上下文会把模型正在做的事挤没；
+ * 分页让模型按需继续读，`next_offset` 与主会话的 `superagent_read` 同一语义。
+ */
+export interface WorkerThreadContextView {
+  /** 线程键（`github:<number>` / `feishu:<chat>:<root>`）；工单没有可读线程时是空串。 */
+  thread: string
+  /** 这一页的起点（从 0 开始）。 */
+  offset: number
+  /** 这一页最多几条。 */
+  limit: number
+  /** 这条线程上的消息总数。 */
+  total: number
+  /** 这一页的消息，旧 → 新。 */
+  messages: CandidateMessageView[]
+  /** 还有下一页时给下一页的 `offset`；没有就不带这一项（带 null 会让模型以为有个 null 号）。 */
+  next_offset?: number
+}
+
+/** worker 读上下文的 `input:<id>` 资源：一条输入的完整原文。 */
+export interface WorkerInputContextView {
+  /** 输入 id。 */
+  id: string
+  /** 来源（与 {@link WorkerTicketInputView.source} 同一口径）。 */
+  source: string
+  /** 进工单的时刻（ISO）。 */
+  at: string
+  /** 完整原文（不截断）。 */
+  text: string
+}
+
 /** 可注入项：时钟、日志、宿主上下文与执行器设置。 */
 export interface RuntimeOptions {
   /** 当前时刻，`Date#toISOString` 形式；核心不读环境时钟。 */
   now?: () => string
   log?: RuntimeLog
+  /**
+   * 可见面变了：让快照失效（宿主那边通常发 `dsc/changed`）。
+   *
+   * 为什么由外面注入而不是运行期自己发：`ctx` 是可选的（测试里没有宿主），而且
+   * 「快照失效」是宿主侧的词汇——运行期只该说「有东西变了」，怎么通知界面不归它管。
+   * 主会话工具（`main-tools.ts`）改完工单后走的就是这一条。
+   */
+  changed?: () => void
   /**
    * cordis 上下文。给了才可能真正派工：执行器从它取模型 / 工具 / 守卫 / 沙箱 / 压缩。
    * 不给 = 「未接宿主」模式，`start` 只记日志、工单停在待派工（绝不假装起成功）。
@@ -208,6 +353,30 @@ export interface RuntimeOptions {
    * 令牌从哪个环境变量读只有 `index.ts` 的设置分区知道，运行期再读一遍就是两套配置来源。
    */
   githubApi?: () => GithubApi | null
+  /**
+   * 机器人身份（GitHub 登录名 + `owner/name`）；不配 = 认领 PR 直接拒。
+   *
+   * 为什么要单独给：`GithubApi` 的窄接口只露了 `repository`（`adapters/github/api.ts:81-97`），
+   * 登录名不在里面；而 `Settings` 里也没有它（`defaultSettings` 只把仓库 / 名单写进策略，
+   * 机器人登录名只留在装配处的配置闭包里）。认领 PR 要靠 `agentPull` 判「这张 PR 是不是
+   * 机器人自己开的」，少一半判不了，所以由装配处把同一个账户 getter 递进来。
+   */
+  githubAccount?: () => { login: string; repository: string } | undefined
+  /**
+   * 设置分区当前的字段与值（`superagent_read` 的 settings 资源、`superagent_settings_save` 用）。
+   *
+   * 为什么由装配层注入：设置分区对象只有 `index.ts` 拿得到（`createSettingsSection` 的
+   * 返回值）。运行期若自己再建一份字段声明，就会与设置页出现两套字段 / 两套保存语义，
+   * 迟早一边改了另一边没改。
+   */
+  settingsView?: () => SettingsFieldView[]
+  /**
+   * 调设置分区自己的 save（与设置面板同一个函数；返回字符串 = 被拒原因）。
+   *
+   * 为什么不在这里直接写 `plugins.json`：那会绕过这个分区的校验（枚举、上下限、路径格式）
+   * 与设置变更历史，等于同一个设置有了两条写路径。
+   */
+  saveSetting?: (key: string, value: unknown) => string | void
 }
 
 /**
@@ -226,6 +395,170 @@ export interface SourceBridge {
   threadClosed(thread: ThreadRef, outcome?: 'merged' | 'closed', at?: string): unknown
 }
 
+/**
+ * 主会话的十二个工具能对 Super Agent 做的二十件事（`main-tools.ts` 的依赖面）。
+ *
+ * 为什么只露这二十件：工具是模型直接调的入口，最容易越权。`engine`、执行器、库都在
+ * 运行期里，露出去等于把「谁能不能改工单」的判定交给工具自己——那套判定在 `core/`，
+ * 这里只把八个引擎方法原样转一手，再加十二个运行期才知道的东西：
+ *   - `snapshot()`：读面。工具读的是「人能看见的那一面」，不另开一条读库的路。
+ *   - `isWorkerSession()`：这条会话是不是某个 worker 的。主会话工具在 worker 里不该能用。
+ *   - `changed()`：改完了，让快照失效。
+ *   - `followupOwners()`：这条消息还归哪些工单的执行者决定。要拿仓储才能算
+ *     （`core/model.ts:75`），所以由运行期代算，工具只收工单 id 清单。
+ *   - `prompts()`：提示词两卷当前读到哪一版（覆盖 / 内置 / 兜底）。文件坐标在运行期
+ *     （`paths.ts`），工具只该拿到内容与来源。
+ *   - `savePrompt()`：把一卷提示词写成覆盖文件。校验（角色、字数）在工具层，这里只写盘。
+ *   - `settings()` / `saveSetting()`（P7）：设置分区的字段、当前值与它自己的 save。
+ *     分区对象只有装配层拿得到，运行期只做转交，不另建一份字段声明。
+ *   - `candidates()` / `acceptCandidate()` / `ignoreCandidate()` / `confirmingInferred()`
+ *     （P7）：候选现场与拍板。候选记录只存 trigger id 与线程键，消息正文与线程上下文
+ *     要由运行期按库补（`trigger_thread`），所以现场在运行期装配，工具只负责挑那一条。
+ *
+ * 类型都取占位核心现成的（`core/index.js` / 契约），不在这里另造一套：多一套同形类型，
+ * 核心改字段时这边不会报错，只会静静错位。
+ */
+export interface SuperagentCommandHost {
+  /** 一条 Trigger 的判定；`accept` / `stop` / `ignore` 三种都走这里（准入与决策历史归核心）。 */
+  decide(triggerId: string, outcome: Outcome): Decision
+  /** 把一条 Trigger 挂到已有工单上，`note` 是给执行者的背景。 */
+  attach(ticketId: string, triggerId: string, note?: string): Ticket
+  /** 替工单排一条出站消息；入队后立刻催一拍泵。 */
+  reply(request: ReplyRequest): Reply
+  /** 请一张空闲工单的执行者报状态；`false` = 它没在等，什么都没发。 */
+  requestStatus(ticketId: string): boolean
+  /** 把一条事实记给工单的执行者。 */
+  note(ticketId: string, text: string): Ticket
+  /** 重试一张失败 / 卡住的工单：卡住的那份分配结束、起新的。 */
+  retryTicket(ticketId: string): Ticket
+  /** 这条 Trigger 还归哪些工单的执行者决定（工单 id 清单；空 = 不归任何工单）。 */
+  followupOwners(triggerId: string): string[]
+  /** 把一条 Trigger 重新排队判定；`false` = 已经有判定在跑。 */
+  reevaluate(triggerId: string): boolean
+  /** 掉掉一条线程上所有工单的订阅；`false` = 本来就没订。 */
+  unsubscribe(thread: string): boolean
+  /** 当前快照面（与界面拉到的是同一份装配）。 */
+  snapshot(): SuperagentSurface
+  /**
+   * 提示词两卷的当前内容与来源（`superagent_read` 的 prompts 资源读它）。
+   *
+   * 为什么每次都现读盘：主会话存过覆盖文件之后，这里要立刻能读到新内容——缓存了就成了
+   * 「保存成功、读回来还是旧的」。两卷都带上全文（模板原文，占位符没替换），模型照着改才有意义。
+   */
+  prompts(): { roles: { role: 'shared' | 'worker'; source: 'override' | 'default' | 'fallback'; text: string }[] }
+  /**
+   * 把一卷提示词存成覆盖文件（`<promptsDir>/<role>.md`，目录不存在就建）。
+   *
+   * 校验（role 认识、text 非空且不超上限）在工具层：这里拿到的已经是该写的内容。
+   * 写盘失败直接往上抛，由工具翻成一句人话（比如「目录不可写」）。
+   */
+  savePrompt(role: 'shared' | 'worker', text: string): { role: 'shared' | 'worker'; path: string }
+  /**
+   * 设置分区的字段与当前值（`superagent_read` 的 settings 资源、save 工具的 key 校验读它）。
+   *
+   * 为什么值与声明一次给全：工具要「先看现场再改」；分两次问，字段清单与当前值就可能来自
+   * 两个时刻，模型会照着一份过期的值改。
+   */
+  settings(): SettingsFieldView[]
+  /**
+   * 调设置分区自己的 `save`（与设置面板同一个函数）；返回字符串 = 被拒原因。
+   *
+   * 为什么不在这里直接落盘：写了会绕过这个分区的校验（枚举 / 上下限 / 路径格式）与设置
+   * 变更历史，同一个设置就有了两条写路径。
+   */
+  saveSetting(key: string, value: unknown): string | void
+  /**
+   * 等人拍板的候选现场：候选 + 触发消息 + 线程最近消息（时间升序）。
+   *
+   * `candidate:<id>` 资源与 `superagent_eval` 读同一份装配；工具只负责按 id / trigger 挑。
+   */
+  candidates(): CandidateContextView[]
+  /** 接一条候选，返回建出来的工单 id；`title` 覆盖判定时的标题（与面板接单同一个口子）。 */
+  acceptCandidate(id: string, title?: string): string
+  /** 忽略一条候选；`reason` 记进决策历史（不给人看原文也留个交代）。 */
+  ignoreCandidate(id: string, reason?: string): void
+  /** 候选收件箱开没开：关着时推断候选直接接单，没有可拍板的东西。 */
+  confirmingInferred(): boolean
+  /** 这条会话是不是某个 worker 的（主会话工具据此拒绝 worker 调用）。 */
+  isWorkerSession(sessionId: string): boolean
+  /** 通知快照失效（界面据此重画）。 */
+  changed(): void
+}
+
+/**
+ * worker 会话的端口：五个协作动作 + 第七批的 `report` / `claimPull` + 第八批的 `context`
+ * 的唯一依赖（前五个从上游搬来，保护仓 `src/app/tools/executor.ts:13-21`）。
+ *
+ * 为什么每个动作都先收 `sessionId`：工具只拿得到 `ToolContext`，模型不知道工单 id
+ * （那是执行器的内部账）；运行期在这里按会话反查出 `ticketId`，工具那一层不碰执行器。
+ *
+ * 为什么不是抛错而是 `false`：这条会话本来就可能不是 worker（用户在普通会话里调到了这些
+ * 工具）。「找不到」是正常情况，翻译成一句人话该由工具层做，而不是让引擎深处抛一个模型
+ * 看不懂的异常。几处 `false` 的含义各不相同，见各方法：
+ *   - `followForContext` / `handback` 的 `false` 是语义（本来就在跟 / 没交回）；
+ *   - 其余动作的 `false` = 会话不是 worker。
+ * 工具在拿端口之前已经用 `host(sessionId)` 判过一次身份（`index.ts`），所以走正常路径时
+ * 语义 `false` 不会被误当成身份问题；端口自己仍然对陌生会话返回 `false`，防越权调用。
+ */
+export interface SuperagentWorkerCommandHost {
+  /** 先回执再动大手术：把一条回执排到人的原始消息所在的渠道。会话不是 worker 的 → false。 */
+  ack(sessionId: string, triggerId: string, text: string): boolean
+  /** 掉掉一条与工单无关的线程订阅；工单自己的线程引擎会拒（`UserError`）。会话不是 worker 的 → false。 */
+  markUnrelated(sessionId: string, thread: string, reason: string): boolean
+  /** 跟一条相关线程只为上下文；`false` = 这条线程本来就在跟。 */
+  followForContext(sessionId: string, thread: string): boolean
+  /** 把一条不属于本工单的消息交回去重新判定；`false` = 另一张工单还在决定它，或本来就不归它。 */
+  handback(sessionId: string, triggerId: string, reason: string): boolean
+  /** 交一份状态报告；`false` = 会话不是 worker（与执行器的 `reportBySession` 同口径）。 */
+  report(sessionId: string, report: WorkerReport): boolean
+  /**
+   * 认领一张 PR：报告带 `pr_number` 时先绑线程，再写报告（上游 `orchestrator_report` 的顺序）。
+   *
+   * @returns 拒绝原因（一句人话，说清为什么不行、该传什么）；成功 / 本来就绑着 → undefined
+   */
+  claimPull(sessionId: string, number: number): Promise<string | undefined>
+  /**
+   * 读这张工单的上下文（工具已确认会话属于 worker）；返回 null = 工单不存在或不归这个会话。
+   *
+   * 三种 resource 各回一种形状（{@link WorkerTicketContextView} / {@link WorkerThreadContextView} /
+   * {@link WorkerInputContextView}）；返回 `unknown` 而不是联合类型，是因为这一层只负责装配与
+   * 分页，文本化归工具（`tools.ts` 的 `contextTool`）。
+   *
+   * `input:<id>` 不属于这张工单时同样返回 null：工具据此说「这条输入不属于这张工单」。
+   * 这里不回「你越权了 / 它属于别家」这种话——那等于确认了别的工单存在。
+   *
+   * @param resource - `ticket` / `thread` / `input:<id>`（工具已校验形状）
+   * @param offset - `thread` 的起点；其余 resource 忽略
+   * @param limit - `thread` 一页最多几条；其余 resource 忽略
+   */
+  context(sessionId: string, resource: string, offset: number, limit: number): unknown
+  /** 通知快照失效（线程订阅 / 报告变了，界面据此重画）。 */
+  changed(): void
+}
+
+/**
+ * 执行器可选的只读反查：这条会话是不是它自己的 worker 的。
+ *
+ * 为什么不写进 `Executor` 端口（`core/ports.ts`）：那是核心契约，塞一个 DSC 专用方法进去
+ * 就要动 `core/`。这里按结构探一次方法，执行器实现了就用，没实现（测试里的假执行器、
+ * 将来换的实现）就当「不是 worker」——主会话工具宁可多放一次调用过去，也不该把主会话
+ * 误判成 worker 而封掉。
+ */
+interface SessionOwner {
+  ownsSession(sessionId: string): boolean
+}
+
+/**
+ * 执行器可选的只读反查：这条会话属于哪张工单的哪个分配。
+ *
+ * worker 工具要往引擎写东西，光知道「是不是 worker」不够，还要 ticketId；这张表是执行器的
+ * 私有账（`this.workers` / `this.retiring`），运行期按结构探一次，不把手伸进执行器。
+ * 判据与 {@link SessionOwner} 是同一张表：执行器的 `workerOf` 就是 `ownsSession` 的唯一实现。
+ */
+interface SessionWorker {
+  workerOf(sessionId: string): { ticketId: string; assignmentId: string } | null
+}
+
 /** 把未知异常压成一行可读文本，日志用。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -234,6 +567,17 @@ function describe(error: unknown): string {
 /** 历史值 → 显示形态：数组拼逗号分隔（与设置面 `values()` 同一口径），其余 `String()`。 */
 function shownValue(value: unknown): string {
   return Array.isArray(value) ? value.map((item) => String(item)).join(', ') : String(value)
+}
+
+/**
+ * 一段正文的摘要：超过上限就截断，并注明原来共有多少字。
+ *
+ * 为什么注明总字数：模型据此知道「这里被截过」，要读完整原文就去取 `input:<id>`；
+ * 只留一个省略号的话，它会以为那条消息本来就这么短。
+ */
+function clipText(text: string, limit: number): string {
+  const chars = [...text]
+  return chars.length <= limit ? text : `${chars.slice(0, limit).join('')}…（共 ${String(chars.length)} 字）`
 }
 
 /** GitHub 线程键的前缀。与 `github/trigger.ts:39` 的 `${SOURCE}:${number}` 同一处拼法。 */
@@ -274,6 +618,33 @@ const THREAD_NEAR_CHARS = 1200
  * 超时不取消在途请求（那要改 api 签名），只是不再等它：判定按「没有上下文」继续。
  */
 const THREAD_CONTEXT_TIMEOUT_MS = 15_000
+
+/**
+ * 候选现场里线程消息最多给几条（新的那几条）。
+ *
+ * 为什么给上限：主会话读候选是为了拍板，不是通读整条线程；上游 `orchestrator_eval` 也只
+ * 给一段窗口。10 条足够看清「在回谁、上下文是什么」，又不会把一张卡片撑成全屏。
+ */
+const CANDIDATE_THREAD_LIMIT = 10
+
+/**
+ * worker 读 `ticket` 时输入清单最多给几条（最近的那几条，按旧 → 新排）。
+ *
+ * 为什么是 10：worker 真正要补的是「最近这轮说了什么」，条目再多它也不读；而每条还带摘要，
+ * 数量不压住就会把工单原文挤出上下文。完整原文由 `input:<id>` 按需取。
+ */
+const WORKER_TICKET_INPUT_LIMIT = 10
+
+/** 输入摘要保留的字符数：与线程窗口同一档（400 字），够看清在说什么，又不至于一条占满一页。 */
+const WORKER_INPUT_SUMMARY_CHARS = 400
+
+/**
+ * worker 读 `thread` 时一页最多几条。
+ *
+ * 工具层也校验同一个上限（`tools.ts` 的 `CONTEXT_MAX_LIMIT`）：工具管「模型能不能这么问」，
+ * 这里兜「别的调用方会不会塞一个更大的数进来」。两处同值时以工具那层的说法为准。
+ */
+const WORKER_THREAD_MAX = 50
 
 /**
  * 把窗口渲染成提示词里的一段可读文本。
@@ -321,6 +692,16 @@ function ticketIdOf(event: DomainEvent): string | undefined {
 }
 
 /**
+ * 一条线程「最近有动静」的时刻，用来挑人回话该回到哪条线程。
+ *
+ * 还没收到过消息的线程没有 `lastAt`（模型里它是可选的），退回创建时刻——否则一张工单
+ * 订阅着两条线程时，「哪条最新」会因为一条 `undefined` 而随机摇摆。
+ */
+function threadRecency(thread: Thread): string {
+  return thread.lastAt ?? thread.createdAt
+}
+
+/**
  * 一个已经装好的 Super Agent 运行期。
  *
  * 构造不会启动任何后台任务：泵由 `index.ts` 起，命令由 `commands.ts` 注册。
@@ -341,8 +722,13 @@ export class SuperagentRuntime {
    * 比执行器长；执行器只拿到同一个实例去登记 handler。
    */
   private readonly effects: EffectQueue
-  /** 执行器：`stop` 真停 worker、`retry` 重新派工要用；默认是 {@link WorkerExecutor}。 */
-  private readonly executor: Executor
+  /**
+   * 执行器：`stop` 真停 worker、`retry` 重新派工要用；默认是 {@link WorkerExecutor}。
+   *
+   * 类型上多挂一个可选的 `prepare`：建单的 `prepareTicket` 钩子要它（见构造器里那段注释）。
+   * 注入的假执行器没有这个能力时钩子原样退回工单，接单照常。
+   */
+  private readonly executor: Executor & Partial<Pick<WorkerExecutor, 'prepare'>>
   /** 结果通知：工单结束时入队一句话，并留一份内存里的最近动态。 */
   private readonly notify: StoreNotifier
   /** 发送泵：把出站队列里的消息真正送到飞书 / GitHub。 */
@@ -357,6 +743,8 @@ export class SuperagentRuntime {
   private readonly scope: SourceScope
   /** GitHub 来源的 API 客户端 getter；来源没起来时是 `null`（见 `RuntimeOptions.githubApi`）。 */
   private readonly githubApi: () => GithubApi | null
+  /** 机器人身份 getter；认领 PR 判「机器人自己开的」要用（见 `RuntimeOptions.githubAccount`）。 */
+  private readonly githubAccount: () => { login: string; repository: string } | undefined
   /** 上一次算出来的策略，连同算它用的设置版本戳；版本没变就复用。 */
   private policyCache: { stamp: string; policy: ReturnType<typeof settingsPolicy> } | null = null
   /** 单工单超时（秒）的 getter；每拍现读，设置页改完下一拍就按新上限判。 */
@@ -373,12 +761,22 @@ export class SuperagentRuntime {
    * 同一个 id 第二次 `send` 不会再写一行。
    */
   private readonly outbox: StoreOutbox
+  /** 可见面变了时的出口；没注入 = 没人关心（测试与未接宿主的模式）。 */
+  private readonly onChanged: () => void
+  /** 设置分区的字段与当前值（装配层注入）；没接 = 空表，settings 资源会如实说没有字段。 */
+  private readonly settingsViewOf: () => SettingsFieldView[]
+  /** 设置分区的保存（与面板同一个口子）；没接 = 一律拒绝保存，不静默成功。 */
+  private readonly saveSettingOf: (key: string, value: unknown) => string | void
   private closed = false
 
   constructor(store: DscStore, options: RuntimeOptions = {}) {
     const now = options.now ?? (() => new Date().toISOString())
     this.store = store
     this.log = options.log ?? (() => {})
+    this.onChanged = options.changed ?? (() => {})
+    // 设置分区只有装配层拿得到：没注入时给空表 / 明确拒绝，比建一份假分区诚实。
+    this.settingsViewOf = options.settingsView ?? (() => [])
+    this.saveSettingOf = options.saveSetting ?? (() => '设置分区没接上，不能保存')
     this.clock = now
     // 复用 `DscStore` 的那条连接（`store.handle`）：再开一条会冒出第二个 WAL 写者，
     // 而且两条连接各自开的事务互不可见，`atomic` 的边界就不成立了。
@@ -388,6 +786,7 @@ export class SuperagentRuntime {
     this.settingsOf = options.settings ?? (() => defaultSettings())
     this.scope = options.scope ?? manualScope
     this.githubApi = options.githubApi ?? (() => null)
+    this.githubAccount = options.githubAccount ?? (() => undefined)
     // 配了模型且宿主给了模型出口才用模型版；否则是 P0 那套同步规则（`assessor-select.ts`）。
     // `context` 走运行期自己的 `threadContext`：判定器只拿到「一条 Trigger → 一段文本」的函数，
     // 它不需要知道 GitHub 的编号、令牌与分页都在运行期这一侧。
@@ -466,6 +865,12 @@ export class SuperagentRuntime {
       outbox: this.outbox,
       now,
       emit: (event) => { this.record(event) },
+      // 建单那一刻把 `execution`（工作树名 / 目录）写上：不接这个钩子，`Ticket.execution`
+      // 永远是 undefined，`route` 的 `worktree_name` 等于白写，`ticketBranch` 也永远对不上
+      // 分支名（「机器人开的 PR」自动绑定因此一条都绑不上）。
+      // 用箭头函数读 `this.executor`，不在对象字面量里提前解构：执行器确实先建好了，
+      // 但这个字段将来若被替换（测试 / 热换），箭头读到的仍是当前那一个。
+      prepareTicket: (ticket, outcome) => this.executor.prepare?.(ticket, outcome) ?? ticket,
     })
     // 装配完成后才允许派工：`start()` 之前的行只躺在库里（与上游 `runtime.ts:216` 同一位置）。
     this.effects.start()
@@ -615,6 +1020,321 @@ export class SuperagentRuntime {
   }
 
   /**
+   * 主会话工具用的窄端口（`main-tools.ts` 的唯一依赖）。
+   *
+   * 为什么返回新对象而不把 `engine` 交出去：工具只需要八个动作 + 十二个运行期自己的查询；
+   * 拿到引擎就等于拿到「随便读哪条 Trigger、随便改哪张工单」的全部权限。与
+   * `sourceBridge()` 同一个理由：谁拿到什么，是一条安全边界，不是风格问题。
+   *
+   * 每次调用都新建一个对象：成本可以忽略（一天几十次），换来「这个对象随时能用」。
+   *
+   * @throws 运行期已关闭时抛错（关闭后的写没有意义，早报比在核心深处报好查）
+   */
+  commands(): SuperagentCommandHost {
+    this.assertOpen()
+    return {
+      decide: (triggerId, outcome) => this.engine.decide(triggerId, outcome),
+      attach: (ticketId, triggerId, note) => this.engine.attach(ticketId, triggerId, note),
+      reply: (request) => {
+        const reply = this.engine.reply(request)
+        // 回复只是入队，真正发出去要泵：这里立刻催一拍，免得白等 2 秒的定时器。
+        // 催失败不影响「已经排上队」这个事实（下一拍照旧会取它），只记一行日志。
+        try {
+          this.pump()
+        } catch (error) {
+          this.log(`[superagent] 回复 ${reply.id} 已入队，但催泵失败：${describe(error)}`)
+        }
+        // 状态在发出去之前只可能是 `pending`：发送是一次网络往返，等不到就如实报。
+        return { ...reply, status: this.outbox.status(reply.id) ?? reply.status }
+      },
+      requestStatus: (ticketId) => this.engine.requestStatus(ticketId),
+      note: (ticketId, text) => this.engine.note(ticketId, text),
+      // 工具这一侧与上游一致，只调引擎：`retryTicket` 的事务里已经把新分配交给执行器了
+      // （`core/tickets.ts:178`）。运行期 `retry()` 那次再叫 `executor.start` 是命令层的
+      // 幂等补刀（见它的注释），不是「起新分配」的另一半，这里不重复。
+      retryTicket: (ticketId) => this.engine.retryTicket(ticketId),
+      // 归属不是引擎方法：拿运行期手里的仓储算一次核心的 `followupOwners`。工具只该知道
+      // 「还归哪几张工单」，不该拿到仓储（拿到就能绕过准入闸读遍全库）。
+      followupOwners: (triggerId) => {
+        const trigger = this.repos.triggers.get(triggerId)
+        return trigger === undefined ? [] : followupOwners(trigger, this.repos)
+      },
+      reevaluate: (triggerId) => this.engine.reevaluate(triggerId),
+      unsubscribe: (thread) => this.engine.unsubscribe(thread),
+      // 提示词两卷：读工具要看到「现在生效的是哪一版、来源是什么」。走 `loadPromptVolumes`
+      // 而不是自己拼路径，读法与 `buildWorkerPrompt` 才是同一个优先级（覆盖 → 内置 → 兜底）。
+      prompts: () => {
+        const volumes = loadPromptVolumes()
+        return {
+          roles: [volumes.shared, volumes.worker].map((volume) => ({
+            role: volume.role,
+            source: volume.source,
+            text: volume.text,
+          })),
+        }
+      },
+      // 写覆盖文件。目录不存在就建（第一次保存时 `<DSC_HOME>/superagent/prompts` 通常还没有）；
+      // 文件名就是卷名，与 `loadPromptVolumes` 找覆盖文件的约定一致。
+      savePrompt: (role, text) => {
+        const path = join(promptsDir(), `${role}.md`)
+        mkdirSync(promptsDir(), { recursive: true })
+        writeFileSync(path, text, 'utf8')
+        return { role, path }
+      },
+      // 设置三件（P7）：字段 / 值由装配层注入，这里只转交。保存走分区自己的 save，
+      // 与设置面板同一条路（校验、写盘、变更历史都不缺）。
+      settings: () => this.settingsViewOf(),
+      saveSetting: (key, value) => this.saveSettingOf(key, value),
+      // 候选四件（P7）：现场（候选 + 触发 + 线程）由运行期装配；接单 / 忽略薄转调现有的
+      // 运行期方法，与面板按钮同一个口子——判定结果的原文从库里取，不由工具转手。
+      candidates: () => this.candidateContexts(),
+      acceptCandidate: (id, title) => this.acceptCandidate(id, title),
+      ignoreCandidate: (id, reason) => this.ignoreCandidate(id, reason),
+      confirmingInferred: () => this.confirmingInferred(),
+      snapshot: () => buildSurface(this),
+      isWorkerSession: (sessionId) => this.workerOwns(sessionId),
+      changed: () => { this.onChanged() },
+    }
+  }
+
+  /**
+   * 一条会话是不是某个 worker 的。
+   *
+   * 判据在执行器里（`adapters/executor.ts` 的 `ownsSession`）：worker 表是它的私有账，
+   * 运行期不伸手进去读。执行器没有这个方法时（测试里的假执行器、将来换的实现）按
+   * 「不是 worker 会话」处理——主会话工具宁可多让一次调用过去，也不该把主会话误判成
+   * worker 而封掉。
+   *
+   * 为什么不拿 `reportBySession(sessionId, …)` 当探针：那会真往工单里写一条报告，
+   * 探一下就把状态改了。
+   */
+  private workerOwns(sessionId: string): boolean {
+    const owns = (this.executor as Partial<SessionOwner>).ownsSession
+    return typeof owns === 'function' && owns.call(this.executor, sessionId)
+  }
+
+  /**
+   * 按会话反查「它属于哪张工单的哪个 worker」（第三批的 worker 工具用）。
+   *
+   * 与 {@link workerOwns} 同一条判据——执行器里 `ownsSession` 就是 `workerOf(...) !== null`
+   * （见 `adapters/executor.ts`），这里只是把 ticketId 一起带回来。注入的假执行器没有这个
+   * 能力时按「不是 worker」处理，工具据此报「不在 worker 会话里」。
+   */
+  private workerOf(sessionId: string): { ticketId: string; assignmentId: string } | null {
+    const locate = (this.executor as Partial<SessionWorker>).workerOf
+    return typeof locate === 'function' ? locate.call(this.executor, sessionId) : null
+  }
+
+  /**
+   * worker 的五个工具用的窄端口（`tools.ts` 的 `WorkerToolDeps` 接到这里）。
+   *
+   * 为什么再开一个端口而不扩 `commands()`：主会话工具与 worker 工具是两条权限路。工人能
+   * 回执、能处置自己工单的线程、能报状态，但绝不能决策 / 挂单 / 停单；把这些塞进主会话
+   * 端口，再靠「调用方自觉别用」是挡不住的——端口本身就是边界。
+   *
+   * 每个动作都先按会话反查 worker：查不到返回 `false`，不抛（与 `reportBySession` 同口径，
+   * 工具负责翻成一句人话）。查到之后才碰引擎；引擎的 `UserError`（比如掉工单自己的源线程）
+   * 原样往上抛，也由工具翻译。
+   *
+   * @throws 运行期已关闭时抛错（关闭后的写没有意义，早报比在核心深处报好查）
+   */
+  workerCommands(): SuperagentWorkerCommandHost {
+    this.assertOpen()
+    return {
+      ack: (sessionId, triggerId, text) => {
+        const worker = this.workerOf(sessionId)
+        if (worker === null) return false
+        const reply = this.engine.reply({ purpose: 'acknowledgement', ticketId: worker.ticketId, triggerId, text })
+        // 与主会话端口的 `reply` 同一处理：回复只是入队，立刻催一拍泵，免得白等 2 秒的定时器。
+        // 催失败不影响「已经排上队」这个事实（下一拍照旧会取它），只记一行日志。
+        try {
+          this.pump()
+        } catch (error) {
+          this.log(`[superagent] 回执 ${reply.id} 已入队，但催泵失败：${describe(error)}`)
+        }
+        return true
+      },
+      markUnrelated: (sessionId, thread, reason) => {
+        const worker = this.workerOf(sessionId)
+        if (worker === null) return false
+        this.engine.markUnrelated(worker.ticketId, thread, reason)
+        return true
+      },
+      followForContext: (sessionId, thread) => {
+        const worker = this.workerOf(sessionId)
+        if (worker === null) return false
+        // 线程键在**这里**切成端口要的 `{ source, id }`：工具不碰核心类型，形状不对就返回
+        // false（工具那层已经先查过形状，走不到这里；留这一手是防将来别的调用方）。
+        const at = thread.indexOf(':')
+        if (at < 1 || at === thread.length - 1) return false
+        return this.engine.followForContext(worker.ticketId, { source: thread.slice(0, at), id: thread.slice(at + 1) })
+      },
+      handback: (sessionId, triggerId, reason) => {
+        const worker = this.workerOf(sessionId)
+        return worker === null ? false : this.engine.handback(worker.ticketId, triggerId, reason)
+      },
+      report: (sessionId, report) => this.reportBySession(sessionId, report),
+      // 认领 PR 的入口（工具侧 `superagent_report` 的 `pr_number`）。三步身份 / 配置检查都在
+      // 这里做完，然后交给 `bind.ts` 的纯函数判：判定顺序与上游 `claimPull` 一致，
+      // 运行期只负责把「按会话反查工单」「读 PR」「绑线程」三个真实动作接上。
+      claimPull: async (sessionId, number) => {
+        const worker = this.workerOf(sessionId)
+        if (worker === null) return '不在 worker 会话里：认领 PR 只能由工单的 worker 发起'
+        const api = this.githubApi()
+        const account = this.githubAccount()
+        if (api === null || account === undefined) {
+          return 'GitHub 没配（要先填仓库与令牌），不能认领 PR'
+        }
+        return claimPull({
+          // `readPull` 会把 PR 号补进结果（API 响应体里没有它），与 `bindAgentPulls`
+          // 读的是同一个函数，判「机器人自己开的」时才有一致的字段。
+          pull: (value) => readPull(api, value),
+          account: { login: account.login, repository: account.repository },
+          ticket: (id) => this.repos.tickets.get(id),
+          openTickets: () => this.repos.tickets.open(),
+          bind: (ticketId, thread, own) => { this.engine.bindThread(ticketId, thread, own) },
+        }, worker.ticketId, number)
+      },
+      // 读自己工单的上下文：身份、工单、分页全由 `contextOf` 按会话现算；这里只是端口的一手转交。
+      // 它不需要 `changed`：读不改变任何可见面，工具也不会推快照。
+      context: (sessionId, resource, offset, limit) => this.contextOf(sessionId, resource, offset, limit),
+      changed: () => { this.onChanged() },
+    }
+  }
+
+  /**
+   * 装配 `superagent_context` 要的那一份现场。
+   *
+   * 为什么放在运行期：仓储、起始 Trigger、线程消息表都只有这里拿得到；工具那一层只做
+   * 参数校验与文本化。分页与「输入最多 10 条」的裁剪也在这里，两种越权都在这里拦成 null：
+   * 会话反查不到工单（不是 worker / 工单已删）、输入的 id 不在 `ticket.inputs` 里（别人的输入）。
+   *
+   * @returns 三种 resource 各一种形状；null = 这张工单读不到了，工具负责翻成一句人话
+   */
+  private contextOf(sessionId: string, resource: string, offset: number, limit: number): unknown {
+    const worker = this.workerOf(sessionId)
+    if (worker === null) return null
+    const ticket = this.repos.tickets.get(worker.ticketId)
+    if (ticket === undefined) return null
+    if (resource === 'ticket') return this.ticketContextOf(ticket)
+    if (resource === 'thread') return this.threadContextOf(ticket, offset, limit)
+    const id = resource.startsWith('input:') ? resource.slice('input:'.length).trim() : ''
+    // 只认这张工单自己的输入：别人的 id 一律当不存在——回「那是别的工单的」等于确认它存在。
+    const input = id === '' ? undefined : ticket.inputs.find((item) => item.id === id)
+    return input === undefined ? null : this.inputContextOf(input)
+  }
+
+  /** `ticket` 资源：工单本身 + 最近 10 条输入的摘要（完整原文走 `input:<id>`）。 */
+  private ticketContextOf(ticket: Ticket): WorkerTicketContextView {
+    const body = this.repos.triggers.get(ticket.origin.triggerId)?.text ?? ''
+    return {
+      id: ticket.id,
+      title: ticket.title,
+      createdAt: ticket.createdAt,
+      // 起始消息被删 / 库是手改的：如实说取不到，不拿标题冒充正文。
+      body: body.trim() === '' ? `（取不到这张工单的要求原文：起始消息 ${ticket.origin.triggerId} 没读到）` : body,
+      inputs: ticket.inputs.slice(-WORKER_TICKET_INPUT_LIMIT).map((input) => this.ticketInputViewOf(input)),
+      inputTotal: ticket.inputs.length,
+    }
+  }
+
+  /** 一条输入 → `ticket` 资源里的摘要行。 */
+  private ticketInputViewOf(input: TicketInput): WorkerTicketInputView {
+    const { source, text } = this.inputFactsOf(input)
+    return { id: input.id, source, at: input.at, text: clipText(text, WORKER_INPUT_SUMMARY_CHARS) }
+  }
+
+  /** `input:<id>` 资源：这条输入的完整原文（不截断）。 */
+  private inputContextOf(input: TicketInput): WorkerInputContextView {
+    const { source, text } = this.inputFactsOf(input)
+    return { id: input.id, source, at: input.at, text }
+  }
+
+  /**
+   * 一条输入是谁给的、原文是什么。
+   *
+   * `source` 的取法：Trigger 用来源自己的名字（`github` / `feishu` / `manual`）；主会话写的
+   * `text` / `note` 记 `main`；工单内部事件（恢复 / 重开 / 策略变更）记 `system` / `policy`。
+   * 为什么不让工具自己认 kind：工具拿到的是一份摘要清单，kind 是核心模型的事。
+   */
+  private inputFactsOf(input: TicketInput): { source: string; text: string } {
+    switch (input.kind) {
+      case 'trigger': {
+        const trigger = this.repos.triggers.get(input.triggerId)
+        const text = trigger?.text ?? ''
+        const body = text.trim() === '' ? `（取不到这条消息的原文：trigger ${input.triggerId}）` : text
+        // `note` 是挂这条消息时主会话给的背景，和原文一起给：只给原文，模型看不出「为什么给我这条」。
+        return {
+          source: trigger?.source ?? 'unknown',
+          text: input.note === undefined ? body : `（背景：${input.note}）\n${body}`,
+        }
+      }
+      case 'text':
+      case 'note':
+        return { source: 'main', text: input.text }
+      case 'resumed':
+        return { source: 'system', text: `（工单恢复：按原来的目标继续，trigger ${input.triggerId}）` }
+      case 'reopen':
+        return { source: 'system', text: `（工单被重新打开：按原目标继续，decision ${input.decisionId}）` }
+      case 'policy-changed':
+        return { source: 'policy', text: `（策略变更：${input.from} → ${input.to}）` }
+    }
+  }
+
+  /** `thread` 资源：这张工单所在线程的一页消息（旧 → 新）。 */
+  private threadContextOf(ticket: Ticket, offset: number, limit: number): WorkerThreadContextView {
+    const thread = this.contextThreadOf(ticket)
+    // 工具已经校验过 offset >= 0、limit 1~50；这里再夹一次是给「别的调用方」——端口是导出的。
+    const start = Math.max(0, Math.trunc(offset))
+    const size = Math.min(WORKER_THREAD_MAX, Math.max(1, Math.trunc(limit)))
+    if (thread === '') return { thread, offset: start, limit: size, total: 0, messages: [] }
+    const total = this.threadMessageCount(thread)
+    const rows = this.store.handle
+      .prepare('SELECT id FROM trigger_thread WHERE thread = ? ORDER BY at ASC, rowid ASC LIMIT ? OFFSET ?')
+      .all(thread, size, start) as unknown as { id?: unknown }[]
+    const messages: CandidateMessageView[] = []
+    for (const row of rows) {
+      const trigger = this.repos.triggers.get(String(row.id))
+      // 行还在、Trigger 读不到：索引比主表旧了一步，跳过这一条比整页报错好。
+      if (trigger === undefined) continue
+      messages.push({ text: trigger.text, actor: trigger.actor.id, at: trigger.at })
+    }
+    const next = start + size < total ? start + size : undefined
+    return {
+      thread,
+      offset: start,
+      limit: size,
+      total,
+      messages,
+      // 没有下一页就不带这一项：带一个 null 会让模型以为「下一页是 null 号」。
+      ...(next === undefined ? {} : { next_offset: next }),
+    }
+  }
+
+  /** 这条线程上一共有几条消息（分页要算 `next_offset`）。 */
+  private threadMessageCount(thread: string): number {
+    const row = this.store.handle
+      .prepare('SELECT COUNT(*) AS count FROM trigger_thread WHERE thread = ?')
+      .get(thread) as { count?: unknown } | undefined
+    const count = Number(row?.count)
+    return Number.isFinite(count) ? count : 0
+  }
+
+  /**
+   * 这张工单「所在线程」的键：起始 Trigger 的第一个线程。
+   *
+   * 为什么不取最近有动静的那条：worker 要看的是「这张单是从哪段对话里来的」，而
+   * `answerThreadOf` 取的是「人回话回到哪」——工单跟了 PR 之后后者会变，前者才是它的出身。
+   * 起始消息读不到时退回订阅它的线程（按最近动静挑），别凭空说「没有线程」。
+   */
+  private contextThreadOf(ticket: Ticket): string {
+    const origin = this.repos.triggers.get(ticket.origin.triggerId)
+    const first = origin?.threads[0]
+    if (first !== undefined) return threadKey(first)
+    return this.answerThreadOf(ticket.id)?.key ?? ''
+  }
+
+  /**
    * 飞书话题轮询要的三个动作（`FeishuThreads`，见 `adapters/feishu/loops.ts:141`）。
    *
    * 三件都只有运行期知道：
@@ -704,16 +1424,71 @@ export class SuperagentRuntime {
     return trigger.id
   }
 
+  /**
+   * 面板上的一句话：造一条人的 Trigger，挂到这张工单的线程上，交给 `Engine.receive`。
+   *
+   * 为什么走 `Engine.receive` 而不是直接在工单上加一条 Input：来源消息进领域只有这一道门
+   * （入库、线程相关、订阅扇出、`addInput`、`wake`、按需排队 Eval，全在 `core/intake.ts:19-62`）。
+   * 从旁边插一条 Input 看着更短，但「谁说的、经由哪条线程、要不要唤醒」立刻变成第二套规则，
+   * 一处改了另一处忘掉，症状是「回答进库了但 worker 没醒」。
+   *
+   * 为什么线程要在这里找出来：工单模型里没有「它属于哪条线程」这个字段，只有线程的
+   * `subscriptions` 记着「哪些工单订阅了我」。一张工单可能同时订阅多条线程（自己的话题 +
+   * 关注的 PR），人回话要回到**最近有动静**的那条——先筛订阅它的全部线程，按
+   * {@link threadRecency} 取最新；同一时刻时按线程 key 定序，保证同一个局面每次选同一条。
+   *
+   * @param ticketId - 要回答的工单
+   * @param text - 回答正文（服务层已经判过非空与长度）
+   * @throws 工单不存在 / 已结束 / 找不到它的线程 / 这条回答被判重复或被准入闸拦下
+   */
+  answer(ticketId: string, text: string): void {
+    this.assertOpen()
+    const ticket = this.repos.tickets.get(ticketId)
+    if (ticket === undefined) throw new Error(`没有这张工单：${ticketId}`)
+    if (!liveTicket(ticket)) throw new Error(`这张工单已经结束（${ticket.title}），没有可回答的问题`)
+    const thread = this.answerThreadOf(ticketId)
+    if (thread === undefined) {
+      throw new Error('这张工单没有可回话的线程（消息可能来自不支持回话的来源）')
+    }
+    const trigger = answerTrigger({ thread: thread.ref, text, ticketId }, this.clock())
+    const received = this.engine.receive(trigger)
+    // 三种结果都要说清，不能静默：`stored` 才是「真的挂到工单上了」。
+    if (received === 'duplicate') throw new Error('这条回答重复了：同一条消息已经收过一次，这次没有进工单')
+    if (received === 'filtered') throw new Error('准入闸没放行：这条回答的来源不在允许名单里')
+    // 入库那一步已经 `wake` 了工单（`core/intake.ts:59`）；再拍一次泵，让投递副作用在这一拍起跑。
+    this.pump()
+    this.onChanged()
+  }
+
+  /**
+   * 一张工单人回话该回到的那条线程：订阅它的线程里最近有动静的那条。
+   *
+   * @param ticketId - 工单 id
+   * @returns 线程；一条都没订阅这张工单时返回 `undefined`（调用方给一句能读的报错）
+   */
+  private answerThreadOf(ticketId: string): Thread | undefined {
+    const subscribed = this.repos.threads.list().filter((thread) => thread.subscriptions.includes(ticketId))
+    if (subscribed.length === 0) return undefined
+    return subscribed.reduce((best, thread) => {
+      const [a, b] = [threadRecency(thread), threadRecency(best)]
+      if (a !== b) return a > b ? thread : best
+      return thread.key > best.key ? thread : best
+    })
+  }
+
   /** 工单列表，新的在前；命令 `/sa list` 用。 */
   list(): TicketView[] {
     return this.repos.tickets.list().map(ticket => {
       const report = latestReport(ticket)
+      // 问题原话只取一次：`attention` 由 worker 报 blocked 时挂上，回答后由执行器清掉。
+      const question = ticket.attention?.question.trim() ?? ''
       return {
         id: ticket.id,
         title: ticket.title,
         stage: ticketStage(ticket),
         createdAt: ticket.createdAt,
         ...(report === undefined ? {} : { summary: report.summary }),
+        ...(question === '' ? {} : { question }),
       }
     })
   }
@@ -726,6 +1501,61 @@ export class SuperagentRuntime {
    */
   candidates(): CandidateRecord[] {
     return this.store.listCandidates()
+  }
+
+  /**
+   * 等人拍板的候选现场（`superagent_read` 的 `candidate:<id>` 资源与 eval 工具读它）。
+   *
+   * 与 {@link candidates} 的分工：那里给界面卡片（判定的原始 JSON 还在 `value` 里，界面不
+   * 需要正文）；这里给模型看，把触发消息正文与线程上下文一次补齐，工具拿到的是一份自足的
+   * 现场，不必认识仓储。
+   */
+  candidateContexts(): CandidateContextView[] {
+    return this.store.listCandidates().map((record) => this.candidateContextOf(record))
+  }
+
+  /** 一条候选记录 → 工具侧的现场（缺消息 / 线程时用空串与空表，不让工具拿到 undefined）。 */
+  private candidateContextOf(record: CandidateRecord): CandidateContextView {
+    const trigger = this.repos.triggers.get(record.triggerId)
+    return {
+      id: record.id,
+      triggerId: record.triggerId,
+      state: record.state,
+      at: record.at,
+      title: record.value.title,
+      reason: record.value.reason,
+      scope: record.value.scope,
+      source: record.value.source,
+      trigger: {
+        text: trigger?.text ?? '',
+        actor: trigger?.actor.id ?? '',
+        at: trigger?.at ?? '',
+      },
+      thread: this.threadMessages(record.threadKey),
+    }
+  }
+
+  /**
+   * 一条线程上最近的消息，按时间升序（旧 → 新）。
+   *
+   * 为什么直接查 `trigger_thread`：仓储端口只露了 `latestOn`（一条），没有「按线程取一批」
+   * 的读口；这一批又要按 `at` 排而不是按写入序。表与索引都是现成的（`store.ts` 的
+   * `trigger_thread_at`），这里只读 id 列，正文仍走 `repos.triggers.get`，不碰写路径。
+   */
+  private threadMessages(key: string): CandidateMessageView[] {
+    if (key === '') return []
+    const rows = this.store.handle
+      .prepare('SELECT id FROM trigger_thread WHERE thread = ? ORDER BY at DESC, rowid DESC LIMIT ?')
+      .all(key, CANDIDATE_THREAD_LIMIT) as unknown as { id?: unknown }[]
+    const messages: CandidateMessageView[] = []
+    for (const row of rows) {
+      const trigger = this.repos.triggers.get(String(row.id))
+      // 行还在、Trigger 读不到：索引比主表旧了一步，跳过这一条比整份候选报错好。
+      if (trigger === undefined) continue
+      messages.push({ text: trigger.text, actor: trigger.actor.id, at: trigger.at })
+    }
+    // 查询按时间倒序取「最新 N 条」，这里翻回旧→新：读上下文时顺序就是时间顺序。
+    return messages.reverse()
   }
 
   /** 推断候选要不要先等人点头（backlog G1）；界面据此决定画不画「待确认」那一块。 */
@@ -1121,10 +1951,9 @@ export class SuperagentRuntime {
   /**
    * 清掉一张**已结束**工单的工作树。
    *
-   * 目录名不许在这里另发明一套：执行器建树时用的是 `worktreeNameOf`（标题 slug 前 40 位 +
-   * `-` + 工单 id 前 8 位，`adapters/executor.ts:232`），这里原样调同一个函数；`ensureWorktree`
-   * 会把传进来的名字再 slug 一次并拼到工作树根下（`adapters/worktree.ts:192-195`），所以这里
-   * 也套一次 `slugOf`，路径才与建出来的那棵对得上。
+   * 目录名不许在这里另发明一套：执行器建树时用的是 `worktreeNameOf`（`adapters/executor.ts`），
+   * 落点用 `worktreePathOf`（`adapters/worktree.ts`）——建单时的 `prepare` 与 `ensureWorktree`
+   * 都走同一个纯函数，所以这里原样调它，路径才与建出来的那棵对得上。
    *
    * 为什么只许清理已结束的：worker 还在写的时候删目录，它的改动与提交会落进一个悬空的树里，
    * 人也拿不回来。要清理就先 `stop`（`/sa stop`），这是唯一不会丢东西的顺序。
@@ -1140,8 +1969,7 @@ export class SuperagentRuntime {
     if (repo === '') {
       throw new Error('没有配置仓库路径（设置 → Super Agent → repoPath），不知道工作树挂在哪个仓库下，无法清理')
     }
-    const name = worktreeNameOf(ticket)
-    const path = join(resolve(this.worktreeRoot ?? worktreesDir()), slugOf(name))
+    const path = worktreePathOf({ name: worktreeNameOf(ticket), root: this.worktreeRoot }).dir
     removeWorktree({ repo, path })
     this.log(`[superagent] 工单 ${ticket.id} 的工作树已清理：${path}`)
   }

@@ -19,7 +19,7 @@
  *  15. 报告工具报 `blocked`：回合正常结束时不会被改写回 `ready`，问题带在报告上；
  *  16. 报告工具报 `progress`：只是中途进展，回合正常结束仍记 `ready`；
  *  17. 按会话反查不到 worker 时返回 false，工具据此抛错；
- *  18. 系统提示的内置兜底与 `prompts/worker.md` 逐字一致：产物缺 md 时文案不会漂移。
+ *  18. 系统提示的两卷兜底分别与 `prompts/shared.md` / `prompts/worker.md` 逐字一致：产物缺 md 时文案不会漂移。
  *
  * 全程不碰真模型：`createAgent` 换成假 agent，`worktree.ensure` 换成假工作树；
  * 只有第 5 条用真 git + 临时仓库，专门验名字的唯一后缀。
@@ -31,12 +31,12 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 
-const { WorkerExecutor, buildWorkerPrompt, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
+const { WorkerExecutor, buildWorkerPrompt, loadPromptVolumes, worktreeNameOf, turnEndReport, errorReport, transient, runPrepare } =
   await import('../../../../lib/packages/superagent/adapters/executor.js')
 const { createReportTool } = await import('../../../../lib/packages/superagent/tools.js')
 const { ensureWorktree } = await import('../../../../lib/packages/superagent/adapters/worktree.js')
@@ -502,7 +502,7 @@ test('报告映射：turn/end 正常收尾 → ready，error → failed', () => 
   assert.equal(turnEndReport('completed', '收尾', undefined, true), null)
 })
 
-test('系统提示：内置兜底与 prompts/worker.md 逐字一致，产物缺 md 时照样拼得出来', () => {
+test('系统提示：两卷兜底分别与 prompts/*.md 逐字一致，产物缺 md 时照样拼得出来', () => {
   const input = {
     title: '改登录页文案',
     body: '把「登录」按钮改成「进入」',
@@ -519,49 +519,68 @@ test('系统提示：内置兜底与 prompts/worker.md 逐字一致，产物缺 
     dir: input.dir,
     commands: `除内置禁用之外，以下命令不允许使用：${input.blockedCommands.join('、')}`,
   }
-  // 文案真源是**源码树**里的 md（tests/../prompts/worker.md），不是产物里那一份：
-  // 拿产物当参照就成了自己跟自己比，构建漏拷也照样绿。
-  const template = readFileSync(new URL('../prompts/worker.md', import.meta.url), 'utf8')
-  const fromMd = template
-    .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
-    .trim()
-    .replace(/\{\{(\w+)\}\}/g, (whole, name) => values[name] ?? whole)
+  /** 源码树里的 md 正文：文件头注释剥掉、首尾空白去掉（与运行时读法同口径）。 */
+  const bodyOf = (file) =>
+    readFileSync(new URL(file, import.meta.url), 'utf8')
+      .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
+      .trim()
+  const sharedMd = bodyOf('../prompts/shared.md')
+  const workerMd = bodyOf('../prompts/worker.md')
+  /** 与运行时的替换同一条规则；表外的名字原样留着。 */
+  const render = (text) => text.replace(/\{\{(\w+)\}\}/g, (whole, name) => values[name] ?? whole)
+  // 文案真源是**源码树**里的两卷 md，不是产物里那一份：拿产物当参照就成了自己跟自己比，
+  // 构建漏拷也照样绿。
+  const fromMd = `${render(sharedMd)}\n\n${render(workerMd)}`
 
-  assert.match(fromMd, /^你是超级智能体的执行者，负责一个工单。/, 'md 正文应从定稿第一句开始（文件头注释要剥掉）')
+  assert.match(fromMd, /^你是超级智能体的执行者，负责一个工单。/, '共用约定卷从定稿第一句开始（文件头注释要剥掉）')
   assert.match(
     fromMd,
     /<工单>[\s\S]*<环境>[\s\S]*<交付要求>[\s\S]*<报告状态>/,
-    '三段（工单 / 环境 / 交付要求）与报告状态都应在',
+    '两卷的顺序：工单 / 环境 / 交付要求（共用约定）在前，报告状态（执行者）在后',
   )
 
-  // 正常路径：读产物里的 prompts/worker.md（构建还没拷 prompts 时会自动落到兜底）。
-  assert.equal(buildWorkerPrompt(input).text, fromMd, '运行时拼出的提示词必须与 md 逐字一致')
-
-  // 兜底路径：指向一个不存在的文件，确定性地模拟「产物缺 prompts/worker.md」。
-  const missing = join(tmpdir(), `superagent-no-prompt-${process.pid}`, 'worker.md')
-  assert.equal(existsSync(missing), false, '这个路径必须不存在，否则测的不是兜底')
-  assert.equal(
-    buildWorkerPrompt(input, { templatePath: missing }).text,
-    fromMd,
-    '兜底文案必须与 md 一字不差，否则改一句 md 就悄悄漂移',
-  )
-
-  // 认不出的占位符原样保留：拼错名字时模型会看到 {{typo}}，而不是被悄悄替换成空串。
+  // 覆盖目录指一个空的临时目录：用户 ~/.dsc 里存过覆盖文件也不影响这条断言。
   const dir = mkdtempSync(join(tmpdir(), 'superagent-worker-prompt-'))
   roots.push(dir)
   try {
-    const custom = join(dir, 'worker.md')
-    writeFileSync(custom, '<!-- 说明 -->\n标题：{{title}}，未知：{{unknown}}\n', 'utf8')
-    assert.equal(buildWorkerPrompt(input, { templatePath: custom }).text, '标题：改登录页文案，未知：{{unknown}}')
+    const noOverride = join(dir, 'override')
+    assert.equal(
+      buildWorkerPrompt(input, { volumes: loadPromptVolumes({ overrideDir: noOverride }) }).text,
+      fromMd,
+      '运行时拼出的提示词必须与两卷 md 逐字一致',
+    )
+
+    // 兜底路径：包内目录指向不存在的路径，确定性地模拟「产物缺 prompts」。
+    const missing = join(tmpdir(), `superagent-no-prompt-${process.pid}`, 'prompts')
+    assert.equal(existsSync(missing), false, '这个路径必须不存在，否则测的不是兜底')
+    const fallback = loadPromptVolumes({ overrideDir: noOverride, packageDir: missing })
+    assert.equal(fallback.shared.source, 'fallback', '包内文件读不到时 shared 走兜底')
+    assert.equal(fallback.worker.source, 'fallback', '包内文件读不到时 worker 走兜底')
+    assert.equal(
+      buildWorkerPrompt(input, { volumes: fallback }).text,
+      fromMd,
+      '兜底文案必须与 md 一字不差，否则改一句 md 就悄悄漂移',
+    )
+
+    // 认不出的占位符原样保留：拼错名字时模型会看到 {{typo}}，而不是被悄悄替换成空串。
+    const custom = {
+      shared: { role: 'shared', text: '标题：{{title}}，未知：{{unknown}}', source: 'override' },
+      worker: { role: 'worker', text: '收尾：{{title}}', source: 'override' },
+    }
+    assert.equal(
+      buildWorkerPrompt(input, { volumes: custom }).text,
+      '标题：改登录页文案，未知：{{unknown}}\n\n收尾：改登录页文案',
+    )
+
+    // 段清单：两卷各一段，字数是渲染后的长度（卡片上的段与正文同源）。
+    const prompt = buildWorkerPrompt(input, { volumes: loadPromptVolumes({ overrideDir: noOverride }) })
+    assert.deepEqual(prompt.sections, [
+      { id: 'superagent-shared', order: 0, chars: render(sharedMd).length, from: 'plugin:superagent' },
+      { id: 'superagent-worker', order: 1, chars: render(workerMd).length, from: 'plugin:superagent' },
+    ])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
-
-  // 段清单保持原样：一段合成段，字数是拼好的正文长度。
-  const prompt = buildWorkerPrompt(input)
-  assert.deepEqual(prompt.sections, [
-    { id: 'superagent-worker', order: 0, chars: prompt.text.length, from: 'plugin:superagent' },
-  ])
 })
 
 test('临时故障判据：状态码优先，文本兜底', () => {
@@ -834,7 +853,7 @@ test('报告工具报 blocked：回合正常结束时不再改写回 ready，问
     const context = reportContextOf(agent)
 
     agent.deps.emit({ type: 'turn/start' })
-    const result = await tool.run({ state: 'blocked', summary: '两个方案都行，要人挑一个', question: '用方案 A 还是 B？' }, context)
+    const result = await tool.run({ state: 'blocked', summary: '两个方案都行，要人挑一个', human_action: '用方案 A 还是 B？' }, context)
     assert.match(result, /已报 blocked/, '工具要给模型一句可读的回执')
 
     // 工具调用当场就写引擎：人不必等回合结束才知道 worker 卡住了。
@@ -900,7 +919,7 @@ test('按会话找不到 worker 时返回 false，报告工具据此抛错', asy
       signal: new AbortController().signal,
     }
     await assert.rejects(
-      () => tool.run({ state: 'blocked', summary: 'x', question: 'y' }, outsider),
+      () => tool.run({ state: 'blocked', summary: 'x', human_action: 'y' }, outsider),
       /只在 Super Agent 的 worker 会话里可用/,
       '工具要把 false 翻译成一句模型看得懂的话',
     )

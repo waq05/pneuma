@@ -48,8 +48,10 @@
  *   「沙箱判定越界」这两类——它们才是必须有人拍板的事。`ask` 档改钉 `auto-edit` 并把
  *   一切交回全局守卫链，让人在旁边时照常弹卡。残留风险：受保护文件（AGENTS.md 这类）
  *   与安全钩子强制问人的调用仍可能弹卡。
- * - **报告由 worker 主动说，执行器只补缺省**：worker 多了一个 `superagent_report` 工具
- *   （`tools.ts`），能报 progress / ready / blocked / failed / dropped。工具调用时就写引擎
+ * - **报告由 worker 主动说，执行器只补缺省**：worker 多了一组 `superagent_*` 工具
+ *   （`tools.ts`）：`superagent_report` 报 progress / ready / blocked / failed / dropped，
+ *   另外四个负责回执、掉无关线程、跟上下文线程、把不归本工单的消息交回去（第三批，对齐
+ *   上游 `app/tools/executor.ts:28-73`）。工具调用时就写引擎
  *   （blocked 不必等回合结束才让人看见）；回合正常收尾时，本回合报过终态就不再补 `ready`——
  *   否则「在等人拍板」的工单会被一句 ready 收尾。`error` 仍然一律记 `failed`。
  *   没报过终态的回合照旧按「completed → ready」判。
@@ -79,9 +81,9 @@ import { writePermissions } from '@pneuma/permission-core/permission-scope.js'
 import { latestAssignment, runningAssignment, type Assignment, type Executor, type EngineForExecutor, type Ticket,
   type TicketInput, type WorkerReport } from '../core/index.js'
 import { LIMITS } from '../core/limits.js'
-import { sessionsDir } from '../paths.js'
+import { promptsDir, sessionsDir } from '../paths.js'
 import type { EffectPayloads, EffectQueuePort } from './effects.js'
-import { ensureWorktree, slugOf, type EnsureWorktreeInput, type WorktreeHandle } from './worktree.js'
+import { ensureWorktree, slugOf, worktreePathOf, type EnsureWorktreeInput, type WorktreeHandle } from './worktree.js'
 
 /** 日志出口；默认丢弃，`runtime.ts` 传宿主的日志函数。 */
 export type ExecutorLog = (line: string) => void
@@ -224,7 +226,7 @@ export interface WorkerAgent {
   readonly isRunning?: boolean
 }
 
-/** 系统提示的三段模板（设计文档 §6.2.1）：正文与段清单同源。 */
+/** 系统提示词的两卷（设计文档 §6.2.1）：正文与段清单同源。 */
 export interface WorkerPromptInput {
   title: string
   body: string
@@ -286,10 +288,20 @@ interface Worker {
 }
 
 /**
- * worker 的工具目录（设计文档 §6.2 的表格 + G7 的报告工具 + G3 的三件作业工具 + G6 的子智能体）。
+ * worker 的工具目录（设计文档 §6.2 的表格 + G7 的报告工具 + G3 的三件作业工具 + G6 的子智能体
+ * + 第三批的四个协作工具 + 第八批的读上下文工具）。
  *
  * 报告工具必须在这里出现，否则 worker 拿到了工具名却调不到：`tools()` 是 worker 的
  * 全部目录，它按这张固定名单做减法，不看主会话的模式投影。
+ *
+ * 四件协作工具（`superagent_ack` / `superagent_thread_unrelated` / `superagent_thread_follow` /
+ * `superagent_trigger_handback`）为什么必须有：上游的 Executor 会话有这一组
+ * （保护仓 `src/app/tools/executor.ts:28-73`），worker 靠它们先回执、掉无关线程、跟上下文、
+ * 把不归自己的消息交回去。缺一个，模型就会用正文描述代替动作，而正文没人接。
+ *
+ * `superagent_context` 为什么必须有（第八批）：上游的执行者还有一个 `readTool`
+ * （`executor.ts:26-27`），能读它自己工单的触发消息与线程历史；DSC 的 worker 题面里只有
+ * 标题与正文，遇到含糊需求只能报 `blocked`。漏在这个名单里，工具注册了也到不了模型面前。
  *
  * 三件作业工具（`job_output` / `job_list` / `job_kill`）为什么必须有：`bash` 的
  * `run_in_background` 对 worker 同样开着，起了作业却读不到输出等于把长活锁死。
@@ -305,6 +317,11 @@ const WORKER_TOOL_NAMES: readonly string[] = [
   'job_output', 'job_list', 'job_kill',
   'subagent',
   'superagent_report',
+  'superagent_context',
+  'superagent_ack',
+  'superagent_thread_unrelated',
+  'superagent_thread_follow',
+  'superagent_trigger_handback',
 ]
 
 /** 并发上限的缺省值：设计文档写 2；设置项可覆盖。 */
@@ -491,30 +508,74 @@ export function errorReport(message: string): WorkerReport {
 /**
  * 工单的工作树名：可读前缀 + 工单 id 前 8 位。
  *
- * 为什么必须带唯一后缀：`slugOf` 把全中文标题折成 `'ticket'`（`worktree.ts:79-91`），
+ * 为什么必须带唯一后缀：`slugOf` 把全中文标题折成 `'ticket'`（`worktree.ts:83-92`），
  * 而本插件最常见的输入就是全中文。只留标题的话，第二张中文工单会复用第一张的分支与
  * 目录，两个 worker 就会在同一棵树里互相踩。
  *
  * 后缀取 `ticket.id` 的前 8 位：id 是 32 位十六进制（`core/ids.ts`），8 位在单机工单量级
  * 不会撞；前缀截到 40 字符，加上 `-` + 8 位仍在 `slugOf` 的 60 字符预算内。
+ *
+ * **名字定过之后原样返回**：建单时 `prepare` 已经把完整名字（含后缀）写进
+ * `Ticket.execution.name`，这里再套一次后缀会得到 `…-<id8>-<id8>`，派工建出来的树与
+ * 工单上记的目录、以及 `ticketBranch` 比的分支末段就全对不上了。
  */
 export function worktreeNameOf(ticket: Pick<Ticket, 'id' | 'title' | 'execution'>): string {
-  const readable = slugOf(ticket.execution?.name ?? ticket.title).slice(0, 40).replace(/[-.]+$/, '')
-  return `${readable === '' ? 'ticket' : readable}-${ticket.id.slice(0, 8)}`
+  const fixed = ticket.execution?.name?.trim() ?? ''
+  return fixed === '' ? readableWorktreeName(ticket.title, ticket.id) : fixed
 }
 
-/** 提示词文件名：运行时读 `<包根>/prompts/worker.md`，构建时整目录抄进产物（`scripts/build-packages.mjs`）。 */
-const WORKER_PROMPT_FILE = 'worker.md'
+/**
+ * 按标题算可读前缀并补唯一后缀。
+ *
+ * 单独拆出来是给 `prepare` 用的：它拿到的是「模型给的名字或标题」，还没有 `execution`
+ * 可读，但拼法与 {@link worktreeNameOf} 必须完全一样。
+ */
+function readableWorktreeName(title: string, id: string): string {
+  const readable = slugOf(title).slice(0, 40).replace(/[-.]+$/, '')
+  return `${readable === '' ? 'ticket' : readable}-${id.slice(0, 8)}`
+}
+
+/** 两卷提示词的角色名：卷名就是文件名（`shared.md` / `worker.md`），覆盖目录与包内目录同名。 */
+export const PROMPT_ROLES = ['shared', 'worker'] as const
+export type PromptRole = (typeof PROMPT_ROLES)[number]
 
 /**
- * 内置兜底：与 `prompts/worker.md` 逐字一致（包级测试会把两边比一遍）。
+ * 一卷提示词：模板原文（占位符还没替换）与它从哪来。
+ *
+ * 正文不在这里渲染：同一卷每个 worker 的 `{{title}}` 等值不同，替换是 {@link buildWorkerPrompt}
+ * 的事；读工具（`superagent_read` 的 prompts 资源）要看到的也是模板原文，模型照着改才有意义。
+ */
+export interface PromptVolume {
+  role: PromptRole
+  text: string
+  /** override = 主会话存过覆盖文件；default = 包内自带；fallback = 连包内文件都读不到。 */
+  source: 'override' | 'default' | 'fallback'
+}
+
+/** worker 系统提示词的两卷：共用约定 + 执行者。 */
+export interface PromptVolumes {
+  shared: PromptVolume
+  worker: PromptVolume
+}
+
+/** 只给包级测试用：换掉两个提示词目录的位置，好确定性地验覆盖与兜底。 */
+export interface PromptVolumeOptions {
+  /** 覆盖目录，缺省 `<DSC_HOME>/superagent/prompts`（`paths.ts` 的 `promptsDir`）。 */
+  overrideDir?: string
+  /** 包内目录，缺省 `<包根>/prompts`；指向不存在的位置就等价于「产物缺 md」。 */
+  packageDir?: string
+}
+
+/**
+ * 两卷的内置兜底：分别与 `prompts/shared.md` / `prompts/worker.md` 逐字一致（包级测试会把
+ * 两边各比一遍）。
  *
  * 为什么留兜底：`tsc` 只搬 `.ts`，`prompts/**` 是 `scripts/build-packages.mjs` 在打包那一步
  * 抄进产物的。源码树里直接跑包级测试（`tests/` import 的是 `lib/`）时，产物可能还没拷过
  * prompts；没有兜底就是「提示词读不到 → worker 一个都起不来」，而这条路径在 CI 门禁里必须
  * 自己站得住。兜底只在读文件失败时用，正常运行走的仍然是 md。
  */
-const FALLBACK_WORKER_PROMPT = `你是超级智能体的执行者，负责一个工单。工单在独立的工作目录里，改动不要越出这个目录。
+const FALLBACK_SHARED_PROMPT = `你是超级智能体的执行者，负责一个工单。工单在独立的工作目录里，改动不要越出这个目录。
 
 <工单>
 标题：{{title}}
@@ -533,18 +594,44 @@ const FALLBACK_WORKER_PROMPT = `你是超级智能体的执行者，负责一个
 2. 最后一段必须包含：改了哪些文件（一行一个，带 +/− 行数）、测试结果、没做的事。
 3. 不要开 PR，不要推远端。改完必须在本分支上提交一次：git add -A && git commit -m "一句话说清改了什么"。
    不提交等于什么都没交付——工单的产出就是这条分支上的提交，改动悬在工作区里，人一收拾就没了。
-</交付要求>
+</交付要求>`
+
+/** 执行者卷的内置兜底，与 `prompts/worker.md` 逐字一致（见上一段的说明）。 */
+const FALLBACK_WORKER_PROMPT = `<读工单上下文>
+superagent_context 读你正在做的这张工单的上下文，不是读整个系统，也不是翻别的工单。
+  resource=ticket：这张工单的 id、标题、创建时间、要求原文，以及最近 10 条输入（来源、时间、正文摘要）。
+  resource=thread：这张工单所在线程上的消息，旧 → 新，每条给 at / actor / text；limit 缺省 20、最多 50，
+  还有下一页时带 next_offset。
+  resource=input:<id>：一条输入的完整原文，id 从 ticket 的输入清单里取；只能读这张工单自己的输入。
+  需求含糊、缺前因、看不出来在回哪句话时，先读它再决定要不要报 blocked。看完就动手，别拿它翻别的工单。
+</读工单上下文>
 
 <报告状态>
-你有一个 superagent_report 工具，把状态说给工单，而不是只写在正文里：
+你有六个工具，把状态和线程处置说给工单，而不是只写在正文里。
 
-- 需要人拍板才能继续（缺信息、要选方案、要动工单范围外的东西）：调 superagent_report，
-  state 填 blocked，question 写清要人回答什么，然后停下等回复。只在正文里提问不算数——
-  那句话会被并进摘要，工单照样按「干完了」收尾。
-- 这一回合干完、可以交付：调 superagent_report，state 填 ready，summary 写清交付了什么。
+superagent_report 报状态，state 五选一：
+- 需要人拍板才能继续（缺信息、要选方案、要动工单范围外的东西）：state 填 blocked，human_action
+  写清要人回答什么，然后停下等回复。只在正文里提问不算数——那句话会被并进摘要，工单照样按
+  「干完了」收尾。问题来自某条人的消息时带 question_for_trigger_id，那句话就问到那个人写的地方。
+- 这一回合干完、可以交付：state 填 ready，summary 写清交付了什么。
 - 确定做不下去：state 填 failed，summary 说明卡在哪。
-- 中途有值得让人知道的进展（跑了很久、换了方案）：可以报一次 state=progress。
+- 这件事根本不该由这张工单做：state 填 dropped，summary 说明为什么。
+- 中途有值得让人知道的进展（跑了很久、换了方案）：可以报一次 state=progress，human_action 也能带。
   它不是必须的，别每轮都报，也别拿它代替 ready。
+- 这份报告回答的是人的某条提问：带上 reply_to_trigger_id（那条原始消息 id）；普通进展不要带。
+- human_action 不传 = 保留原来那个待回答的问题，传空串 = 清掉它。
+
+superagent_ack：要动大手术之前先给人一句回执（比如要改十几个文件、要跑很久的测试）。
+  trigger_id 是那条人的原始消息，text 一两句话、最多 200 字。它不是报告，别拿它代替 superagent_report。
+
+superagent_thread_unrelated：一条挂在工单上、其实跟工单无关的线程（跑题了），调它掉掉订阅，
+  reason 一句话说清为什么无关。工单自己的线程（它开在的话题、它自己的 PR）掉不掉，引擎会拒。
+
+superagent_thread_follow：发现一条相关线程（比如它引用的 Issue、另一个 PR），只想读它的上下文，
+  调它跟一条，reason 一句话说清为什么相关。已经跟着的会告诉你「本来就在跟」。
+
+superagent_trigger_handback：一条消息要求的东西超出这张工单（或者属于别的工单），调它交回去重新
+  判定，reason 一句话说清超出在哪。另一张工单还在决定它时交不回来，工具会说清楚。
 
 只在真有必要时调；状态没变就别重复报。
 </报告状态>`
@@ -552,12 +639,12 @@ const FALLBACK_WORKER_PROMPT = `你是超级智能体的执行者，负责一个
 /**
  * 读一份提示词 md，并剥掉文件头的说明注释。
  *
- * 注释里写的是占位符约定，是给改文案的人看的，不是提示词的一部分：不剥掉就会连
+ * 注释里写的是占位符约定与分卷原因，是给改文案的人看的，不是提示词的一部分：不剥掉就会连
  * `{{title}}` 的说明一起交给模型，白占上下文还容易被当成指令。
  *
  * @returns 可供替换的模板；文件不在、读不出来、或者剥完是空文件，都给 null
  */
-function readWorkerPromptFile(file: string): string | null {
+function readPromptFile(file: string): string | null {
   try {
     const body = readFileSync(file, 'utf8')
       .replace(/^\uFEFF?\s*<!--[\s\S]*?-->/, '')
@@ -570,32 +657,41 @@ function readWorkerPromptFile(file: string): string | null {
   }
 }
 
-/** 已经读过的模板：提示词在运行期不会变，一次进程只读一次盘。 */
-let cachedWorkerPrompt: string | undefined
-
-/** 默认位置：`<包根>/prompts/worker.md`（本文件编译后在 `adapters/` 下，包根是它的上一级）。 */
-function workerPromptTemplate(): string {
-  if (cachedWorkerPrompt === undefined) {
-    cachedWorkerPrompt =
-      readWorkerPromptFile(join(import.meta.dirname, '..', 'prompts', WORKER_PROMPT_FILE)) ?? FALLBACK_WORKER_PROMPT
+/**
+ * 读 worker 提示词的两卷，按优先级定来源：覆盖文件 → 包内文件 → 内置兜底。
+ *
+ * 为什么每次都读盘、不做进程级缓存：主会话可以在运行期存覆盖文件（`superagent_prompts_save`），
+ * 缓存了就要重启宿主才生效；而这张盘只在起 worker 时读一次，不在每轮的路径上。
+ *
+ * 覆盖目录是 `<DSC_HOME>/superagent/prompts`（`paths.ts` 的 `promptsDir`），包内目录是
+ * `<包根>/prompts`（本文件编译后在 `adapters/` 下，包根是它的上一级）。
+ */
+export function loadPromptVolumes(options: PromptVolumeOptions = {}): PromptVolumes {
+  const overrideDir = options.overrideDir ?? promptsDir()
+  const packageDir = options.packageDir ?? join(import.meta.dirname, '..', 'prompts')
+  const load = (role: PromptRole): PromptVolume => {
+    const override = readPromptFile(join(overrideDir, `${role}.md`))
+    if (override !== null) return { role, text: override, source: 'override' }
+    const builtin = readPromptFile(join(packageDir, `${role}.md`))
+    if (builtin !== null) return { role, text: builtin, source: 'default' }
+    return { role, text: role === 'shared' ? FALLBACK_SHARED_PROMPT : FALLBACK_WORKER_PROMPT, source: 'fallback' }
   }
-  return cachedWorkerPrompt
+  return { shared: load('shared'), worker: load('worker') }
 }
 
 /**
- * 系统提示的三段模板（设计文档 §6.2.1 原文，正文在 `prompts/worker.md`）；`sections` 给「系统提示」卡用。
+ * 系统提示词由两卷拼成：共用约定 + 空行 + 执行者；`sections` 给「系统提示」卡用。
  *
- * @param options.templatePath - 只给包级测试用：指向一个不存在的文件，确定性地验「产物缺 md」的兜底。
- *   正常调用不要传。
+ * 渲染留在这里、不放进 {@link loadPromptVolumes}：卷是模板（带 `{{占位符}}`），同一卷每个
+ * worker 的值不同；读卷只负责「读到哪一版」，替换是拼装这一步的活。
+ *
+ * @param options.volumes - 只给包级测试用：直接给两卷（含来源），不再读盘。正常调用不要传。
  */
 export function buildWorkerPrompt(
   input: WorkerPromptInput,
-  options: { templatePath?: string } = {},
+  options: { volumes?: PromptVolumes } = {},
 ): { text: string; sections: PromptSectionView[] } {
-  const template =
-    options.templatePath === undefined
-      ? workerPromptTemplate()
-      : (readWorkerPromptFile(options.templatePath) ?? FALLBACK_WORKER_PROMPT)
+  const volumes = options.volumes ?? loadPromptVolumes()
   const commands = input.blockedCommands?.length
     ? `除内置禁用之外，以下命令不允许使用：${input.blockedCommands.join('、')}`
     : '没有额外禁用的命令；禁止开 PR、禁止推远端。'
@@ -609,12 +705,20 @@ export function buildWorkerPrompt(
   }
   // 一次 replace 走完所有占位符；表里没有的名字原样留着（宁可模型看到 `{{typo}}`，
   // 也不要悄悄替换成空串——那样拼错的占位符永远发现不了）。
-  const text = template.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => values[name] ?? whole)
+  const render = (volume: PromptVolume): string =>
+    volume.text.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => values[name] ?? whole)
+  const shared = render(volumes.shared)
+  const worker = render(volumes.worker)
+  const text = `${shared}\n\n${worker}`
   return {
     text,
-    // worker 的提示词不在内核的段注册表里（它是本包直接拼的），给「系统提示」卡一段合成的段：
-    // 卡片至少能显示体量与来源，不至于空着一张段清单。
-    sections: [{ id: 'superagent-worker', order: 0, chars: text.length, from: 'plugin:superagent' }],
+    // worker 的提示词不在内核的段注册表里（它是本包直接拼的），给「系统提示」卡两段合成的段：
+    // 卡片至少能显示体量与来源，不至于空着一张段清单。契约里的段视图没有「标签」字段
+    // （`src/contract/transcript.ts`），段 id 就承担标签：「共用约定」/「执行者」。
+    sections: [
+      { id: 'superagent-shared', order: 0, chars: shared.length, from: 'plugin:superagent' },
+      { id: 'superagent-worker', order: 1, chars: worker.length, from: 'plugin:superagent' },
+    ],
   }
 }
 
@@ -828,6 +932,80 @@ export class WorkerExecutor implements Executor {
   }
 
   /**
+   * 这条会话属于哪个 worker；不是 worker 会话返回 null（只读，不写任何东西）。
+   *
+   * 为什么要它：第三批的四个协作工具（回执 / 线程 / 交回）要往引擎写东西，光知道
+   * 「是 worker」不够，还得知道 ticketId；而这张表是执行器的私有账，运行期只拿得到
+   * `sessionId`（`ToolContext.sessionId` 就是 `Session.meta.id`，`session-core/loop.ts:711-713`），
+   * 所以由执行器提供这一手，运行期按会话转成 `ticketId`（见 `runtime.ts` 的 `workerCommands`）。
+   *
+   * 为什么把 `retiring` 也算上：那些 worker 已经让出干活名额但回合还在收尾、会话还开着，
+   * 它们仍然是 worker 会话。漏掉这一段，收尾期里的一次调用会被当成普通会话放过去。
+   * `ownsSession` 就是拿它实现的——判据只留这一份。
+   *
+   * @param sessionId - `ToolContext.sessionId`（就是 `Session.meta.id`）
+   * @returns `{ ticketId, assignmentId }`；不是 worker 会话给 null
+   */
+  workerOf(sessionId: string): { ticketId: string; assignmentId: string } | null {
+    for (const worker of this.workers.values()) {
+      if (worker.session.meta.id === sessionId) return { ticketId: worker.ticketId, assignmentId: worker.assignmentId }
+    }
+    for (const worker of this.retiring) {
+      if (worker.session.meta.id === sessionId) return { ticketId: worker.ticketId, assignmentId: worker.assignmentId }
+    }
+    return null
+  }
+
+  /**
+   * 这条会话是不是某个 worker 的（只读，不写任何东西）。
+   *
+   * 为什么需要它：主会话工具（`main-tools.ts`）要挡住「worker 替人做路由」这种事，
+   * 判断依据只有一个——发起调用的会话是不是执行器自己的。{@link reportBySession} 也能
+   * 反查，但它会真往工单里写一条报告；探一下就把状态改了，不能当探针用。
+   *
+   * 判据只有一份：{@link workerOf}（它已经把 `retiring` 算上）。
+   *
+   * @param sessionId - `ToolContext.sessionId`（就是 `Session.meta.id`）
+   * @returns true = 这条会话属于一个在跑或在收尾的 worker
+   */
+  ownsSession(sessionId: string): boolean {
+    return this.workerOf(sessionId) !== null
+  }
+
+  /**
+   * 建单那一刻把执行参数定下来（`prepareTicket` 钩子）。
+   *
+   * 为什么必须是纯函数：它在 `Tickets.create` 的数据库事务里被调（`core/tickets.ts:49`），
+   * 事务里不能建目录、不能跑命令——慢动作会把整库的写锁一起攥住；更不能抛，抛了这张刚
+   * 接单的工单会跟着回滚。所以这里只做字符串与路径拼接。
+   *
+   * 写进 `execution.name` 的是**完整工作树名**（可读前缀 + 工单 id 前 8 位），不是模型给的
+   * 那个可读名：派工建出来的分支是 `agent/<完整名>`，而 `ticketBranch` 拿分支末段与
+   * `execution.name` 比（`github/pull.ts:64`）。只存可读前缀的话，这条比较永远为假，
+   * 「机器人开的、分支对得上这张单的 PR」那条自动绑定就永远绑不上。
+   *
+   * `assignment` 此刻还没有（派工时由执行器拼工单正文），留空串。
+   *
+   * @param ticket - 刚接单、还没落库的工单
+   * @param outcome - 判定器的接单结论；`name` 是模型给的短名（`worktree_name`），可以为空
+   * @returns 带 `execution` 的工单（新对象，不改入参）
+   */
+  prepare(ticket: Ticket, outcome: { name?: string }): Ticket {
+    const wanted = typeof outcome.name === 'string' ? outcome.name.trim() : ''
+    const name = readableWorktreeName(wanted === '' ? ticket.title : wanted, ticket.id)
+    try {
+      // 目录与 `ensureWorktree` 用同一个纯函数算：两处算法一旦分开，工单记的目录与派工时
+      // 真建出来的树就会静默漂移。
+      const placed = worktreePathOf({ name, root: this.root })
+      return { ...ticket, execution: { name, directory: placed.dir, assignment: '' } }
+    } catch {
+      // 连路径都算不出来（环境变量 / 家目录异常）也不能让接单事务回滚：名字先落，
+      // 目录留给派工时按同一个名字重算，那时算不出来会判 failed、原因也看得见。
+      return { ...ticket, execution: { name, directory: '', assignment: '' } }
+    }
+  }
+
+  /**
    * 引擎要求派工：只往 `effect` 表写一行，真正的派工在队列的 handler 里（理由见文件头）。
    *
    * 同一个 (工单, 分配) 重复调用由表主键合并成一行（`ON CONFLICT(kind,key)`）：
@@ -951,7 +1129,7 @@ export class WorkerExecutor implements Executor {
     return picked
   }
 
-  /** 系统提示：三段模板 + 段清单（见 {@link buildWorkerPrompt}）。 */
+  /** 系统提示：两卷拼接 + 段清单（见 {@link buildWorkerPrompt}）。 */
   systemPrompt(input: WorkerPromptInput): { text: string; sections: PromptSectionView[] } {
     return buildWorkerPrompt(input)
   }
@@ -1144,7 +1322,7 @@ export class WorkerExecutor implements Executor {
    * | 字段 | 这里的实现 |
    * | --- | --- |
    * | `route` | 设置里的 provider/model，缺省跟随当前选路 |
-   * | `systemPrompt` | {@link buildWorkerPrompt} 的三段模板，环境事实直接写进去 |
+   * | `systemPrompt` | {@link buildWorkerPrompt} 的两卷拼接，环境事实直接写进去 |
    * | `tools` | {@link WORKER_TOOL_NAMES}（`tools()`） |
    * | `guards` | 全局链 + 无人值守入口（{@link WorkerExecutor.guardsFor}） |
    * | `stream` | `ctx.llm.stream` |

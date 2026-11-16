@@ -36,6 +36,8 @@ function toTicketView(ticket: TicketView): SuperagentTicketView {
     // 契约里叫 `at`（与 recent 同一口径），命令层叫 createdAt：同一个值。
     at: ticket.createdAt,
     ...(ticket.summary === undefined ? {} : { summary: ticket.summary }),
+    // 问题原话：回答框上面要写清在问什么，否则用户只能盲回。
+    ...(ticket.question === undefined ? {} : { question: ticket.question }),
   }
 }
 

@@ -58,10 +58,11 @@ import type { Settings } from './core/policy.js'
 import { registerCommands } from './commands.js'
 import { LIMITS } from './core/limits.js'
 import { createDependenciesHealth, createFeishuHealth, createSuperagentHealth, createTeammatesHealth } from './health.js'
-import { SuperagentRuntime } from './runtime.js'
+import { createMainTools } from './main-tools.js'
+import { SuperagentRuntime, type SettingsFieldView } from './runtime.js'
 import { SuperagentService } from './service.js'
 import { registerSurface, withRepoGuide } from './surface.js'
-import { createReportTool } from './tools.js'
+import { createWorkerTools, WORKER_ONLY_TOOL_NAMES } from './tools.js'
 
 /** 行身份：与 `cordis.patch.yml` 的 `id`、产物目录名三处一致。 */
 export const name = 'superagent'
@@ -757,6 +758,62 @@ export function createSettingsSection(passed?: unknown, record?: SettingsHistory
 }
 
 /**
+ * 把一个设置分区的字段投影成主会话工具看到的形状（P7）。
+ *
+ * 为什么要把 `fields()` 与 `values()` 拼起来：`fields()` 只是控件声明（标题、类型、说明），
+ * 当前值在 `values()` 里——设置面板也是这么取值的（`SettingsService.values`）。工具要
+ * 「先看现场再改」，两样必须一起给，否则模型是照着一份猜出来的值在改。
+ *
+ * 为什么跳过 info / button：这两类没有 key / 当前值，不是可保存的设置项；投影给模型只会让它
+ * 以为能改一段说明文字。下拉的 `type` 报成 text（值就是字符串），可选值拼进 help——
+ * 工具侧的四种类型里没有「枚举」这一种，让模型知道合法值即可。
+ */
+function settingsViewOf(section: SettingsSectionSpec): SettingsFieldView[] {
+  // 本分区的 values() 是同步读磁盘（`readSuperagentConfig`）；接口允许 Promise 只是通用契约。
+  const values = section.values() as unknown as SettingsValues
+  const fields: SettingsFieldView[] = []
+  for (const field of section.fields()) {
+    if (field.type === 'info' || field.type === 'button') continue
+    const type = field.type === 'number' ? 'number' : field.type === 'switch' ? 'boolean' : 'text'
+    const help = field.type === 'select'
+      ? [field.help, `可选值：${field.options.map((option) => option.value).join(' / ')}`]
+        .filter((part): part is string => typeof part === 'string' && part !== '')
+        .join('；')
+      : field.help
+    fields.push({
+      key: field.key,
+      label: field.label,
+      type,
+      value: values[field.key],
+      ...(help === undefined || help === '' ? {} : { help }),
+    })
+  }
+  return fields
+}
+
+/**
+ * 调设置分区自己的 save（P7）：与设置页同一个函数，返回字符串 = 被拒原因。
+ *
+ * 为什么不在工具里直接写 `plugins.json`：那会绕过这个分区的校验（枚举 / 上下限 / 路径格式）
+ * 与设置变更历史，同一个设置就有了两条写路径，且工具那条没有任何提示。
+ */
+function saveSettingOf(section: SettingsSectionSpec, key: string, value: unknown): string | void {
+  const save = section.save
+  if (save === undefined) return '这个设置分区没有保存入口'
+  let result: string | void | SettingsMutationOk | Promise<string | void | SettingsMutationOk>
+  try {
+    result = save(key, value as SettingsValue)
+  } catch (error) {
+    // 契约里「抛错 = 失败原因」，工具要的是一句话，不是一段堆栈。
+    return error instanceof Error ? error.message : String(error)
+  }
+  // 本分区的 save 是同步的；真拿到 Promise 说明分区换成了异步实现，如实说，别把 Promise 当成功。
+  if (result instanceof Promise) return '这个设置分区的保存改成了异步实现，主会话工具还不支持'
+  if (typeof result === 'string') return result
+  return undefined
+}
+
+/**
  * 装配入口：设置分区 + `/sa` 命令 + 2 秒泵 + 体检项，运行期懒建。
  *
  * 返回值故意是 void：所有退订 / 清理都交给 `ctx.effect` 统一收口（与 schedule、
@@ -797,7 +854,10 @@ export function apply(ctx: Context, passed?: unknown): void {
 
   // 设置变更历史：save 成功且值变了就记进编排库的 settings_history 表。运行期还没起来
   // （懒建，`store` 还是 null）时改的设置不记——历史从插件跑起来那刻开始记。
-  const offSection = ctx.settings.registerSection(createSettingsSection(passed, (change) => {
+  //
+  // 分区对象留一个引用：主会话的 `superagent_read`（settings 资源）与 `superagent_settings_save`
+  // 要读它的字段 / 当前值，并调它自己的 `save`（与设置页同一个函数，不另开写路径）。
+  const settingsSection = createSettingsSection(passed, (change) => {
     if (store === null) return
     try {
       store.recordSettingsChange(change, new Date().toISOString())
@@ -805,7 +865,8 @@ export function apply(ctx: Context, passed?: unknown): void {
       // 记历史失败不该让保存本身失败：设置已经写进 plugins.json 了，丢的只是一行 diff。
       console.warn(`[superagent] 设置变更没记进历史：${errorText(error)}`)
     }
-  }))
+  })
+  const offSection = ctx.settings.registerSection(settingsSection)
   ctx.effect(() => offSection, 'superagent: settings.registerSection')
 
   // ── 运行期：懒建 / 泵 / 命令 ────────────────────────────────────────────────
@@ -1148,6 +1209,9 @@ export function apply(ctx: Context, passed?: unknown): void {
       const opened = new SuperagentRuntime(store, {
         log: (line) => { console.warn(line) },
         ctx,
+        // 主会话工具改完工单后要让界面重画：走与 `service.changed` 同一条事件。
+        // 注入而不是让运行期自己去发：`ctx.emit` 是宿主的词汇，运行期只该说「有东西变了」。
+        changed: () => { ctx.emit('dsc/changed') },
         // worker 的模型与禁令名单：装配时读一次（判定模型同款取舍，改了要重开宿主）。
         // model 传 null = 执行器跟随当前选路（`adapters/executor.ts` 的 `route()`）。
         worker: {
@@ -1164,6 +1228,10 @@ export function apply(ctx: Context, passed?: unknown): void {
         scope: superagentScope(githubAccount, feishuAccount),
         // 模型名在装配时读一次：换判定模型要重开宿主（改一条设置就重建运行期代价太大）。
         assessorModel: assessorTargetOf(config()),
+        // 设置分区的读 / 写（P7）：分区对象只有这里拿得到。读给 `superagent_read` 的 settings
+        // 资源与 save 工具的 key 校验，写走分区自己的 save（与设置页同一个函数、同一套校验）。
+        settingsView: () => settingsViewOf(settingsSection),
+        saveSetting: (key, value) => saveSettingOf(settingsSection, key, value),
         // 推断候选先等人点头（backlog G1）：现读，设置页打开之后下一条候选就进收件箱。
         confirmInferred: config().confirmInferred,
         ...(complete === undefined ? {} : { assessorComplete: complete }),
@@ -1172,6 +1240,10 @@ export function apply(ctx: Context, passed?: unknown): void {
         // 判定器的线程上下文要读 GitHub（backlog S1）：来源同样是本函数返回后才起，
         // 所以给 getter；没配 GitHub 时它是 `null`，判定器就按没有上下文判。
         githubApi: () => github?.api ?? null,
+        // 机器人身份：认领 PR 要判「这张 PR 是不是机器人自己开的」（`agentPull`）。`GithubApi`
+        // 只露仓库、`Settings` 里也没有登录名，所以把同一个配置闭包递进去；没配全时认领
+        // 由运行期回一句「GitHub 没配」。
+        githubAccount: () => githubAccount(),
         ...(sessions === undefined
           ? {}
           : {
@@ -1240,24 +1312,59 @@ export function apply(ctx: Context, passed?: unknown): void {
     }
   })
 
-  // ── worker 的报告工具（backlog G7）────────────────────────────────────────────
-  // worker 在后台跑，正文里提的问题没有人接：给它一个工具，把 blocked / progress / ready
-  // 主动说给工单。工具自己不碰库，真正的状态变更由引擎做（`core/assignments.ts:99-134`），
-  // 所以这里只把「按会话反查 worker」这一手接到运行期上。
-  ctx.effect(
-    () => ctx.tools.register(createReportTool({
-      // 运行期还没建（没人用过这个插件）时返回 false，工具会报「只在这个 worker 会话里可用」。
-      report: (sessionId, report) => runtime?.reportBySession(sessionId, report) ?? false,
-    })),
-    'superagent: tools.register (superagent_report)',
-  )
-  // 主会话不该看见这个工具：worker 的目录由执行器自己按名字算（`adapters/executor.ts` 的
+  // ── worker 的五个工具（backlog G7 + 第三批）──────────────────────────────────
+  // worker 在后台跑，正文里提的问题没有人接：给它一组工具，把状态说给工单（report），
+  // 动大手术前先回执（ack），处置挂在自己身上的线程（thread_unrelated / thread_follow），
+  // 把不归本工单的消息交回去（trigger_handback）。工具自己不碰库，真正的状态变更与归属判定
+  // 在引擎里（`core/assignments.ts:99-134`、`core/tickets.ts`），所以这里只把「按会话反查
+  // worker」这一手接到运行期上。
+  //
+  // 为什么五个一起注册：执行器的 `tools()` 是按名字从注册表里挑（`WORKER_TOOL_NAMES`），
+  // 注册漏一个，worker 就拿到一个调不到的名字；投影漏一个，主会话就会多出一个 worker 专用工具。
+  // 两处都从 `WORKER_ONLY_TOOL_NAMES` 这一份名单来，名单只有一处。
+  for (const tool of createWorkerTools({
+    // 两道闸按顺序：运行期在不在（懒建），这条会话是不是 worker 的。第二道不能省——
+    // 端口方法返回 `false` 另有含义（线程「本来就在跟」、消息「没交回」），不能用它兼作身份判断。
+    // 运行期关闭时按「不是 worker 会话」处理：那时没有活着的工单，这句判断是准确的。
+    host: (sessionId) => {
+      const current = runtime
+      if (current === null) return null
+      try {
+        return current.commands().isWorkerSession(sessionId) ? current.workerCommands() : null
+      } catch {
+        return null
+      }
+    },
+  })) {
+    ctx.effect(
+      () => ctx.tools.register(tool),
+      `superagent: tools.register (${tool.name})`,
+    )
+  }
+  // 主会话不该看见这五个工具：worker 的目录由执行器自己按名字算（`adapters/executor.ts` 的
   // `tools()` 走 `list()`，不过投影），所以这道投影只作用在用户会话上。不藏的话，
-  // 模型会在主会话里替某张工单「报进度」——那条会话连 worker 都不是，只会撞一句报错。
+  // 模型会在主会话里替某张工单「报进度 / 交回消息」——那条会话连 worker 都不是，只会撞一句报错。
+  // `superagent_read` 这类主会话工具不在名单里，不受影响。
   ctx.effect(
-    () => ctx.tools.project('superagent.worker-only', (tools) => tools.filter((tool) => tool.name !== 'superagent_report')),
+    () => ctx.tools.project('superagent.worker-only', (tools) => tools.filter((tool) => !WORKER_ONLY_TOOL_NAMES.includes(tool.name))),
     'superagent: tools.project (worker-only)',
   )
+
+  // ── 主会话的十二个工具（P1 / P2 / P6 / P7）──────────────────────────────────
+  // 读快照 / 路由候选 / 催状态 / 记事实 / 发回复（`main-tools.ts`）。它们只调运行期露出的
+  // 窄端口（`runtime.commands()`）：工具不碰库、不认识执行器，运行期没起来时端口是 null，
+  // 工具据此给一句「还没启动」，而不是抛一个 TypeError。
+  //
+  // 为什么不用 `ctx.tools.project` 把它们从 worker 里藏掉：worker 的工具表由执行器按白名单
+  // 自己挑（`adapters/executor.ts` 的 `tools()` 不过投影），这五条本来就不会出现在那里；
+  // 再投影一次只能作用在主会话上，反而会把它们从主会话里藏掉。
+  // 兜底另有一条：每个工具 `run` 开头都问一次 `isWorkerSession`。
+  for (const tool of createMainTools({ host: () => runtime?.commands() ?? null })) {
+    ctx.effect(
+      () => ctx.tools.register(tool),
+      `superagent: tools.register (${tool.name})`,
+    )
+  }
 
   // ── 体检项：登记进 doctor 的 health 表 ──────────────────────────────────────
   // doctor 的 pneuma.order 是 3450，早于本插件的 3800，所以 apply 时它已经 provide 了
