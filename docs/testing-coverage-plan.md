@@ -136,6 +136,39 @@ branches 42.75 / functions 46.45 / statements 49.42；`src/core` 保持 86.75 / 
 `self-improve/index.ts`（414）、`hooks/index.ts`（342）、`lsp/client.ts`（277）、`tools-default/bash.ts`（262）、
 `session-core/hooks.ts`（258）、`config-core/market.ts`（257）这些装配/长尾文件，下一批按此顺序推进。
 
+### 1.4 W2 中点（2026-11-16，第二批 12 个 spec / 165 条）
+
+第二批专挑「有缝可注入」的装配层与纯文件层：真子进程、假 socket、假 fetch、假 ctx、
+临时 HOME，把每条链路的行为钉住，而不是只调一遍不断言。
+
+| spec | 条数 | 钉住的行为 |
+| --- | ---: | --- |
+| `session-core/tests/hooks.spec.ts` | 34 | 配置读写坏条目/上限/缓存、规则匹配与正则退化、批准名单四态、三套脚本结论写法、fail-closed 各分支、真子进程（stdin/超时/打断/截断） |
+| `tools-default/tests/bash-jobs.spec.ts` | 15 | JobTable 真作业生命周期与游标（output 推进 / peek 不推）、TerminalTable 真会话读写、工具面文案、shellPlan 五档 |
+| `config-core/tests/market-browse.spec.ts` | 8 | 四类源取数（ClawHub/skills.sh/索引/GitHub trees+raw）、缓存命中/refresh/写坏重拉、403 提示 token |
+| `lsp/tests/client.spec.ts` + `manager.spec.ts` | 18 | 假 LSP 服务器往返：握手/四查询/推拉诊断/编码拒绝/超时/退出/反向请求；池化、串行、破键、idle 回收 |
+| `self-improve/tests/skill-write.spec.ts` | 20 | 校验/渲染/安检/建改附/归档/read-before-write/使用台账/老化整理 |
+| `cdp/tests/launch.spec.ts` + `transport.spec.ts` + `actions-flow.spec.ts` | 37 | 浏览器探测与端点等待、CDP 命令/事件/session 路由/断线、ref 复核与点击输入求值上传 |
+| `ui-boot/ui/boot.spec.ts` + `ui-primitives/ui/completion-sound.spec.ts` | 14 | 启动图/批次规范化/工厂物化与 rev 缓存/样式认领；14 种提示音的信号链 |
+| `ui-skills/ui/ui.spec.tsx` + `ui-plugins/ui/ui.spec.tsx` | 15 | 技能页分组/筛选/启停/市场安装/源编辑；插件页分组展开/详情/信任确认/组合包启停/读失败 |
+
+实测：**25,824 / 46,646 = 55.36%**（W2 首轮 24,053 / 51.56，+1,771 行 / +3.80 点）；
+branches 45.80 / functions 49.81 / statements 53.05；`src/core` 86.81 / 74.97 / 86.24 / 83.13。
+跑法 `pnpm test:coverage`，450 文件通过 / 1 skip、5,714 用例通过 / 5 skip、exit 0；
+基线抬到 55.3 / 45.8 / 49.8 / 53.0（`src/core` 86.8 / 74.9 / 86.2 / 83.1）。0% 文件从 75 降到 72。
+
+W2 尚未吃掉的大块（都已定位，下一批继续）：`ui-status/ui.tsx`（618）、`browser/index.ts`（495）、
+`subagent/index.ts`（439）、`remote/index.ts`（429）、`self-improve/index.ts`（414，skill-write 已覆盖）、
+`ui-sessions/ui/ui.tsx`（408）、`approval/index.ts`（385）、`ui-composer/ui/ui.tsx`（360）、
+`hooks/index.ts`（342）、`desktop-dock/index.ts`（295）、`ui-prompt/ui/ui.tsx`（238）、
+`lsp/index.ts`（227）。其中界面页（ui-sessions / ui-composer / ui-prompt / ui-status）复用
+「槽位登记 + RuntimeProvider + 假宿主通道」这一套（见 `ui-skills` / `ui-plugins` 两个 spec）。
+
+**W2 中点复盘**：第二批 165 条换来 +1,771 行，单条约 10.7 行；「注入缝」是决定性因素——
+LSP/CDP/作业表都有现成注入点（假 socket、假服务器、socketFactory），而 `browser`、`remote`、
+`approval` 的 apply 把依赖写死在闭包里，只能靠 `vi.mock` 或假 ctx 硬撬，ROI 明显更低。
+剩余界面页按同一套假通道推进；装配层留到排除台账前再评估。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
