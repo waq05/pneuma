@@ -280,6 +280,44 @@ statements 80.19 / functions 81.39 **已过 80 门**；branches 71.10 仍是短�
 `runner-entry.ts` 已确认不可黑盒测（顶层无条件 `main()`、真 Windows 令牌/CreateProcessAsUserW/ConPTY、
 宿主只探测 lib 产物），进入排除台账候选。
 
+### 1.8 W10 + W11 收口（2026-11-16 深夜–17 凌晨，15 批测试 / 1,080 条）：硬门通过
+
+W10/W11 按 W9 定下的「行缺口 + 分支缺口」双榜切分，15 批并行子代理（提交 ef9612e7…00abc11a）。
+
+| 波 | 批数 | 条数 | 主攻 |
+| --- | ---: | ---: | --- |
+| **W10**（8 批） | 8 | 506 | computer-use+ui-primitives 70、sandbox ACL 60、ui-transcript viewport/intended-diff 39、ui-status/sessions/dockkit/trace 70、core/session-core/dsh-compat 长尾 84、tools-default/skills/todo/compact 42、cdp/self-improve/approval/remote/config-core 48、superagent tickets/evals/model+adapters 93 |
+| **W11**（7 条线） | 7 | 574 | ui-transcript fold-motion 35、remote/subagent/mcp/commands/memory/hooks 54、sandbox backend 112、ui-status/sessions/skills/slots/statusbar/preview 69、superagent 分配/飞书循环 81、primitives/composer/settings/browser/bash/cdp 137、lsp/dsh-compat/cli/checkpoint/desktop-dock/approval/self-improve 86 |
+
+实测（第八次全量，2026-11-17，exit 0）：**42,960 / 46,646 = lines 92.09**；**branches 81.85**（33,056/40,384）；
+functions 89.70 / statements 89.68。**四项全部过门**（lines ≥ 90、branches/functions/statements ≥ 80）；
+`src/core` 92.43 / 81.56 / 93.34 / 89.26。590 文件过 / 1 skip、8,156 用例过 / 5 skip、0 失败。
+相对 W9（83.36 / 71.10）**+8.73 行 / +10.75 分支**，56 个 spec 文件、+28,829 行测试代码；
+0% 文件 4 → 2（`ui-layout` 两个各 1 行的纯重导出）。基线抬到 92.0 / 81.8 / 89.7 / 89.6
+（`src/core` 92.4 / 81.5 / 93.3 / 89.2）。**不需要排除台账**：runner-entry.ts 保持为已论证的债，不排除。
+
+**阶段内测试基建修复**：`9d0e117e` manager 收尾钩子显式 15s（unit 项目内联 `hookTimeout: 5_000`
+优先于 CLI 旗标，vitest.config.ts:160）；`83fafd4d` 快照 05 钉死页面时钟——热力图网格按「今天」回溯
+（heatmap.ts:92-106），`usage.heat.cells`/`dom.elements` 跨午夜每天 +1 必红，驱动新增
+`DSC_DOM_BOOT_SCRIPT`（`addScriptToEvaluateOnNewDocument` + reload）让场景把页面 `Date` 钉死，
+种子同锚固定，计数守卫保留原值。
+
+**复盘（偏离与教训）**：
+
+1. **第六次全量作废（45 红）**：W11-F 子代理的反验证 `git checkout --` 在 build 之后刷新了产品文件
+   mtime，防假绿守卫（tests/harness.ts:990）拦下全部 bootKernel 集成用例。教训：**阶段收尾的全量
+   必须等所有子代理停笔并核对 `find src -newermt <build 时刻>` 为空再跑**，只等文件内容稳定不够。
+2. **第七次全量 1 红**：快照 05 跨午夜暴露 golden 日期依赖——之前所有全量都发生在 11-16 当天，
+   日期敏感计数从未被测过。修法见 83fafd4d；这条说明「快照类 golden 要审一遍时间锚」，同类页面
+   （归档、终端界面）本次核对无日期依赖。
+3. **子代理在 Coordinator 提交后仍在增量写盘**：00f2e611 提交的是 W11-F 中间态，终态经其报告
+   补交（083c8d14 + 00abc11a）。派活时给子代理的验收命令应含「提交前自查 spec 文件 mtime 停止变化」。
+
+**剩余债（有意不补，带理由）**：`approval/index.ts` 深层决策 ~33 行（需完整内核 harness）；
+`resolve-hook` resolve 回调 ~86 行（Vitest 下动态 import 不走 `module.registerHooks`，只钉护栏）；
+`ui-layout` 2 个 1 行 0% 文件（纯重导出）。runner-entry.ts（271 行 / 157 分支）维持 §1.7 论证，
+integration 层 `win-token.int.spec.ts` 已覆盖真实令牌路径。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
