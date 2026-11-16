@@ -180,3 +180,25 @@
 
 节奏：每个模块波落地后，由**测试子代理**补该模块的 `*-test.mjs`（不改实现代码），并负责每波末的四道闸；开发子代理只写实现、只跑 `npx tsc -p tsconfig.json --noEmit`。W9 切换包入口前，旧测试仍跑旧模块，删旧树时被删模块的旧测试同步换成已转写的新测试。
 
+
+---
+
+## 7 实施进度（滚动更新）
+
+| 波 | 状态 | 提交 | 说明 |
+| --- | --- | --- | --- |
+| W1 | 完成 | `e77e43b7` | `sources/{kind,host,registry,poll,admission-context}`；`kind`/`host`/`registry` 保留两处过渡缝 |
+| W2 | 完成 | `e77e43b7` | `infra/{text,health,commands,environment}`、`deployment`、`setup`、`app/execution-environment`；`deployment`/`environment` 原生 |
+| W3 | 完成 | `e77e43b7` | 迁到镜像布局；`kv.ts` 落地，缝已在 W7 全部消除 |
+| W4 | 完成 | `e77e43b7` | GitHub 5 文件、飞书 6 文件；`github.ts`/`feishu.ts` 的 cordis `apply` 改为 `startGithub`/`startFeishu(host, signal)`，W9 接线 |
+| W5 | 工作树 | 待提交 | `app/{effects,outbox,passes,retry-health,cache,cards,links,notices,source-context}` 9 文件逐字 |
+| W6 | 工作树 | 待提交 | `app/{prompts,context,skill-files,settings-history,setup,role-models,settings}`；`prompts/` 12+3 个 md 与 `skills/` 2 个 SKILL.md 逐字（`shared.md`/`worker.md` 留 W9 换） |
+| W7 | 工作树 | 待提交 | `app/{store,store-read,versions,migration}` 逐字；`kv.ts` 四类键接真类型 |
+| W8 | 进行中 | — | `executor/{dsh,background}`、`app/{sessions,delivery,tools/*,resources,assessment}`、`app/views/*`、`app/runtime` |
+
+**逐字审计（r1，2026-11-16）**：38 个 A 类路径里 26 个归一后 0 差异、9 个只差「上游首行注释」——已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块、`skill-files.ts` 的包根解析）；`as unknown as` 4 处全是上游原文继承（`migration.ts:356/383`、`effects.ts:81/122`）。`@deepseek-ai/*` import 0 处、残留 `.ts` import 0 处。
+
+**已知偏差（要在 W9 收口）**：
+1. `app/tools/executor.ts` 不是逐字：为了让工具进本仓 `ctx.tools`，文件里多了 `entryOf` 映射（`Tool[]`→`ToolEntry[]`）。W9 时把这段映射挪到注册点，文件回归逐字。
+2. `shared.md`/`worker.md` 仍是本仓两卷中文版，W9 换上游英文版，`app/context.ts` 的 `sharedPrompt`/`workerPrompt` 随之对齐。
+3. `app/runtime.ts` 不含上游 HTTP 段（`app/http.ts` 不移植），面板能力由 W9 入口按 `INVOKABLE_METHODS` 提供。
