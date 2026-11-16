@@ -96,6 +96,11 @@ function handle(message) {
       return
     }
     case 'textDocument/definition': {
+      if (mode === 'slow') {
+        // 排队用例：每条请求都慢半拍，串行与并发才好区分。
+        setTimeout(() => respond(id, { uri: params.textDocument?.uri ?? '', range: range(0, 0) }), 150)
+        return
+      }
       if (mode === 'error') {
         respondError(id, '服务器不认识这个文件', -32001)
         return
