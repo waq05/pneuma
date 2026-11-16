@@ -19,7 +19,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { ensureWorktree, listWorktrees, removeWorktree, slugOf } from '../adapters/worktree.js'
-
+// 层次归属（P6，K2+）：这三份会 spawn 真 git 子进程（建仓 / 工作树 / 提交），全量并行时
+// 偶发超过 unit 的 5s 线——单跑 18/18 绿、全量并行 timeout 红。它们是「真磁盘 + 真进程」
+// 的用例，归 integration 层（forks、60s、retry 1），不改任何断言。
 const roots: string[] = []
 
 /**
