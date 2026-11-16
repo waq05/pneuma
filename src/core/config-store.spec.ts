@@ -113,3 +113,116 @@ describe('② 读写都落在活动那份上', () => {
     setPref('')
   })
 })
+
+describe('③ 端点校验与写入口', () => {
+  const custom = join(home.home, 'crud-config.yaml')
+
+  /** 一份最小合法草稿。 */
+  function draft(overrides: Record<string, unknown> = {}) {
+    return {
+      oldName: null,
+      name: 'demo',
+      displayName: '演示',
+      baseUrl: 'http://127.0.0.1:1234/v1/',
+      models: [{ id: 'm', name: 'm', contextWindow: 1000, maxTokens: 100 }],
+      ...overrides,
+    } as Parameters<typeof store.upsertProvider>[1]
+  }
+
+  function reset(): void {
+    // 空配置：CRUD 用例只关心自己写了什么，不让 base 端点混进默认端点回退。
+    writeFileSync(custom, '', 'utf8')
+    setPref(custom)
+  }
+
+  test('validateDraft：名字 / URL / 模型 / 上下文的硬校验', () => {
+    expect(() => store.validateDraft(draft())).not.toThrow()
+    expect(() => store.validateDraft(draft({ name: 'Bad Name' }))).toThrow(/非法/)
+    expect(() => store.validateDraft(draft({ baseUrl: 'ftp://x' }))).toThrow(/http/)
+    expect(() => store.validateDraft(draft({ models: [] }))).toThrow(/至少填一个模型/)
+    expect(() => store.validateDraft(draft({ models: [{ id: ' ', contextWindow: 1, maxTokens: 1 }] }))).toThrow(/id 是空的/)
+    expect(() =>
+      store.validateDraft(draft({ models: [{ id: 'm', contextWindow: 0, maxTokens: 1 }] })),
+    ).toThrow(/上下文窗口/)
+    expect(() =>
+      store.validateDraft(draft({ models: [{ id: 'm', contextWindow: 1, maxTokens: 1, thinkingParam: 'bogus' }] })),
+    ).toThrow(/思考档位字段/)
+  })
+
+  test('upsertProvider：新增写进活动配置，key 名按端点派生，URL 去尾斜杠', () => {
+    reset()
+    expect(store.upsertProvider(null, draft())).toBe('demo')
+    const doc = store.readConfigDoc()
+    expect(doc.providers.demo).toMatchObject({
+      displayName: '演示',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      apiKeyEnv: 'DEMO_API_KEY',
+    })
+    expect(doc.providers.demo?.models?.[0]).toMatchObject({ id: 'm', contextWindow: 1000, maxTokens: 100 })
+  })
+
+  test('upsertProvider：改名保留 key 名并让默认端点跟着走；撞名报错', () => {
+    reset()
+    store.upsertProvider(null, draft({ name: 'first', displayName: '' }))
+    store.writeDefaultModel('first', 'm')
+    store.upsertProvider('first', draft({ oldName: 'first', name: 'second' }))
+    const doc = store.readConfigDoc()
+    expect(doc.providers.first).toBeUndefined()
+    expect(doc.providers.second?.apiKeyEnv).toBe('FIRST_API_KEY')
+    expect(doc.default).toEqual({ provider: 'second', model: 'm' })
+    store.upsertProvider(null, draft({ name: 'third' }))
+    expect(() => store.upsertProvider('third', draft({ oldName: 'third', name: 'second' }))).toThrow(/已存在/)
+  })
+
+  test('deleteProvider：不存在报错；删默认端点后改指第一个或清空', () => {
+    reset()
+    expect(() => store.deleteProvider('nope')).toThrow(/没有名为/)
+    store.upsertProvider(null, draft({ name: 'a' }))
+    store.upsertProvider(null, draft({ name: 'b' }))
+    store.writeDefaultModel('a', 'm')
+    store.deleteProvider('a')
+    expect(store.readConfigDoc().default).toEqual({ provider: 'b', model: 'm' })
+    store.deleteProvider('b')
+    expect(store.readConfigDoc().default).toBeUndefined()
+    expect(store.readConfigDoc().providers).toEqual({})
+  })
+
+  test('writeDefaultModel：端点/模型不在都报错', () => {
+    reset()
+    expect(() => store.writeDefaultModel('nope', 'm')).toThrow(/没有名为/)
+    store.upsertProvider(null, draft())
+    expect(() => store.writeDefaultModel('demo', 'nope')).toThrow(/没有模型/)
+    store.writeDefaultModel('demo', 'm')
+    expect(store.readConfigDoc().default).toEqual({ provider: 'demo', model: 'm' })
+  })
+
+  test('writeTemperature：写数值 / null 删字段', () => {
+    reset()
+    store.writeTemperature(0.7)
+    expect(store.readConfigDoc().temperature).toBe(0.7)
+    store.writeTemperature(null)
+    expect(store.readConfigDoc().temperature).toBeUndefined()
+  })
+
+  test('writeProviderKey：空 ref / 空 key 报错；写入后 keyAvailable 为真，清除后看环境变量', () => {
+    reset()
+    expect(() => store.writeProviderKey('', 'k')).toThrow(/无法定位/)
+    expect(() => store.writeProviderKey('DEMO_KEY', '   ')).toThrow(/是空的/)
+    const message = store.writeProviderKey('DEMO_KEY', 'secret')
+    expect(message).toContain('已写入')
+    expect(store.keyAvailable('DEMO_KEY')).toBe(true)
+    delete process.env['DEMO_KEY']
+    const cleared = store.writeProviderKey('DEMO_KEY', null)
+    expect(cleared).toContain('已清除')
+    expect(store.keyAvailable('DEMO_KEY')).toBe(false)
+  })
+
+  test('readModelConfig：缺省 name/displayName/keyRef，缺 key 的端点也列出来', () => {
+    writeYaml(custom, 'base')
+    setPref(custom)
+    const view = store.readModelConfig()
+    const provider = view.providers[0]!
+    expect(provider).toMatchObject({ name: 'base', displayName: 'base', keyRef: 'K', keyConfigured: false })
+    expect(provider.models[0]).toMatchObject({ id: 'm', name: 'm', contextWindow: 1000, maxTokens: 100 })
+  })
+})
