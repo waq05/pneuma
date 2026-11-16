@@ -152,8 +152,8 @@
 | W6 | `app/{prompts,skill-files,context,settings-history,source-context,settings,setup,role-models}` + `prompts/*.md` 15 个 | 2 |
 | W7 | `kv` 去缝 + `app/{store,store-read,versions,migration}`（数据迁移，单独提交） | 1 |
 | W8 | `app/{runtime,delivery,assessment,resources,tools/*,views/*}`、`executor/*`、`sessions` | 2~3 |
-| W9 | 切换包入口：删旧树、`index.ts` 接新树、全量回归 | 1 |
-| W10 | webhook「只发不收」纵向切片 + 面板词条 + 文档收口 | 1 |
+| W9 | 完成：入口切新树、删旧树 39 文件与 22 个旧测试、提示词换正式版、UI 行表草稿式编辑 | 5eaabed3 + 0f29215f |
+| W10 | 完成：`superagent-webhook` 切片 6/6、契约子路径导出与门禁放行、文档收口 | 5eaabed3 |
 
 **不移植**（本仓已有等价能力，或 DSC 不该有）：`infra/paths.ts`（本仓 `paths.ts` 由构建脚本注入包根）、`navigation.ts`（DSC 会话导航）、`app/http.ts`、`app/api.ts`（DSC 走 `INVOKABLE_METHODS` + 快照面）、`app/context.ts` 的 HTTP 部分。
 
@@ -191,10 +191,10 @@
 | W2 | 完成 | `e77e43b7` | `infra/{text,health,commands,environment}`、`deployment`、`setup`、`app/execution-environment`；`deployment`/`environment` 原生 |
 | W3 | 完成 | `e77e43b7` | 迁到镜像布局；`kv.ts` 落地，缝已在 W7 全部消除 |
 | W4 | 完成 | `e77e43b7` | GitHub 5 文件、飞书 6 文件；`github.ts`/`feishu.ts` 的 cordis `apply` 改为 `startGithub`/`startFeishu(host, signal)`，W9 接线 |
-| W5 | 工作树 | 待提交 | `app/{effects,outbox,passes,retry-health,cache,cards,links,notices,source-context}` 9 文件逐字 |
-| W6 | 工作树 | 待提交 | `app/{prompts,context,skill-files,settings-history,setup,role-models,settings}`；`prompts/` 12+3 个 md 与 `skills/` 2 个 SKILL.md 逐字（`shared.md`/`worker.md` 留 W9 换） |
-| W7 | 工作树 | 待提交 | `app/{store,store-read,versions,migration}` 逐字；`kv.ts` 四类键接真类型 |
-| W8 | 进行中 | — | `executor/{dsh,background}`、`app/{sessions,delivery,tools/*,resources,assessment}`、`app/views/*`、`app/runtime` |
+| W5 | 完成 | `5eaabed3` | `app/{effects,outbox,passes,retry-health,cache,cards,links,notices,source-context}` 9 文件逐字 |
+| W6 | 完成 | `5eaabed3` | `app/{prompts,context,skill-files,settings-history,setup,role-models,settings}`；`prompts/` 12+3 个 md 与 `skills/` 2 个 SKILL.md 逐字（`shared.md`/`worker.md` 留 W9 换） |
+| W7 | 完成 | `5eaabed3` | `app/{store,store-read,versions,migration}` 逐字；`kv.ts` 四类键接真类型 |
+| W8 | 完成 | `5eaabed3` | `executor/{dsh,background}`、`app/{sessions,delivery,tools/*,resources,assessment}`、`app/views/*`、`app/runtime` |
 
 **逐字审计（r1，2026-11-16）**：38 个 A 类路径里 26 个归一后 0 差异、9 个只差「上游首行注释」——已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块、`skill-files.ts` 的包根解析）；`as unknown as` 4 处全是上游原文继承（`migration.ts:356/383`、`effects.ts:81/122`）。`@deepseek-ai/*` import 0 处、残留 `.ts` import 0 处。
 
@@ -202,3 +202,21 @@
 1. `app/tools/executor.ts` 不是逐字：为了让工具进本仓 `ctx.tools`，文件里多了 `entryOf` 映射（`Tool[]`→`ToolEntry[]`）。W9 时把这段映射挪到注册点，文件回归逐字。
 2. `shared.md`/`worker.md` 仍是本仓两卷中文版，W9 换上游英文版，`app/context.ts` 的 `sharedPrompt`/`workerPrompt` 随之对齐。
 3. `app/runtime.ts` 不含上游 HTTP 段（`app/http.ts` 不移植），面板能力由 W9 入口按 `INVOKABLE_METHODS` 提供。
+
+---
+
+## 8 最终验收（2026-11-16）
+
+```
+npx tsc -p tsconfig.json --noEmit   → 0
+pnpm run build                      → 0（408 桩 + 80 功能包）
+pnpm run build:ui                   → 0（22 份 bundle）
+node scripts/style-check.mjs        → 0（1,484 个文件）
+pnpm run check:ui                   → 0（79/79）
+pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL）
+node src/packages/superagent-webhook/tests/webhook.test.mjs → 0（通过 6）
+```
+
+提交：`e77e43b7`（W1–W4）、`5ddf7524`（W5–W8）、`fe1473c3`（W1–W2 测试迁移）、`1bf3f53e`（设置字段 rows/fact）、`5eaabed3`（W9/W10：删旧树、入口切换、测试移植、webhook 切片、门禁放行）、`0f29215f`（行表草稿式编辑）、本文档与设计文档 §18。
+
+剩余差异与不移植清单见 [superagent-design.md §18](superagent-design.md)。

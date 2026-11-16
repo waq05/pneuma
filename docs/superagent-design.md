@@ -1524,3 +1524,79 @@ pnpm run check:plugin     → exit 0（91 个包 / 127 个用例 / 通过 127 / 
 代码量：23 个受跟踪文件 +2378 / −205，新增 `main-tools.ts`（1243 行）、`prompts/shared.md`（34 行）与 6 个测试文件（2016 行）。
 
 新增测试：`main-tools`（20 组）、`worker-tools`（14 组）、`answer`（6 组）、`pull-claim`（6 组）、`prompts`（7 组）、`eval-settings`（11 组）。
+
+---
+
+## 18 逐文件移植完成（2026-11-16，W1–W10）
+
+第 16、17 章写的是「差异清单与对齐计划」阶段的实现，里面的 `adapters/executor.ts`、`runtime.ts`、`surface.ts` 等路径**已随移植删除**。本章是最终状态：包内代码按上游 `src/` 镜像布局重排，旧的 DSC 实现整棵删掉，只保留上游没有的三处宿主接线。
+
+### 18.1 最终代码地图
+
+```
+src/packages/superagent/
+  index.ts              # 插件入口（上游 26 行 apply 结构 + DSC 宿主接线）
+  core/                 # 上游 src/core/ 15 文件 + admission/limits/policy
+  sources/              # kind/host/registry/poll/admission-context/github*/feishu*
+  app/                  # runtime/store/migration/prompts/settings/sessions/
+                        # effects/outbox/passes/delivery/assessment/resources/
+                        # api.ts（DSC 面板服务层，上游无）/ tools/ views/
+  executor/             # dsh.ts、background.ts（原生重写）
+  infra/                # text/health/commands/environment
+  host/                 # DSC 专有：settings-section、command(/sa)、health(doctor)
+  deployment.ts kv.ts setup.ts paths.ts
+  prompts/              # 上游 12 个 md + team/3 个（逐字）
+  skills/               # 上游 dsh-superagent-{github,feishu}/SKILL.md（逐字）
+  locale/ tests/ cordis.patch.yml package.json
+```
+
+对照上游 `src/` 的 77 个非 core `.ts`（10,093 行）：本仓镜像树 85 个 `.ts`（13,896 行）。多出来的约 3,800 行是三类：DSC 宿主专有（`host/` 1,078 + `app/api.ts` 421 + `index.ts` 165）、原生重写替 DSH 服务写的等价实现（`sessions` 680→352 上游等）、以及逐文件的中文来源头。
+
+### 18.2 两类移植的审计结论
+
+- **逐字类（47 文件）**：38 条 A 类路径经脚本归一（去中文头、`.js`→`.ts`、`policy→core/policy`）后逐行比对——26 个文件 0 差异；9 个只差「上游首行英文注释」，已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块来自不移植的 `app/api.ts`；`skill-files.ts` 用包根解析替代上游 `packagePath`）。`@deepseek-ai/*` import 0 处，残留 `.ts` import 0 处。`as unknown as` 4 处全是上游原文继承（`app/migration.ts`、`app/effects.ts`）。
+- **原生类（22 文件）**：语义审计按「导出名/函数划分/判定顺序/错误文案/KV 键/会话 id/阈值」逐项比对，A 档（宿主 API 等价替换）106 处全部在文件头声明；B 档（行为偏差）9 条，其中 3 条已修：worker 最后发言提取改为上游的「最后一条 assistant 消息 + `join('\n')` + trim」（`app/sessions.ts`）、队友收尾判据从 `working` 放宽到非终态（`executor/background.ts`）、`ensure` 复用分支不再早退（补权限/标题/角色模型）。C 档（缺能力）7 条，按 DSC 是否需要逐条记为已知差异。
+
+### 18.3 仍然存在的差异（原则：能对齐的都对齐了，剩下的写清影响）
+
+| 差异 | 影响 | 为什么不追平 |
+| --- | --- | --- |
+| `app/api.ts` 的 `acceptCandidate`/`ignoreCandidate` 抛错，快照无 `candidates` 格 | 面板上「推断候选先等确认」不可达；候选结论直接进主会话 | 新树把候选做成工具调用（`orchestrator_eval/route`），没有收件箱模型 |
+| `app/sessions.ts` 无 `retryHealth.restore` | 重启后模型预算重试状态从零 | 本仓无「会话事件序号快照」，恢复点不存在 |
+| `app/sessions.ts` 无 `limitSubagent` | worker 派出的队友不继承 WORK_TOOLS 白名单与「工单结束拒动」闸 | 需要 subagent 插件加白名单能力，属另一扩展点 |
+| `app/delivery.ts` 认领按正文而非消息 id | 两条同文 pending 会互认；跨重启后编辑过的排队消息重投会重复入箱一次 | 本仓 `Session` 收件箱没有消息 id，正文是唯一稳定锚点（文件头已声明） |
+| `host/settings-section.ts` 无 `paused` 开关与 `executor.directory` | 面板不能暂停处理、不能改工单目录根 | 新树 `app/settings.ts` 有 pause 块，但契约没对外开放入口 |
+| `host/health.ts` 少「锁被别的进程占」「running 工单没有 worker」两条判据 | doctor 不再直接点出这两类故障 | 新执行器构造时就抢锁（拿不到直接抛），孤儿判据依赖旧运行期名册 |
+| `app/resources.ts` 的 models 资源 `failures` 恒空、字段形状换成本仓 catalog | 模型清单少 failures | 本仓 `listModels()` 没有失败概念 |
+| `sources/feishu-image.ts` 缺「模型不支持图片」前置拒绝 | 改为下载后由投影链剥图，用户看到的是替换说明 | `SourceAgent` 只有宿主类型，本层拿不到模型路由 |
+| `sources/github.ts`/`feishu.ts` 的 disposer 不同步等循环结束 | 停用瞬间注册表仍列该 kind | 本仓 cordis disposer 签名要求同步 |
+| `executor/background.ts` 用轮询替代作业事件、`stopping` 状态不存在 | 后台作业收尾最坏多等一个轮询周期 | 本仓 `JobsService` 只有 `running/completed/failed/killed` |
+| HTTP 服务（`app/http.ts`）、面板 API（`app/api.ts` 上游版）、会话跳转（`navigation.ts`） | 不移植 | DSC 面板走 `INVOKABLE_METHODS` + 快照面，会话导航由 `ui-sessions` 提供 |
+
+### 18.4 测试移植
+
+上游 48 份 vitest 规格（11,746 行）→ 本仓 30 份转写成 `node:test`（同一断言语义、真假件按本仓 API 重写），其余 18 份不移植：client 侧 5 份（`draft`/`marks`/`markdown`/`prompt-config`/`locales`，本仓界面是原生重写）、DSH 运行时集成 7 份（`runtime`/`runtime-concurrency`/`http`/`navigation`/`model-surface`/`index`/`service-script`）、文档与打包检查 5 份（本仓自带 `style-check`/`check-plugin`/`check:ui`/`check-docs` 等价闸门）、`bundle-patch` 1 份。
+
+当前：**92 个包 / 139 个用例 / 1696 条断言 / 0 失败**。
+
+### 18.5 验收证据
+
+```
+npx tsc -p tsconfig.json --noEmit   → 0（14 s）
+pnpm run build                      → 0（408 桩 + 80 功能包，23 s）
+pnpm run build:ui                   → 0（22 份 bundle，372 份类型，46 s）
+node scripts/style-check.mjs        → 0（1,484 个文件）
+pnpm run check:ui                   → 0（79/79，77 s）
+pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL，166 s）
+```
+
+### 18.6 「加第三种来源」验收切片
+
+新包 `src/packages/superagent-webhook/`（只发不收的 webhook 来源，默认 `disabled`）只写了一个 `SourceKind` 插件，**主包业务代码一行没改**，四件事自动接通，6 条用例全过：
+
+1. **设置页自动多一块**：`webhookKind.fields` 里的 `rows`（`targets` 表：name/address）与 `fact`（`delivery`）经 `host/settings-section.ts` 原样投影成新契约字段，四个界面（终端、通用设置页、Super Agent 设置页、插件中心）都能画；
+2. **准入表自动多一行**：`policy.rows(config)` 生效，`policyPart('webhook')` 返回 `allowed` 与准入行；
+3. **出站发送自动接上**：`SourceRegistry.send` 按 `message.channel.source` 路由到该 kind 的 `channel.send`（本地 http 服务实测收到消息体与 `x-webhook-secret` 头）；
+4. **体检自动多一项**：注册表替它领 `health: ['webhook']` 格子，`report` 状态变化可见。
+
+为此给主包 `package.json` 开了 `./sources/*.js` 子路径导出（第三方插件只 import 契约类型），插件标准检查只放行这一种形状，依赖图对纯类型 import 免 feature→feature 判定。
