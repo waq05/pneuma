@@ -43,8 +43,10 @@ type Handler = (params: Record<string, unknown>) => unknown
 
 /** 记账用的假 session：没配的方法回空对象。 */
 class FakeTarget implements CdpCommandTarget {
+  readonly sessionId = 'test-session'
   calls: Array<{ method: string; params: Record<string, unknown> }> = []
   handlers = new Map<string, Handler>()
+  private readonly listeners = new Map<string, Set<Handler>>()
   constructor(overrides: Record<string, Handler> = {}) {
     this.handlers = new Map(Object.entries({ ...DEFAULTS, ...overrides }))
   }
@@ -63,6 +65,17 @@ class FakeTarget implements CdpCommandTarget {
   }
   sent(method: string): Array<Record<string, unknown>> {
     return this.calls.filter((call) => call.method === method).map((call) => call.params)
+  }
+  on(method: string, handler: Handler): () => void {
+    let set = this.listeners.get(method)
+    if (set === undefined) {
+      set = new Set()
+      this.listeners.set(method, set)
+    }
+    set.add(handler)
+    return () => {
+      set!.delete(handler)
+    }
   }
 }
 
@@ -169,7 +182,7 @@ describe('点击与悬停', () => {
     const disabled = (): { nodes: AxNode[] } => ({
       nodes: [
         {
-          backendNodeId: 42,
+          backendDOMNodeId: 42,
           role: { value: 'button' },
           name: { value: '删除' },
           properties: [{ name: 'disabled', value: { value: true } }],

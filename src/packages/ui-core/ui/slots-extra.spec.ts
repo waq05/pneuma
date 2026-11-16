@@ -29,13 +29,15 @@ import {
   SlotKindConflictError,
   SlotRegistry,
   UndeclaredSlotError,
+  type FactoryMapLike,
   type SlotElectResult,
   type SlotEntry,
   type SlotFault,
+  type SlotMapLike,
 } from '../slots.js'
 import { createScopedSlotApi } from '../scoped-slots.js'
 import { defineStore } from '../store.js'
-import { defineUiPlugin } from '../plugin.js'
+import { defineUiPlugin, type UiSlotApi } from '../plugin.js'
 
 /** 用擦除签名注册（开放表 SlotMapLike 本来就不做类型检查，链式 select 的窄签名在这里无意义）。 */
 function register(
@@ -59,6 +61,47 @@ function elect(registry: SlotRegistry, slot: string, owner: unknown): SlotElectR
     owner: unknown,
   ) => SlotElectResult<unknown> | null
   return erased(slot, owner)
+}
+
+/** 用擦除签名登记 Factory（原因同上：这里只钉账本，组件本身是什么无所谓）。 */
+function registerFactory(
+  registry: SlotRegistry,
+  options: Record<string, unknown>,
+  component: unknown,
+): () => void {
+  const erased = registry.registerFactory.bind(registry) as (
+    options: Record<string, unknown>,
+    component: unknown,
+  ) => () => void
+  return erased(options, component)
+}
+
+/** 用擦除签名经记账外壳登记组件（外壳签名与注册表同形，原因同上）。 */
+function scopedRegister(
+  api: UiSlotApi<unknown, SlotMapLike, FactoryMapLike>,
+  slot: string,
+  options: Record<string, unknown>,
+  component: unknown,
+): () => void {
+  const erased = api.register.bind(api) as (
+    slot: string,
+    options: Record<string, unknown>,
+    component: unknown,
+  ) => () => void
+  return erased(slot, options, component)
+}
+
+/** 用擦除签名经记账外壳登记 Factory（原因同上）。 */
+function scopedRegisterFactory(
+  api: UiSlotApi<unknown, SlotMapLike, FactoryMapLike>,
+  options: Record<string, unknown>,
+  component: unknown,
+): () => void {
+  const erased = api.registerFactory.bind(api) as (
+    options: Record<string, unknown>,
+    component: unknown,
+  ) => () => void
+  return erased(options, component)
 }
 
 /** 捕获同步抛出的错误；没抛返回 null。 */
@@ -369,7 +412,8 @@ describe('Factory 与席位', () => {
     const offSubscribe = registry.subscribeFactory('card', () => {
       notified += 1
     })
-    const off = registry.registerFactory(
+    const off = registerFactory(
+      registry,
       {
         name: 'card',
         children: { 'card.body': 'single' },
@@ -387,7 +431,7 @@ describe('Factory 与席位', () => {
     expect(Object.isFrozen(definition?.slots)).toBe(true)
     expect(registry.spec('card.body')).toBe('single')
 
-    expect(thrown(() => registry.registerFactory({ name: 'card' }, 'again'))).toBeInstanceOf(
+    expect(thrown(() => registerFactory(registry, { name: 'card' }, 'again'))).toBeInstanceOf(
       SlotAssemblyError,
     )
     expect(registry.factory('card')).toBe(definition)
@@ -409,7 +453,7 @@ describe('Factory 与席位', () => {
 
   test('Factory 故障进同一本账但不摘共享定义', () => {
     const registry = new SlotRegistry()
-    const off = registry.registerFactory({ name: 'card' }, 'definition')
+    const off = registerFactory(registry, { name: 'card' }, 'definition')
     const definition = registry.factory('card')
     registry.reportFactoryFault('card', 'head', new Error('局部组件坏了'))
     expect(registry.faults.at(-1)).toMatchObject({
@@ -477,7 +521,7 @@ describe('插件面：createScopedSlotApi 的记账外壳', () => {
     expect(api.spec('shell.main')).toBe('list')
     expect(api.spec('shell.nope')).toBeUndefined()
 
-    const offRegister = api.register('shell.main', { id: 'panel' }, 'panel')
+    const offRegister = scopedRegister(api, 'shell.main', { id: 'panel' }, 'panel')
     expect(wrappers).toHaveLength(1)
     expect(offRegister).toBe(wrappers[0])
     expect(api.entriesOf('shell.main').map((entry) => entry.id)).toEqual(['panel'])
@@ -526,10 +570,11 @@ describe('插件面：createScopedSlotApi 的记账外壳', () => {
       },
     })
 
-    const offRegister = api.register('shell.main', { id: 'seat', store: handle }, 'seat')
+    const offRegister = scopedRegister(api, 'shell.main', { id: 'seat', store: handle }, 'seat')
     expect(api.seat(handle)).toBeDefined()
 
-    const offFactory = api.registerFactory(
+    const offFactory = scopedRegisterFactory(
+      api,
       { name: 'card', children: { 'card.body': 'single' } },
       'definition',
     )

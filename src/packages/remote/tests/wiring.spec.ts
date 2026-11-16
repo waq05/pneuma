@@ -906,7 +906,7 @@ function mountPlugin(options: { prefs?: Partial<RemotePrefs>; snapshot?: Runtime
 }
 
 function fieldText(section: SettingsSectionSpec, labelPart: string): string {
-  const field = section.fields().find((item) => item.label.includes(labelPart))
+  const field = section.fields().find((item) => item.label?.includes(labelPart) === true)
   return typeof field === 'object' && field !== null && 'text' in field ? String(field.text) : ''
 }
 

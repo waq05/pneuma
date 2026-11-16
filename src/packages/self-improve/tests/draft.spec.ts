@@ -89,7 +89,7 @@ describe('shouldCurate / autoCurateOnce', () => {
       lastRunAt: 0,
       curate: () => {
         calls.push('curate')
-        return { stale: [], archived: [] }
+        return { stale: [], archived: [], skipped: [], total: 0 }
       },
       saveLastRunAt: () => calls.push('save'),
       announce: () => calls.push('announce'),
@@ -110,7 +110,7 @@ describe('shouldCurate / autoCurateOnce', () => {
       lastRunAt: 0,
       curate: () => {
         calls.push('curate')
-        return { stale: [], archived: [] }
+        return { stale: [], archived: [], skipped: [], total: 0 }
       },
       saveLastRunAt: () => calls.push('save'),
       announce: () => calls.push('announce'),
@@ -126,7 +126,7 @@ describe('shouldCurate / autoCurateOnce', () => {
       enabled: true,
       now: 10_000_000,
       lastRunAt: 0,
-      curate: () => ({ stale: ['a'], archived: ['b', 'c'] }),
+      curate: () => ({ stale: ['a'], archived: ['b', 'c'], skipped: [], total: 0 }),
       saveLastRunAt: () => calls.push('save'),
       announce: (text) => calls.push(text),
       changed: () => calls.push('changed'),

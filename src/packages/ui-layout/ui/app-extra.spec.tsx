@@ -76,7 +76,11 @@ function makeChannel(
 ): ChannelHarness {
   const listeners = new Set<() => void>()
   const calls: Array<{ method: string; args: unknown[] | undefined }> = []
-  const state = { reconnects: 0, status: typeof options.status === 'function' ? options.status : () => options.status ?? 'open' }
+  // 先收成 const 再判型：闭包里读 `options.status` 不会被外层 typeof 收窄。
+  const statusOption = options.status
+  const statusFn: () => ChannelStatus =
+    typeof statusOption === 'function' ? statusOption : () => statusOption ?? 'open'
+  const state = { reconnects: 0, status: statusFn }
   const snap = options.snapshot ?? {}
   const status: Record<string, unknown> = { cwd: snap.cwd ?? 'D:/demo', turnState: 'idle' }
   if (snap.sessionPath !== undefined) status['sessionPath'] = snap.sessionPath
@@ -275,7 +279,7 @@ beforeEach(() => {
     },
   )
   capturedPointers.clear()
-  const proto = Element.prototype as Element & {
+  const proto = Element.prototype as unknown as {
     setPointerCapture?: (id: number) => void
     hasPointerCapture?: (id: number) => boolean
     releasePointerCapture?: (id: number) => void
@@ -293,7 +297,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.unstubAllGlobals()
-  const proto = Element.prototype as Element & {
+  const proto = Element.prototype as unknown as {
     setPointerCapture?: unknown
     hasPointerCapture?: unknown
     releasePointerCapture?: unknown

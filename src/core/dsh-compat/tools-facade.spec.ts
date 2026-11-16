@@ -151,7 +151,7 @@ describe('run：渲染、schema、内容钩子、卡片', () => {
         execute: async () => {
           throw new Error('原始错误')
         },
-        finalizeContent: (_exec, result) => {
+        finalizeContent: (_exec: unknown, result: unknown) => {
           const view = result as { isError?: boolean }
           return view.isError === true ? [{ type: 'text', text: '截断后的错误' }] : undefined
         },
@@ -164,8 +164,8 @@ describe('run：渲染、schema、内容钩子、卡片', () => {
   test('presentCall / presentResult / presentationMeta 合成卡片', async () => {
     const entry = dshToolToEntry(
       definition({
-        presentCall: (args) => ({ card: 'generic', title: String((args as { path?: string }).path) }),
-        presentResult: (_args, result) => ({ card: 'generic', text: String((result as { text?: string }).text) }),
+        presentCall: (args: unknown) => ({ card: 'generic', title: String((args as { path?: string }).path) }),
+        presentResult: (_args: unknown, result: unknown) => ({ card: 'generic', text: String((result as { text?: string }).text) }),
         output: { presentationMeta: () => ({ kind: 'demo' }) },
       }),
       {},

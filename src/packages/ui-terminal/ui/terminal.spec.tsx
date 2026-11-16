@@ -65,7 +65,7 @@ vi.mock('@xterm/addon-fit', () => ({
 }))
 
 /** 终端页签经 registerDockTab 报名；照壳装载那条路收下组件。 */
-const offPlugin = plugin.apply({} as UiPluginApi)
+const offPlugin = plugin.apply({} as UiPluginApi) as () => void
 const TerminalTab = dockTabMeta('terminal')?.component as unknown as ComponentType<DockTabBodyProps>
 
 afterAll(() => {

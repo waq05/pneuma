@@ -107,7 +107,7 @@ function runSettings(options: {
     defaultModel: '',
     temperature: undefined,
     language: 'zh',
-  }) as Harness['config']
+  }) as unknown as Harness['config']
   const systems: string[] = []
   let service: SettingsService | undefined
   let touches = 0

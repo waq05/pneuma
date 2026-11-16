@@ -35,7 +35,7 @@ import type { ReactNode } from 'react'
 
 /** 照壳装载插件那条路：apply 把 files / git 两种页签登记进报名表。 */
 const fakeUi = {} as UiPluginApi
-const offPlugin = plugin.apply(fakeUi)
+const offPlugin = plugin.apply(fakeUi) as () => void
 const FilesTab = dockTabMeta('files')?.component as unknown as ComponentType
 const GitTab = dockTabMeta('git')?.component as unknown as ComponentType
 /** 预览页签：点文件/点改动行要它才会真开页签（壳里由预览插件报名）。 */

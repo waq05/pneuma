@@ -156,7 +156,7 @@ const flush = (): Promise<void> =>
   })
 
 const tabs = (): HTMLElement => document.querySelector('.topbar .tabs') as HTMLElement
-const textOf = (element: Element | null): string => element?.textContent ?? ''
+const textOf = (element: Element | null | undefined): string => element?.textContent ?? ''
 const miniText = (): string => textOf(tabs().querySelector('.sp-mini'))
 const section = (id: string): HTMLElement | null => tabs().querySelector(`[data-sp-section="${id}"]`)
 const expandSection = (id: string): void => {

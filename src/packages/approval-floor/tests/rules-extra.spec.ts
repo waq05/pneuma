@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PrefixRule } from '@pneuma/runtime/core/command-policy.js'
 import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
+import type { SettingsSectionSpec, SettingsValue, SettingsValues } from '@pneuma/runtime/services/types.js'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-floor-extra-'))
@@ -359,13 +360,22 @@ test('坏配置一律拒且不计入熔断，问题原文进理由，用户能�
 
 // ── 装配面：index.ts ────────────────────────────────────────────────────────
 
+/**
+ * 本文件的装配实现是同步的（`index.ts` 的 `values`、`save` 都直接返回值），而契约声明的
+ * 是 `MaybePromise`、`save` 还是可选的。这里按实现收窄一次。
+ */
+type SyncSection = Omit<SettingsSectionSpec, 'values' | 'save'> & {
+  values(): SettingsValues
+  save(key: string, value: SettingsValue): string | void
+}
+
 interface Mounted {
   state: {
     guard?: ToolGuard
     services: Record<string, { whitelist(command: string): readonly string[] | null; count(): number }>
     command?: { name: string; args?: string; description?: string }
     commandHandler?: (args: { ui: { notice(text: string): void } }) => Promise<void> | void
-    section?: import('@pneuma/runtime/services/types.js').SettingsSectionSpec
+    section?: SyncSection
     handlers: Map<string, () => void>
     emitted: Array<[string, unknown]>
     offCalls: number

@@ -29,8 +29,8 @@ import {
   type SlotEntry,
   type TeammateView,
   type TranscriptEntry,
-  type UiPluginApi,
 } from '@dsc/ui-core'
+import type { UiPluginApi } from '@dsc/ui'
 import { dockTabMeta } from '@dsc/ui-dockkit'
 import teamPlugin from './ui.js'
 
@@ -262,7 +262,7 @@ describe('TeamEntry 的轮询与名册席位', () => {
       channel.calls.filter((call) => call.method === 'listTeammates').length
     expect(listCalls()).toBe(1)
     expect(channel.calls[0]?.args).toEqual([])
-    const instance = loaded.registry.seat(loaded.entry.store)
+    const instance = loaded.registry.seat(loaded.entry.store!)
     expect(instance?.getSnapshot()).toEqual({ list: roster })
 
     roster = [mate({ name: 'reviewer-2' })]
@@ -292,7 +292,7 @@ describe('TeamEntry 的轮询与名册席位', () => {
     await openReader(loaded, mate({ state: 'working' }))
     expect(document.querySelector('.team-reader .sub-tab-state')?.textContent).toBe('运行中')
 
-    const instance = loaded.registry.seat(loaded.entry.store)
+    const instance = loaded.registry.seat(loaded.entry.store!)
     act(() => {
       instance?.actions.setList([mate({ state: 'idle', finishedAt: Date.now() })])
     })
@@ -552,7 +552,7 @@ describe('SubagentTab 的匹配兜底', () => {
 
   test('给 label 时标题优先用 label（即使名册里有 name）', async () => {
     const loaded = loadTeam()
-    const instance = loaded.registry.seat(loaded.entry.store)
+    const instance = loaded.registry.seat(loaded.entry.store!)
     act(() => {
       instance?.actions.setList([mate({ state: 'idle' })])
     })
@@ -570,7 +570,7 @@ describe('SubagentTab 的匹配兜底', () => {
 
   test('label 能命中名册（路径不同）；未知状态原样显示；startedAt=0 不画耗时', async () => {
     const loaded = loadTeam()
-    const instance = loaded.registry.seat(loaded.entry.store)
+    const instance = loaded.registry.seat(loaded.entry.store!)
     act(() => {
       instance?.actions.setList([
         mate({ name: 'alias-name', state: 'paused' as unknown as TeammateView['state'], startedAt: 0 }),

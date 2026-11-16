@@ -10,11 +10,22 @@ import { describe, expect, test } from 'vitest'
 import type { PathCheck } from '../policy.js'
 import { BUILTIN_EXEC_RULES, evaluateCommand } from '../execpolicy.js'
 
+/**
+ * 测试桩的规则名故意用 `inside-root`：下面的断言要验 `write-target:inside-root`
+ * 这个拼接结果原样带出，而 `PathCheck['rule']` 的联合里没有它，只能窄化一次。
+ */
+const INSIDE_ROOT_RULE = 'inside-root' as unknown as PathCheck['rule']
+
+/** 假 checkWrite：模拟「写在可写根内/外」。 */
+function insideRoot(allowed: boolean, reason: string): PathCheck {
+  return { allowed, rule: INSIDE_ROOT_RULE, reason, resolved: 'C:\\writable' }
+}
+
 /** 默认：写目标都在可写根内、网络关。 */
 function options(overrides: Partial<{ networkAccess: boolean; checkWrite: (raw: string) => PathCheck }> = {}) {
   return {
     networkAccess: false,
-    checkWrite: (): PathCheck => ({ allowed: true, rule: 'inside-root', reason: '在可写根内' }),
+    checkWrite: (): PathCheck => insideRoot(true, '在可写根内'),
     win32: true,
     ...overrides,
   }
@@ -83,8 +94,8 @@ describe('写目标', () => {
       options({
         checkWrite: (raw) =>
           raw.endsWith('out.txt')
-            ? { allowed: false, rule: 'inside-root', reason: '不在可写根里' }
-            : { allowed: true, rule: 'inside-root', reason: 'ok' },
+            ? insideRoot(false, '不在可写根里')
+            : insideRoot(true, 'ok'),
       }),
     )
     expect(verdict.decision).toBe('forbidden')

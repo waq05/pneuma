@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
-import type { SettingsSectionSpec, SessionSearchService } from '@pneuma/runtime/services/types.js'
+import type { SettingsSectionSpec, SettingsValue, SettingsValues, SessionSearchService } from '@pneuma/runtime/services/types.js'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-session-index-extra-'))
@@ -388,11 +388,21 @@ test('命中片段压平空白；长行以第一个命中词为中心截断并�
 
 // ── 装配面：index.ts ────────────────────────────────────────────────────────
 
+/**
+ * 本文件的装配实现是同步的（`index.ts` 的 `values`、`save`、`action` 都直接返回值），而契约
+ * 声明的是 `MaybePromise`、`save` / `action` 还是可选的。这里按实现收窄一次。
+ */
+type SyncSection = Omit<SettingsSectionSpec, 'values' | 'save' | 'action'> & {
+  values(): SettingsValues
+  save(key: string, value: SettingsValue): string | void
+  action(name: string): string | void
+}
+
 interface SearchState {
   tool?: ToolEntry
   command?: { name: string; args?: string; description?: string }
   commandHandler?: (args: { args: string[]; ui: { notice(text: string): void } }) => void
-  section?: SettingsSectionSpec
+  section?: SyncSection
   services: Record<string, SessionSearchService>
   system: string[]
   offCalls: number
@@ -427,7 +437,7 @@ function mountSearch(): { state: SearchState; dispose: () => void } {
       },
     },
     settings: {
-      registerSection: (spec: SettingsSectionSpec) => {
+      registerSection: (spec: SyncSection) => {
         state.section = spec
         return off
       },

@@ -169,7 +169,19 @@ describe('normalizeImage：先拦两种情况', () => {
 
 describe('composeSubmit：两列拆包与 20 张预算', () => {
   function draft(overrides: Partial<DraftAttachment>): DraftAttachment {
-    return { id: newAttachmentId(), kind: 'file', meta: meta(), frames: [], ...overrides }
+    return {
+      id: newAttachmentId(),
+      kind: 'file',
+      name: 'f.txt',
+      mime: 'text/plain',
+      bytes: 1,
+      meta: meta(),
+      previewUrl: '/api/attachments/sha-1',
+      frames: [],
+      uploading: null,
+      error: null,
+      ...overrides,
+    }
   }
 
   test('图片进 images、视频与文件进 files，视频帧挂在它自己那条上', () => {

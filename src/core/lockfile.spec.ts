@@ -33,7 +33,10 @@ describe('tryOsLock', () => {
       expect(first.why).not.toBe('')
       return
     }
-    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') {
+      expect(first.kind).toBe('ok')
+      return
+    }
     const second = tryOsLock(name)
     expect(second.kind).toBe('busy')
     first.lock.release()

@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import type { DscRuntime, SuperagentPublishInput } from '@pneuma/runtime/contract.js'
 
 const HOME = mkdtempSync(join(tmpdir(), 'dsc-runtime-wiring-'))
 process.env['DSC_HOME'] = HOME
@@ -78,8 +79,19 @@ afterAll(() => {
   }
 })
 
+/**
+ * 假 ctx 装出来的 ui 服务：契约面 + 实现层多出的 `quiet` 开关。
+ *
+ * `setEffort` 的第二参数只有实现层有（`packages/runtime/index.ts` 的 `quiet = false`，
+ * 契约只写 `effort`）；测试要钉「quiet 不写回执」，所以在这里把它点明，
+ * 而不是把整条调用降成 `never`。
+ */
+type UiService = DscRuntime & {
+  setEffort(effort: Parameters<DscRuntime['setEffort']>[0], quiet?: boolean): Promise<void>
+}
+
 interface Harness {
-  service: Record<string, (...args: never[]) => unknown> & Record<string, unknown>
+  service: UiService
   events: Array<{ event: string; args: unknown[] }>
   optional: Map<string, unknown>
   transcript: Record<string, ReturnType<typeof vi.fn>>
@@ -253,7 +265,8 @@ function fakeCtx(): Harness {
     },
   }
 
-  runtimePlugin.apply?.(ctx as never)
+  // 契约声明的是 apply(ctx, config)；装配时 config 由 cordis 补，这里按单参签名调用。
+  ;(runtimePlugin.apply as ((ctx: unknown) => void) | undefined)?.(ctx)
   return {
     service: provided as Harness['service'],
     events,
@@ -403,7 +416,10 @@ describe('可选服务：队友、后台作业、Super Agent', () => {
     await expect(h.service.peekTranscript('C:/t.jsonl')).rejects.toThrow('子智能体插件没开')
     await expect(h.service.stopBackground('job-1')).rejects.toThrow('后台作业表不在')
     await expect(h.service.readBackground('job-1')).rejects.toThrow('后台作业表不在')
-    await expect(h.service.superagentPublish({})).rejects.toThrow('Super Agent 插件没开')
+    // 没开插件时 runtime 先拒绝、不看入参形状，所以这里故意给不完整的入参。
+    await expect(h.service.superagentPublish({} as unknown as SuperagentPublishInput)).rejects.toThrow(
+      'Super Agent 插件没开',
+    )
     await expect(h.service.superagentStopTicket('t')).rejects.toThrow('Super Agent 插件没开')
     await expect(h.service.superagentRetryTicket('t')).rejects.toThrow('Super Agent 插件没开')
     await expect(h.service.superagentCleanWorktree('t')).rejects.toThrow('Super Agent 插件没开')
@@ -441,7 +457,10 @@ describe('可选服务：队友、后台作业、Super Agent', () => {
       peekSession: vi.fn(async (id: string) => [{ text: id }]),
     }
     h.optional.set('superagent', superagent)
-    expect(await h.service.superagentPublish({ task: 'x' })).toContain('ticket:')
+    // runtime 把入参原样转给 superagent.publish（替身只做 JSON.stringify），故意给最小形状。
+    expect(await h.service.superagentPublish({ task: 'x' } as unknown as SuperagentPublishInput)).toContain(
+      'ticket:',
+    )
     expect(await h.service.superagentStopTicket('t1')).toBe('stop:t1')
     expect(await h.service.superagentStopTicket({ id: 't2' })).toBe('stop:t2')
     expect(await h.service.superagentRetryTicket({ id: 't3' })).toBe('retry:t3')

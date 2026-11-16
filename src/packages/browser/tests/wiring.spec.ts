@@ -442,7 +442,9 @@ const jsonOf = (value: any): Record<string, any> => {
   return JSON.parse(line) as Record<string, any>
 }
 
-const transportOf = (harness: Harness): any => harness.process().transport
+type FakeTransport = InstanceType<typeof h.FakeTransport>
+
+const transportOf = (harness: Harness): FakeTransport => harness.process().transport
 
 const guardInput = (args: Record<string, any>, toolName = 'browser'): Record<string, any> => ({
   toolName,

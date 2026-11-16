@@ -13,6 +13,7 @@
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import type { ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import { tempHome } from '../../../../tests/harness.js'
 
 const home = tempHome('dsc-hooks-engine-')
@@ -345,7 +346,8 @@ describe('规则匹配', () => {
 
   test('field 决定看哪一段；any 三段都看；空文本不算命中', () => {
     const rule: HookRule = { id: 'r', enabled: true, tool: '*', field: 'target', pattern: 'secret', action: 'deny', reason: '' }
-    const hit = { toolName: 'write', command: 'ls', target: '/x/secret.txt', args: {} }
+    // 这里只喂 hookFacts 真正读的四段；必填的 risk/cwd/signal 等由断言按形状补上。
+    const hit = { toolName: 'write', command: 'ls', target: '/x/secret.txt', args: {} } as ToolGuardInput
     expect(hooks.ruleHits(rule, hooks.hookFacts(hit))).toBe(true)
     expect(hooks.ruleHits({ ...rule, field: 'command' }, hooks.hookFacts(hit))).toBe(false)
     expect(hooks.ruleHits({ ...rule, field: 'args' }, hooks.hookFacts({ ...hit, args: { path: 'secret' } }))).toBe(true)
@@ -382,7 +384,7 @@ describe('规则匹配', () => {
     })
     expect(deny).toMatchObject({ action: 'block', message: expect.stringContaining('禁止'), ms: 0, problem: '' })
     expect(deny.source).toContain('/rm/')
-    const ask = hooks.ruleJudgement({ ...deny, action: 'ask', reason: '要问我' } as HookRule)
+    const ask = hooks.ruleJudgement({ ...deny, action: 'ask', reason: '要问我' } as unknown as HookRule)
     expect(ask).toMatchObject({ action: 'ask', message: '要问我' })
   })
 })

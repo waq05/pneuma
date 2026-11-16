@@ -108,10 +108,11 @@ function mount(options: {
   const approvals: Array<Record<string, unknown>> = []
   let refreshCount = 0
 
+  const sessionCwd = options.sessionCwd
   const session =
-    options.sessionCwd === undefined
+    sessionCwd === undefined
       ? { current: () => ({ meta: {} }) }
-      : { current: () => ({ meta: { id: 'sess-1', cwd: options.sessionCwd }, filePath: join(options.sessionCwd, '.git', 'sess.jsonl') }) }
+      : { current: () => ({ meta: { id: 'sess-1', cwd: sessionCwd }, filePath: join(sessionCwd, '.git', 'sess.jsonl') }) }
 
   const ctx = {
     get(name: string) {
@@ -512,7 +513,7 @@ describe('额外工作区根分区', () => {
   test('values 读配置；save 未知键/非文本/正常保存与丢弃提示', () => {
     const extra = tempDir('extra-root-')
     const harness = mount({ sessionCwd: SESSION })
-    const spec = harness.sections[0]!.spec as SettingsSectionSpec & {
+    const spec = harness.sections[0]!.spec as unknown as {
       values(): { workspaceRoots: string }
       save(key: string, value: unknown): string | void
     }

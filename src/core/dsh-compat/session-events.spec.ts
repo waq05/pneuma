@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from 'vitest'
 import type { CoreEvent } from '../events.js'
+import { emptySegments } from '../token-estimate.js'
 import { createDshSessionEventBridge, DSH_SESSION_EVENT, type DshSessionEvent } from './session-events.js'
 
 /** 假 ctx：记录 emit 的三元组。 */
@@ -44,7 +45,7 @@ describe('正常回合', () => {
     expect(emitted).toHaveLength(0) // 回合没开：先缓冲
 
     b.publish({ type: 'turn/start' } satisfies CoreEvent)
-    b.publish({ type: 'context' } satisfies CoreEvent)
+    b.publish({ type: 'context', segments: emptySegments() } satisfies CoreEvent)
     b.publish({
       type: 'message',
       text: 'hello',
@@ -74,7 +75,7 @@ describe('正常回合', () => {
   test('assistant/message 带正文、推理、工具调用、用量与路由来源', () => {
     const { bridge: b, emitted } = bridge({ provider: 'deepseek', model: 'deepseek-flash' })
     b.publish({ type: 'turn/start' } satisfies CoreEvent)
-    b.publish({ type: 'context' } satisfies CoreEvent)
+    b.publish({ type: 'context', segments: emptySegments() } satisfies CoreEvent)
     b.publish({
       type: 'message',
       text: '答案',
@@ -100,7 +101,7 @@ describe('正常回合', () => {
   test('surfaceOp 只挂在会改模型可见面的消息上，生命周期事件没有', () => {
     const { bridge: b, emitted } = bridge()
     b.publish({ type: 'turn/start' } satisfies CoreEvent)
-    b.publish({ type: 'context' } satisfies CoreEvent)
+    b.publish({ type: 'context', segments: emptySegments() } satisfies CoreEvent)
     b.publish({ type: 'message', text: 'x', reasoning: '' } satisfies CoreEvent)
     b.publish({ type: 'usage', inputTokens: 1, outputTokens: 1 } satisfies CoreEvent)
     b.publish({ type: 'tool/result', callId: 'c', text: 'r' } satisfies CoreEvent)
@@ -128,7 +129,7 @@ describe('收尾原因与错误', () => {
     const failed = bridge()
     failed.bridge.publish({ type: 'turn/start' } satisfies CoreEvent)
     failed.bridge.publish({ type: 'error', message: '连接被重置' } satisfies CoreEvent)
-    failed.bridge.publish({ type: 'turn/end', reason: 'failed' } satisfies CoreEvent)
+    failed.bridge.publish({ type: 'turn/end', reason: 'error' } satisfies CoreEvent)
     const failedEnd = failed.emitted.find((entry) => entry.event.type === 'turn/end')!.event
     expect(failedEnd.data['reason']).toMatchObject({ kind: 'error', error: { message: '连接被重置' } })
   })
@@ -136,7 +137,7 @@ describe('收尾原因与错误', () => {
   test('没有 error 事件时失败原因也有可读文案', () => {
     const { bridge: b, emitted } = bridge()
     b.publish({ type: 'turn/start' } satisfies CoreEvent)
-    b.publish({ type: 'turn/end', reason: 'failed' } satisfies CoreEvent)
+    b.publish({ type: 'turn/end', reason: 'error' } satisfies CoreEvent)
     const end = emitted.find((entry) => entry.event.type === 'turn/end')!.event
     expect((end.data['reason'] as { error: { message: string } }).error.message).toContain('这一轮失败了')
   })
@@ -152,10 +153,10 @@ describe('步骤边界与尾巴', () => {
   test('重试再来一条 context：助手消息已定稿就关旧步、开新步', () => {
     const { bridge: b, emitted } = bridge()
     b.publish({ type: 'turn/start' } satisfies CoreEvent)
-    b.publish({ type: 'context' } satisfies CoreEvent)
+    b.publish({ type: 'context', segments: emptySegments() } satisfies CoreEvent)
     b.publish({ type: 'message', text: 'x', reasoning: '' } satisfies CoreEvent)
     b.publish({ type: 'usage', inputTokens: 1, outputTokens: 1 } satisfies CoreEvent)
-    b.publish({ type: 'context' } satisfies CoreEvent)
+    b.publish({ type: 'context', segments: emptySegments() } satisfies CoreEvent)
 
     const steps = emitted.filter((entry) => entry.event.type === 'step/start')
     expect(steps.map((entry) => entry.event.data['step'])).toEqual([1, 2])

@@ -14,11 +14,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { RuntimeProvider, type HostChannel } from '@dsc/ui-runtime'
 import { dockTabMeta } from '@dsc/ui-dockkit'
-import type { DockTabBodyProps, UiPluginApi } from '@dsc/ui'
+import type { DockTabBodyProps, HostSnapshot, UiPluginApi } from '@dsc/ui'
 import plugin from './ui.js'
 
 /** 插件 `apply` 会把两种页签报名进壳的报名表；测试结束一起退掉，不留给别的用例。 */
-const offPlugin = plugin.apply({} as UiPluginApi)
+const offPlugin = plugin.apply({} as UiPluginApi) as () => void
 
 const PreviewTab = dockTabMeta('preview')?.component
 const PatchTab = dockTabMeta('patch')?.component
@@ -58,7 +58,8 @@ interface ReadResult {
 function harnessOf(read: (args: unknown[]) => Promise<unknown>): Harness {
   const calls: Invoke[] = []
   const channel: HostChannel = {
-    getSnapshot: () => ({ status: { cwd: 'C:/repo', turnState: 'idle' } }),
+    getSnapshot: () =>
+      ({ status: { cwd: 'C:/repo', turnState: 'idle' } }) as unknown as HostSnapshot,
     getHello: () => null,
     getStatus: () => 'open',
     getHostError: () => null,

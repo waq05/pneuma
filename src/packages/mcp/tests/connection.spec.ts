@@ -9,7 +9,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
-import { openConnection, type McpConnection, type McpServerConfig } from '../mcp.js'
+import { openConnection, type McpConnection, type McpOpenOptions, type McpServerConfig } from '../mcp.js'
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.meta.url))
 const open: McpConnection[] = []
@@ -40,10 +40,10 @@ function serverOf(mode: string, overrides: Partial<McpServerConfig> = {}): McpSe
   }
 }
 
-const options = { connectTimeoutMs: 5_000, callTimeoutMs: 5_000, onClose: () => undefined }
+const options: McpOpenOptions = { connectTimeoutMs: 5_000, callTimeoutMs: 5_000, onClose: () => undefined }
 const signal = (): AbortSignal => AbortSignal.timeout(5_000)
 
-async function connect(mode: string, overrides: Partial<McpServerConfig> = {}, extra: Partial<typeof options> = {}): Promise<McpConnection> {
+async function connect(mode: string, overrides: Partial<McpServerConfig> = {}, extra: Partial<McpOpenOptions> = {}): Promise<McpConnection> {
   const connection = await openConnection(serverOf(mode, overrides), { ...options, ...extra })
   open.push(connection)
   return connection

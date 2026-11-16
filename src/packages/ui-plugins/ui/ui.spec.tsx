@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import { RuntimeProvider, setShellPage, type HostChannel } from '@dsc/ui-runtime'
-import type { UiPluginApi } from '@dsc/ui'
+import type { HostHello, UiPluginApi } from '@dsc/ui'
 import plugin from './ui.js'
 
 /** PluginsPage 不直接导出：照壳装载插件那条路，收下 `shell.page` 的登记。 */
@@ -117,7 +117,7 @@ function harnessOf(overrides: { plugins?: unknown; trusts?: unknown } = {}): Har
   }
   const channel: HostChannel = {
     getSnapshot: () => null,
-    getHello: () => ({ host: { name: 'web', version: '1.0.0' } }),
+    getHello: () => ({ host: { name: 'web', version: '1.0.0' } }) as unknown as HostHello,
     getStatus: () => 'open',
     getHostError: () => null,
     getPluginsFrame: () => null,

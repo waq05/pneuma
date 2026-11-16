@@ -72,6 +72,7 @@ describe('toMarketSkillView', () => {
       kind: 'zip',
       root: 'https://x/y.zip',
       mainFile: 'SKILL.md',
+      files: [],
       stats: { downloads: 10, stars: 3 },
     }
     expect(toMarketSkillView(entry, new Set(['pdf']))).toEqual({

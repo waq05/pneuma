@@ -284,7 +284,7 @@ describe('并发互斥', () => {
       if (third.ok) third.mutex.release()
     } else {
       // 非 Windows / koffi 缺失：no-op 互斥体，永远允许继续（安装本来也跑不了）。
-      first.mutex.release()
+      if (first.ok) first.mutex.release()
     }
   })
 })
