@@ -50,7 +50,8 @@
     "ui:serve": "node scripts/_ui-shell-serve.mjs",
     "test:tui": "vitest run --project tui",
     "test:bench": "node tests/bench/run.mjs",
-    "test:live": "vitest run --config vitest.live.config.ts"
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "test:cli": "vitest run --config vitest.cli.config.ts"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.1.0",

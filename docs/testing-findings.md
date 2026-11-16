@@ -199,3 +199,21 @@ splitUnifiedDiffByFile(CRLF 的 diff)          → path = 'a/src/a.ts b/src/a.ts
 - 影响：审批卡里的 diff 预览行数与实际不符，用户会以为还有没看到的改动
 - 处置：golden **如实记录**（快照层不制造「预期正确」的假象），场景文件头与 backlog B41 都已标注。
   修产品时要同批重生成该 golden
+
+### F15 `numa bogus`（未知子命令）被静默透传，TUI 照常起来
+
+- 文件：`bin/dsc.js:67-98`（TUI 分支的参数翻译只认 `--resume`/`-c`，其余全进 passthrough）
+- 现象：`node bin/dsc.js bogus` → 起 TUI、永不退出；用户以为命令没反应（2026-11-16 实测）
+- 判据：设计 §11.2 C4「退出码非 0；stderr 有可读提示」
+- 影响：拼错的子命令没有任何反馈，属于「报错也要报得出来」这一类
+- 处置：**已修**——裸词当未知子命令拒绝（exit 1 + 一行可用清单）；`-` 开头的选项仍透传，
+  `--resume` 的取值先吃掉。C4 反向验证：删掉这段 → 红；还原 → 绿
+
+### F16 非交互 stdin（管道 / 重定向）结束后 TUI 永不退出
+
+- 文件：`bin/dsc.js:84-98`（spawn boot 后没有任何 stdin 收场逻辑）
+- 现象：`echo hi | numa` 与 `numa </dev/null` 都挂到超时（124），日志里只剩 React 警告
+- 判据：设计 §11.2 C6「不卡死，正常退出」；C4/C5 的用例也全部被它拖住
+- 影响：脚本化调用与任何非 TTY 场景都拿不到退出码；CI 上会表现为「八条 CLI 用例全超时」
+- 处置：**已修**——`process.stdin.isTTY !== true` 时在 `end` 上杀子进程并 exit 0
+  （真终端的 stdin 不会 end，行为不变）。C6 反向验证：关掉这段 → 30s 超时红；还原 → 绿

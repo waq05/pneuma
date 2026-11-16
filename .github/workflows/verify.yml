@@ -143,12 +143,43 @@ jobs:
       - name: 性能基准（对比本机基线；runner 不符时只记录）
         run: pnpm run test:bench
 
+  cli:
+    name: 真入口 e2e（bin/dsc.js）
+    # 设计 §11：spawn 用户真正会敲的那条命令，验「启动器自己坏了」——参数翻译、子进程
+    # 转发、退出码传递。这一层起的是 lib 产物平面，必须先 build；单条 2–5 秒，八条
+    # 加起来不到 10 秒，放 PR 门不亏。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核
+        run: pnpm run build
+      - name: 真入口 e2e
+        run: pnpm test:cli --reporter=default --reporter=junit --outputFile.junit=reports/cli.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
   all-checks-passed:
     name: all-checks-passed（分支保护只认这一个）
     # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
     # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
     if: always()
-    needs: [core, ui, desktop, integration, bench]
+    needs: [core, ui, desktop, integration, bench, cli]
     runs-on: ubuntu-latest
     steps:
       - name: 聚合判定
