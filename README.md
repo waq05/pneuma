@@ -236,7 +236,7 @@ src/packages/       91 个包：79 个功能包（含 20 个界面单元、界�
 src/packages/tui/app/  ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）
-scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
+src/packages/tui/app/composer.spec.ts  候选面板/输入行的确定性测试（pnpm run test:tui；原 scripts/composer-test.mjs 已并入）
 ```
 
 **模式（Agent 预设）**：一根独立的旋钮，决定模型是谁、手上有什么、被叮嘱了什么（提示词 + 工具目录）。出厂四个——标准 / PTC / 极简 / 创造（顺序与 dsh 的 preset 一致）：PTC 是全量工具再加 `run_code`，极简只有一条 shell 加 `read_image`、提示词换成一句固定话（保留 AGENTS.md 注入），创造在标准之上加 `runtime_api`。自己加的模式就是 `~/.dsc/presets/<名字>.md` 一个文件，设置页可图形编辑，输入框下方那颗旋钮或 `/preset <名字>` 切换。模式**只做减法**（工具白名单取子集、提示段只能摘掉四段），任何模式都放宽不了安全。详见 [docs/presets.md](docs/presets.md)。
@@ -267,7 +267,7 @@ pnpm build:ui     # 编桌面 / 手机共用的界面壳（产物落 lib/ui/asse
 pnpm typecheck
 pnpm dev          # tsc --watch
 
-node scripts/composer-test.mjs   # 自检：scripts/ 下每个 *-test.mjs 都是一个能单独跑的无头脚本
+pnpm test                        # 主测试：unit + ui + tui（scripts/ 下的 *-test.mjs 是 Vitest 表达不了的探针通道）
 cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过）
 ```
 

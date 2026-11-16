@@ -1,18 +1,24 @@
 /**
- * 内核自检总闸：`scripts/*-test.mjs` 里**不属于界面壳**的那一批。
+ * 内核侧探针总闸：`scripts/*-test.mjs` 里**不属于界面壳**的那一批。
  *
- * ## 它现在的角色（2026-11-13 起，别误读）
+ * ## 这条通道是什么（2026-11-16 定稿，别误读）
  *
- * 这个脚本**不再是主测试入口**。测试体系迁到 Vitest 之后（`pnpm test` / `pnpm run test:int`），
- * 留在 `scripts/` 的探针分两类，只有第二类是真的长期住户：
+ * 它跑的是 **Vitest 表达不了的探针**，不是「还没迁完的遗留」。测试体系的主体已经迁到
+ * Vitest：`pnpm test`（unit / ui / tui）、`pnpm run test:int`（真内核 + 临时 HOME）、
+ * `pnpm run test:snapshot`（帧与录制回放）、`pnpm run test:cli`、`pnpm run test:live`。
+ * 留在这里的每一条都有机制级理由，逐条的「钉什么 / 为什么迁不走 / 谁跑」写在
+ * `docs/testing-backlog.md` 第三节的归属表里：
  *
- *   1. **还没迁的**——P2 正在分批往 `*.int.spec.ts` 搬，搬完就从这里消失；
- *   2. **迁不走的**——`plugin-hot-update` 与 `plugin-library` 验的是 Node 的 ESM 模块缓存
- *      语义（`?t=mtime` 换新实例），而 Vitest 的动态 import 走 Vite 管线、不吃这个缓存戳。
- *      硬迁出来的测试要么恒绿要么恒红，那是假证据。**这两条有意留在这里，由裸 Node 跑。**
+ *   - `plugin-hot-update` / `plugin-library`：验 Node 的 ESM 缓存戳（`?t=mtime` 换新实例）。
+ *     Vitest 的动态 import 走 Vite 管线、不吃这个缓存戳，硬迁只会得到恒绿或恒红的假证据；
+ *   - `settings` / `session-picker-mouse` / `tui-*`：ink 整屏帧与 SGR 鼠标事件的端到端形态。
+ *     其中可迁的行为段已由 `src/packages/tui/app/*.spec.ts` 承接（帧工具见
+ *     `tests/snapshots/tui/frame-kit.ts`），这里留下的是帧级细节与真 App 计数；
+ *   - `session-permissions` / `readme` / `release-notes`：验的是源码文本、文档与发版脚本，
+ *     没有运行期接缝；`readme` / `release-notes` 属于文档闸，不属于产品测试。
  *
- * 所以：看到清单里还剩几条，先看 `docs/testing-backlog.md` 第三节，别一律当成「没迁完」。
- * 判据、例外与归属都写在那份文档里。
+ * P3 收尾批（2026-11-16）对账过一轮：能搬的行为段全部搬完并逐条反向验证，搬不动的在
+ * 探针头部与 backlog 里留了理由。看到清单还剩这几条时，先读那张表，别当成没迁完。
  *
  * 与 `check-ui.mjs` 的分工按目录约定来，不按重要性：
  *   - `ui-*` 归 `check:ui`（眨眼级，改壳的人随时跑）；

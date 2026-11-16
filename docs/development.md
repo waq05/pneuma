@@ -632,12 +632,23 @@ cd D:\dsc && pnpm run build        # tsc → lib/，自检脚本跑的就是 lib
 # 类型检查（桌面端）
 cd D:\dsc\desktop && pnpm run typecheck
 
-# 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
+# ── 主测试体系（Vitest，2026-11 起）：改完代码优先跑这几条 ─────────────────
+pnpm test                          # unit + ui + tui 三层（PR 门的核心，约 2 分钟）
+pnpm run test:int                  # 先 build 再跑 integration（真内核 + 临时 HOME，约 8 分钟；maxWorkers 4）
+pnpm run test:snapshot             # 帧/会话 golden（TUI 整屏 + 录制回放），PR 门的关键面
+pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，约 2 分钟；已知 6 红见 backlog B40）
+pnpm run test:cli                  # 真入口 bin/dsc.js 八条（先 build，约 5 秒）
+pnpm run test:live                 # 真模型冒烟 5 条（无 DSC_LIVE_API_KEY 时整层跳过，不算失败）
+pnpm run test:bench                # 性能基准 4 条，7 次中位数 vs tests/bench/baseline.json（runner 不符只记录）
+pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升）
+pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
+
+# ── 探针通道（Vitest 表达不了的那批；不是主入口）────────────────────────────
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 55 条纯 Node 探针，41 秒（新探针按文件名自动进门禁，条数会涨）
+pnpm run check:ui                  # 42 条纯 Node 探针（含插件产物审计 / 源码文本闸，jsdom 与渲染层够不到）
 pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 100 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批 / 插件热更），约 12 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:core                # 12 条 Node 侧探针（ESM 缓存戳 / ink 帧 / 会话库 / 源码文本），见 testing-backlog §三
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
 pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（77 包/77 行/0 缺口）+ 包标准八条硬项 + 89 个包用例 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 组合门禁（77 包/63 实挂/0 失败）+ 17 条换包 e2e
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
@@ -650,7 +661,7 @@ node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin 
 # 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本
 # （desktop/shots/*.mjs，例如 readme-shot.mjs 拍 README 图、ui-seed.mjs 造临时 HOME 的会话数据），
 # 本机跑、不进 CI；截图产物被 .gitignore 忽略，脚本本身进版本库。
-node scripts/composer-test.mjs     # TUI 输入候选面板
+pnpm run test:tui                 # TUI 输入候选面板 / 帧（原 scripts/composer-test.mjs 已并入 composer.spec.ts）
 
 # 打包版实拍
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
