@@ -197,8 +197,8 @@ splitUnifiedDiffByFile(CRLF 的 diff)          → path = 'a/src/a.ts b/src/a.ts
 - 现象：P4 TUI 帧快照 `12-approval-diff.txt` 如实记录——4 行 hunk 的帧里出现「… 还有 10 行」
 - 判据：快照帧是整屏真渲染的逐字节固化，非测试侧拼装
 - 影响：审批卡里的 diff 预览行数与实际不符，用户会以为还有没看到的改动
-- 处置：golden **如实记录**（快照层不制造「预期正确」的假象），场景文件头与 backlog B41 都已标注。
-  修产品时要同批重生成该 golden
+- 处置：**已修**（`dabfe652`）——`shown = min(总行数, 折叠上限)`；新增 `DiffBlock.spec.ts`
+  6 条整屏帧断言，golden `12-approval-diff.txt` 同批重生成。
 
 ### F15 `numa bogus`（未知子命令）被静默透传，TUI 照常起来
 
@@ -217,3 +217,20 @@ splitUnifiedDiffByFile(CRLF 的 diff)          → path = 'a/src/a.ts b/src/a.ts
 - 影响：脚本化调用与任何非 TTY 场景都拿不到退出码；CI 上会表现为「八条 CLI 用例全超时」
 - 处置：**已修**——`process.stdin.isTTY !== true` 时在 `end` 上杀子进程并 exit 0
   （真终端的 stdin 不会 end，行为不变）。C6 反向验证：关掉这段 → 30s 超时红；还原 → 绿
+
+### F17 沙箱出网代理的放行路径整条是坏的（400 / 502 / header 崩溃）
+
+- 文件：`src/packages/sandbox/net-proxy.ts` 的 `parseAbsoluteUrl` 与放行转发段
+- 现象（写 net-proxy 测试时实测，三处叠在一起）：
+  1. `GET http://example.com/ HTTP/1.1`（HTTP_PROXY 的标准写法，无显式端口）被判成
+     「认不出目标主机」→ 400；
+  2. 放行分支 `upstream.pipe(res)`：ClientRequest 不是 Readable，抛
+     `Cannot pipe, not readable` → 一律 502；
+  3. headers 里把 `proxy_connection` / `proxy-authorization` 赋 `undefined`，
+     Node 24 直接抛 `ERR_HTTP_INVALID_HEADER_VALUE`。
+- 判据：白名单放行后普通 HTTP 请求必须真的转发到上游并回 200；阻断路径必须 403 且不出网。
+- 影响：沙箱「开网 + 域名白名单」本应是唯一出网通道；实际开网也全 400/502，等于网络管制
+  在放行一侧完全失效。
+- 处置：**已修**（`73955416`）——按协议补默认端口、从 `'response'` 事件拿上游响应、
+  删两个代理头、绝对 URL 折成 origin-form。`net-proxy.spec.ts` 8/8 覆盖放行转发、
+  阻断 403、CONNECT 200 中继与日志环形裁剪。
