@@ -110,6 +110,11 @@ export default defineConfig({
             'src/packages/tui/**',
             'src/**/*.int.spec.ts',
             'tests/**/*.int.spec.ts',
+            // live / cli 两层各走独立配置（真模型要钱、真入口要 spawn 进程）：
+            // 后缀同样以 `.spec.ts` 结尾，不排就会被 unit 连跑一遍——live 会因为没 key
+            // 整层跳过（看起来绿），cli 会在 5 秒超时下红。
+            'tests/live/**',
+            'tests/cli/**',
             '**/node_modules/**',
           ],
           environment: 'node',
@@ -125,7 +130,7 @@ export default defineConfig({
           // tests/ 下也会有集成用例（tests/harness.int.spec.ts 这类起真内核/真 CLI 的），
           // 两处都收，语义一致：`*.int.spec.ts` 就是集成层。
           include: ['src/**/*.int.spec.ts', 'tests/**/*.int.spec.ts'],
-          exclude: ['src/packages/*/ui/**'],
+          exclude: ['src/packages/*/ui/**', 'tests/live/**', 'tests/cli/**'],
           environment: 'node',
           testTimeout: 60_000,
           // hook 60s 而不是 30s：每个文件都要起一次真内核（build 产物 + 插件装配），
