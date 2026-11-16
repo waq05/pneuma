@@ -103,9 +103,6 @@ jobs:
         run: pnpm run build
       - name: 集成测试（分片 ${{ matrix.shard }}）
         run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --reporter=default --reporter=junit --outputFile.junit=reports/int-${{ matrix.shard }}.xml
-      # 性能基准门（P5 的 test:bench 落地后启用——脚本与基线由批 13 交付）：
-      # - name: 性能基准（对比基线，退化 1.5× 即红）
-      #   run: pnpm run test:bench
       - name: 上传测试报告
         if: always()
         uses: actions/upload-artifact@v4
@@ -115,12 +112,43 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  bench:
+    name: 性能基准（对比本机基线）
+    # 为什么不并进 integration 的分片 job：基准计时对并发敏感，三个分片一起跑等于把
+    # 三条基准放在三倍负载下录数；而且分片跑三次基准会写出三份基线。
+    #
+    # 判据分两层（设计 §9.2「基线绑机器」）：
+    #   - 结构判据（每条基准内部的断言：B4 必须是 2 次通知、B1 服务面齐备、B3 压缩产出
+    #     正确）**跨机器都成立**，红了就是代码问题，直接闸；
+    #   - 数值判据（中位数 > 基线 × 1.5）只在 runner 与基线一致时生效。共享 runner 换
+    #     代次后数值整体平移，`run.mjs` 会打印「runner 不同，只记录不判退化」并绿——要
+    #     恢复数值闸，从 Actions 日志里取本次中位数、按同格式提交 baseline.json 的
+    #     runner 段（人工审一次，别让一次抖动被钉成「正常」）。
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # 基准只认构建产物 lib/**（plain node，不经 tsx）：不 build 就是拿旧 lib 录数。
+      - name: 编译内核
+        run: pnpm run build
+      - name: 性能基准（对比本机基线；runner 不符时只记录）
+        run: pnpm run test:bench
+
   all-checks-passed:
     name: all-checks-passed（分支保护只认这一个）
     # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
     # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
     if: always()
-    needs: [core, ui, desktop, integration]
+    needs: [core, ui, desktop, integration, bench]
     runs-on: ubuntu-latest
     steps:
       - name: 聚合判定

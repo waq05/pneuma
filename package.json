@@ -48,7 +48,8 @@
     "test:snapshot:record": "vitest run --project snapshot",
     "test:coverage": "vitest run --coverage",
     "ui:serve": "node scripts/_ui-shell-serve.mjs",
-    "test:tui": "vitest run --project tui"
+    "test:tui": "vitest run --project tui",
+    "test:bench": "node tests/bench/run.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.1.0",
