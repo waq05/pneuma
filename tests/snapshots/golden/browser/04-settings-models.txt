@@ -1,0 +1,95 @@
+# 场景：设置-模型（两个端点 + 三个模型）
+# 稳定：端点与模型全部来自种子 config.yaml；密钥状态只看环境变量在不在（本次不设）；配置路径里的隔离 HOME 归一成 `<TMP>`，版本号归一成 `<version>`。
+# hash：（空）
+# 计数：
+#   dom.buttons = 56
+#   dom.elements = 480
+#   dom.inputs = 1
+#   models.page = 1
+#   models.rail = 2
+#   settings.nav = 9
+
+Pneuma
+新会话
+技能
+插件
+工作区
+<repo>
+新会话
+<time>
+今日总用量
+0 tok
+设置
+Super Agent
+新会话
+标准模式
+设置
+通用
+模型
+模式
+用量统计
+归档
+终端界面
+远程控制
+工作区
+关于
+设置
+模型
+
+端点、默认模型与 API key
+
+默认模型
+当前会话的下一次请求就用新值。
+演示端点
+Demo Chat
+浏览器里只能查看：增删端点、填写密钥要写 config.yaml 与凭据库，只能在桌面窗口里操作。改配置请用桌面版。
+端点
+2
+演
+演示端点
+默认
+备
+备用端点
+配置文件
+config.yaml
+凭据
+credentials.yaml
+演
+演示端点
+demo
+默认
+Base URL
+http://127.0.0.1:9/v1
+API Key
+已配置 · DSC_DOM_DEMO_KEY
+模型
+2
+拉取清单
+Demo Chat
+demo-chat
+128K
+默认
+Demo Reasoner
+demo-reasoner
+64K
+对话
+轨迹
+更改
+<greeting>
+
+直接说要做什么，或者从下面挑一张 · 输入 / 看全部指令
+
+看懂代码
+解释一处实现的来龙去脉
+做点东西
+从需求写到能运行
+审查改动
+检查未提交改动的风险
+排查问题
+从一个报错查到根因
+<branch>
++
+工作区可写
+演示端点/
+demo-chat
+默认

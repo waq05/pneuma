@@ -1,0 +1,124 @@
+# 场景：设置-用量（热力图 + 趋势 + 环形图）
+# 稳定：用量流水按「相对今天」的固定条数生成，汇总值（总 token / 活跃天数 / 缓存命中）只随种子变化；日期与月标签是时间函数，归一成 `<date>` / `<month>`。
+# hash：（空）
+# 计数：
+#   dom.buttons = 52
+#   dom.elements = 889
+#   dom.inputs = 1
+#   usage.cards = 6
+#   usage.donut = 1
+#   usage.heat.cells = 371
+#   usage.trend = 1
+
+Pneuma
+新会话
+技能
+插件
+工作区
+<repo>
+新会话
+<time>
+今日总用量
+0 tok
+设置
+Super Agent
+新会话
+标准模式
+设置
+通用
+模型
+模式
+用量统计
+归档
+终端界面
+远程控制
+工作区
+关于
+设置
+用量统计
+
+Token 活动热力图、趋势与模型占比
+
+10.2 万
+累计 Token
+1.6 万
+单日峰值 Token
+7 天
+活跃天数
+7 天
+当前连续
+7 天
+最长连续
+89%
+前缀缓存命中
+Token 活动
+今天
+近 <days>
+近 <days>
+近一年
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+<month>
+一
+三
+五
+少
+多
+每日 Token 趋势
+近 <days>
+近 <days>
+demo-chat
+demo-reasoner
+5000
+1.0 万
+1.5 万
+2.0 万
+<date>
+<date>
+<date>
+<date>
+<date>
+<date>
+<date>
+模型用量
+10.2 万
+tokens
+demo-chat
+5.8 万 tokens · 4 轮
+57%
+demo-reasoner
+4.4 万 tokens · 3 轮
+43%
+自 <date> 起记录 · 共 7 轮请求 · 记录在 ~/.dsc/usage/usage.jsonl
+刷新
+对话
+轨迹
+更改
+<greeting>
+
+直接说要做什么，或者从下面挑一张 · 输入 / 看全部指令
+
+看懂代码
+解释一处实现的来龙去脉
+做点东西
+从需求写到能运行
+审查改动
+检查未提交改动的风险
+排查问题
+从一个报错查到根因
+<branch>
++
+工作区可写
+演示端点/
+demo-chat
+默认
