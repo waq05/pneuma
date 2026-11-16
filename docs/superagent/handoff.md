@@ -6,11 +6,13 @@
 
 ## 1 一句话现状
 
-补齐清单（含新增的 G9 共 25 项）：**20 项已补、1 项补了等价物（G1 换成候选收件箱）、
-3 项不补（设计决定）、1 项等真账号（S5，用户已拍板暂缓）**。
+补齐清单（含新增的 G9 共 25 项）：**21 项已补、1 项补了等价物（G1 换成候选收件箱）、
+2 项设计决定不补（U3 / U6）、1 项等真账号（S5，用户已拍板暂缓）**。
+另有**三层**有意没做的差异（B 表：常驻主会话、队友工具继承、手机档）——那是清单项内部的一层，
+不占编号，别与上面 25 项的分母混起来。
 第二轮（`c6c71545` 起的 7 刀）把上一轮遗留的三处「有单测但没跑过真链路」全部在真宿主走通，
-并顺带补出三个设置面缺口（`evalMode` / `workerModel` / `workerBlockedCommands`，见 §2.1 第二轮）。
-剩下的是：B 表三层有意没做的差异、S5 真账号验收（只能人做）。
+并顺带补出三个设置面缺口（`evalMode` / `workerModel` / `workerBlockedCommands`，见 §2.1）。
+剩下的是：B 表三层差异、S5 真账号验收（只能人做）。
 
 ## 2 已完成
 
@@ -139,16 +141,28 @@ pnpm run build                     # exit 0，79 个功能包
 node scripts/package-tests.mjs     # 91 包 / 121 用例 / 693 断言 / 0 失败
 pnpm run check:ui                  # 79/79
 pnpm run check:plugin              # 换包 e2e 17 PASS / 0 FAIL
-node scripts/check-core.mjs        # 124/125（816.7s）——唯一失败见下
+node scripts/check-core.mjs        # 124/125（816.7s / 841.6s 两次）——唯一失败每次不同，见下
 node scripts/superagent-e2e-test.mjs           # 24/24
 node scripts/superagent-candidate-e2e-test.mjs # 22/22（复跑稳定）
 node scripts/superagent-worker-e2e-test.mjs    # 19/19（复跑稳定）
 ```
 
-**check-core 的那 1 条失败与本轮无关**：`sandbox-win-token-test.mjs` 的「0x03 经 conin
-中断子进程」用例——ConPTY 下 Ctrl+C 不保证中断子进程（探针自己的 note 也写了「这条没做到」），
-单跑复现稳定挂，疑似环境漂移（上一轮在同一分支上是全绿）。本轮改动（superagent 包 +
-locale + 文档 + 两条新探针）与沙箱/TTY 层零交集。
+**check-core 的那 1 条失败与本轮无关，但「是哪一条」每次不同**：
+
+- 本轮实测两次：一次是 libuv 的 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`
+  （某条脚本在输出完全部 PASS 之后、进程退出时崩），一次是 `session-picker-mouse-test.mjs`
+  的 TUI 选择器用例整串挂（「选择器打开且带全量条数」往下全 FAIL）。
+- 这两条**单跑都绿**：`sandbox-win-token-test.mjs` 86 通过 / 0 失败（含那条 conin 用例）、
+  `session-picker-mouse-test.mjs` 全 PASS。
+- 上一轮在同一分支上 check-core 是 **123/123 全绿**（898.6s）。
+
+定性：TUI / 终端 / pty 层在「当前会话的终端环境」下的浮动失败，与 superagent 包零交集
+（本轮改动面 = superagent 包 + locale + 文档 + 三条 e2e 探针）。
+
+**别把某一次的具体失败名当成结论**——第一次看到的是 conin，第二次就换成了 TUI 选择器。
+**判断方法**：看失败段里 `── <file> ──` 的文件名，再单跑它
+（`node --import ./scripts/_i18n-alias.mjs scripts/<file>`）。单跑绿就是环境浮动，不要顺着
+失败信息去改那块的代码。
 
 单跑某条探针要走 `--import` 钩子（否则界面模块的 `@dsc/ui` 别名解析不了）：
 
