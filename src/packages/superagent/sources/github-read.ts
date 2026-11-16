@@ -1,3 +1,4 @@
+/** Read-only GitHub repository, conversation, and CI check inspection for assessments and workers. */
 /**
  * 移植自 dsh-superagent/src/sources/github-read.ts（171 行，逐字）。改动：仅 import 路径
  * （`.ts` → `.js`：`../core/index.js`、`../infra/commands.js`、`./github-trigger.js`、`./kind.js`）。

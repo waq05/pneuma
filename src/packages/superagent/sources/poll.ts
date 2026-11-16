@@ -1,3 +1,4 @@
+/** Shared polling helpers for subscribed threads, overlap-safe cursors, and timer-friendly delays. */
 /**
  * 移植自 dsh-superagent/src/sources/poll.ts（40 行，逐字），改动：仅 import 扩展名。
  *

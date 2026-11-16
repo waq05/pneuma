@@ -1,3 +1,4 @@
+/** Trigger-scoped Feishu context reader; retrieved messages are returned for model inspection without entering intake. */
 /**
  * 移植自 dsh-superagent/src/sources/feishu-read.ts（171 行，逐字）。
  * 改动：仅 import 路径（后缀 `.ts` → `.js`；目录已按上游镜像，相对深度与上游一致）。

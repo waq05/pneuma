@@ -136,12 +136,25 @@ for (const pkg of packages) {
    * （绝大多数包没有提示词）。
    */
   const promptsSrc = join(pkg.dir, 'prompts')
-  if (existsSync(promptsSrc)) {
-    for (const file of walkFiles(promptsSrc)) {
+  const skillsSrc = join(pkg.dir, 'skills')
+  /**
+   * 静态资产不是模块：tsc 只搬 `.ts`，`prompts` 与 `skills` 下的 `.md` 要在这里原样抄进产物。
+   *
+   * 落点与 locale 同两个：
+   *   - 适配包目录（`lib/node_modules/@pneuma/<id>/prompts`）：发行版按包目录取文件；
+   *   - 真实模块目录（`lib/packages/<id>/prompts`）：包自己按 `import.meta.dirname` 读
+   *     （`adapters/executor.ts` 的 `buildWorkerPrompt`、`app/skill-files.ts` 的技能文件）。
+   *     少了这一份，运行期就只剩内置兜底，源码里改的文案在成品里永远不生效。
+   *
+   * 只拷 `.md`：目录里可能还放着设计草图、截图之类，模型不该看见；目录不存在就跳过。
+   */
+  for (const [name, srcDir] of [['prompts', promptsSrc], ['skills', skillsSrc]]) {
+    if (!existsSync(srcDir)) continue
+    for (const file of walkFiles(srcDir)) {
       if (!file.endsWith('.md')) continue
-      const rel = relative(promptsSrc, file)
+      const rel = relative(srcDir, file)
       for (const base of [dest, srcPkgDir]) {
-        const target = join(base, 'prompts', rel)
+        const target = join(base, name, rel)
         mkdirSync(dirname(target), { recursive: true })
         writeFileSync(target, readFileSync(file))
       }
@@ -204,6 +217,7 @@ for (const pkg of packages) {
     ...(existsSync(pkg.patchFile) ? ['cordis.patch.yml'] : []),
     ...(existsSync(localeSrc) ? ['locale/**'] : []),
     ...(existsSync(promptsSrc) ? ['prompts/**'] : []),
+    ...(existsSync(skillsSrc) ? ['skills/**'] : []),
   ]
   const outManifest = {
     name: pkg.manifest.name ?? `@pneuma/${pkg.id}`,

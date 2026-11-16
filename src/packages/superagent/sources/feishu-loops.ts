@@ -1,3 +1,4 @@
+/** Feishu background loops: live event stream consumer, chat/topic history backfill, chat name refresh, and subscribed thread polling. */
 /**
  * 移植自 dsh-superagent/src/sources/feishu-loops.ts（267 行，逐字）。
  * 改动：仅 import 路径（后缀 `.ts` → `.js`，相对位置不变：本文件在镜像目录 `sources/` 里，

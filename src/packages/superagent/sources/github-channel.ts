@@ -1,3 +1,4 @@
+/** GitHub outbound channel: posts issue/PR comments and review thread replies under the agent account. */
 /**
  * 移植自 dsh-superagent/src/sources/github-channel.ts（51 行，逐字）。改动：仅 import 路径
  * （`.ts` → `.js`：`../core/index.js`、`../infra/commands.js`、`../infra/text.js`、`./host.js`、

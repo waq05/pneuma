@@ -1,3 +1,4 @@
+/** Feishu outbound channel: posts threaded bot replies and constructs chat deep links. */
 /**
  * 移植自 dsh-superagent/src/sources/feishu-channel.ts（35 行，逐字）。
  * 改动：仅 import 路径（`../core/index.ts` → `../core/index.js`、`../infra/commands.ts` →

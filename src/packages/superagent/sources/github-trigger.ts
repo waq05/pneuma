@@ -1,3 +1,4 @@
+/** Normalizes GitHub issues, pull requests, comments, reviews, and CI transitions into domain Triggers. */
 /**
  * 移植自 dsh-superagent/src/sources/github-trigger.ts（107 行，逐字）。改动：仅 import 路径
  * （`.ts` → `.js`：`../core/index.js`、`../infra/text.js`）。

@@ -1,25 +1,17 @@
 /**
- * 逐字移植自上游 `src/kv.ts`（58 行）。改动只有 import 与三处类型缝：
- *   ① `./policy.ts` 的 `SettingsSave` → `./core/policy.js`（本仓 Policy 在 `core/`）；
- *   ② 上游还有三个类型来自尚未移植的模块，先按 TODO 用本地别名顶住，形状与上游一致：
- *      - `PromptVersion`（上游 `./app/prompts.ts:39`）——TODO(P9-W6)；
- *      - `SettingsVersion`（上游 `./app/store.ts:22`）——TODO(P9-C)；
- *      - `Retry`（上游 `./sources/github.ts:155`）——TODO(P9-W4)，形状
- *        `{ since: string; pr: boolean; failedAt?: string; attempts?: number }`。
- * `Key` / `Family` / `record` / `family` / `KV` 与上游逐行相同，接线时只删别名、换成 import。
+ * 逐字移植自上游 `src/kv.ts`（58 行）。改动只有 import 路径：
+ *   `./policy.ts` → `./core/policy.js`（本仓 Policy 在 `core/`）；
+ *   `./app/prompts.ts`、`./app/store.ts`、`./sources/github.ts` → 镜像布局的同名 `.js` 路径。
+ * `Key` / `Family` / `record` / `family` / `KV` 与上游逐行相同。
  *
  * 按「唯一写者」分组的带类型 KV 键与键族：读者与写者都从这里取键，每个键只拼一次、类型只标一次。
  *
  * @module dsc/packages/superagent/kv
  */
+import type { PromptVersion } from './app/prompts.js'
+import type { SettingsVersion } from './app/store.js'
 import type { SettingsSave } from './core/policy.js'
-
-// TODO(P9-W6): 上游 `./app/prompts.ts` 的 `PromptVersion` 还没移植；先当不透明值，接线时换成 import。
-type PromptVersion = unknown
-// TODO(P9-C): 上游 `./app/store.ts` 的 `SettingsVersion` 还没移植；先当不透明值，接线时换成 import。
-type SettingsVersion = unknown
-// TODO(P9-W4): 上游 `./sources/github.ts:155` 的 `Retry` 还没移植；形状照上游，接线时换成 import。
-interface Retry { since: string; pr: boolean; failedAt?: string; attempts?: number }
+import type { Retry } from './sources/github.js'
 
 /** Key of a KV record whose value has type `V`; a plain string represents an untyped key. */
 export type Key<V> = string & { readonly __value?: V }

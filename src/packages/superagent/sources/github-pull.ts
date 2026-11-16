@@ -1,3 +1,4 @@
+/** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
 /**
  * 移植自 dsh-superagent/src/sources/github-pull.ts（103 行，逐字）。改动：仅 import 路径
  * （`.ts` → `.js`：`../core/index.js`、`../deployment.js`、`../infra/text.js`、`./host.js`、

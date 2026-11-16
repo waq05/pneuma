@@ -1,3 +1,4 @@
+/** Normalizes Feishu live events, chat history items, and topic replies into domain Triggers. */
 /**
  * 移植自 dsh-superagent/src/sources/feishu-trigger.ts（89 行，逐字）。
  * 改动：仅 import 路径（`../core/index.ts` → `../core/index.js`、`./feishu-read.ts` → `./feishu-read.js`）。
