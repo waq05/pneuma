@@ -52,6 +52,39 @@ pnpm test:coverage
 `ui-composer/ui/attachments.ts`（0%，191）、`lsp/manager.ts`（166）、`checkpoint/index.ts`（165）。
 0% 文件集中在 ui 半边与 lsp/checkpoint 的入口文件——先导入、再补行为，是最便宜的一批。
 
+### 1.1 W1 第一批进度（2026-11-16 晚，全五实测）
+
+同一命令、同一口径，补完 W1 第一批（core 的 schedule / dsh-compat / spill / usage-log / team-board /
+config-store + sandbox 的 review / net-proxy / execpolicy / plugin-wiring / win 纯函数面）后重测：
+
+| 指标 | W1 前 | W1 第一批后 | 增量 |
+| --- | ---: | ---: | ---: |
+| 已覆盖行 / 可执行行 | 21,245 / 46,627 | **22,893 / 46,646** | **+1,648 行（+3.51 点）** |
+| lines | 45.56% | **49.07%** | +3.51 |
+| branches | 37.07% | **40.23%** | +3.16 |
+| functions | 41.81% | **44.58%** | +2.77 |
+| statements | 43.52% | **46.89%** | +3.37 |
+| `src/core` lines | 68.07% | **79.89%** | +11.82 |
+| `src/packages/sandbox` lines | 26.5% | **48.51%** | +22.0 |
+| 0% 文件 | 78 | **77** | −1 |
+
+跑法：`pnpm test:coverage`，423 文件通过 / 1 skip，exit 0；基线已抬到 49.0 / 40.2 / 44.5 / 46.8
+（`src/core` 79.8 / 68.8 / 80.2 / 76.1）。
+
+**W1 仍未达标**：本批目标 ~4,770 行，实际 +1,648（约 35%）。剩余缺口按未覆盖行排：
+
+| 模块 | 未覆盖行 | 行覆盖 | 备注 |
+| --- | ---: | ---: | --- |
+| `core/schedule/runner.ts` | 269 | 15.1% | 已测纯函数，运行循环 / 投递 / 失败阶梯未覆盖 |
+| `sandbox/win/runner-entry.ts` | 271 | 32.3% | 子进程入口，需 built 或子进程层驱动 |
+| `core/plugin-loader.ts` | 209 | 66.3% | 目录扫描 / 坏清单 / 去重分支 |
+| `packages/schedule/index.ts` | 226 | 1.7% | 命令与存储接线 |
+| `sandbox/index.ts` | 177 | 57.3% | 装配面，依赖真后端 |
+| 其余 core/sandbox | ~700 | — | policy / backends / 分页读取等 |
+
+下一批继续 W1：runner 运行循环、plugin-loader、schedule 包接线、sandbox index/backends，
+目标再 +2,000 行（全局 lines ≈ 53%）。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
@@ -71,7 +104,7 @@ pnpm test:coverage
 
 | 批 | 主攻 | 预计新覆盖 | 落点 |
 | --- | --- | ---: | --- |
-| **W1 core + sandbox** | core 剩余（loader / plugin-watch / ui-bundles / schedule / session）、`sandbox`（含 `win/runner-entry` 子进程） | ~4,770 | unit + integration；`runner-entry` 用 built/子进程层 |
+| **W1 core + sandbox** | core 剩余（loader / plugin-watch / ui-bundles / schedule / session）、`sandbox`（含 `win/runner-entry` 子进程） | ~4,770 | unit + integration；`runner-entry` 用 built/子进程层。**第一批已 +1,648（49.07%），余量见 1.1** |
 | **W2 外部面与工具** | `superagent`、`ui-composer`、`lsp`、`hooks`、`config-core`、`tools-default` | ~4,660 | unit + integration + ui（0% 文件优先） |
 | **W3 前端高频面** | `ui-primitives`、`self-improve`、`ui-status`、`ui-settings`、`ui-boot`、`ui-superagent`、`ui-sessions`、`ui-core` | ~4,600 | ui（jsdom + RTL） |
 | **W4 会话与浏览器面** | `ui-transcript`、`cdp`、`remote`、`browser`、`subagent`、`approval`、`computer-use`、`session-core`、`mcp`、`ui-dockkit` | ~4,600 | ui + integration + 子进程 |
