@@ -710,6 +710,9 @@ export interface SuperagentSurface {
 | 崩溃恢复 | 执行器保住会话，隔断后重连 | 起新分配 + 恢复提示词 | DSC 的 worker 是进程内 MiniAgent，宿主一死会话就没了（§9.3） |
 | 子智能体 | worker preset 里配 `tool-subagent`，孙代理继承 worker 的工具与权限 | worker 白名单加 `subagent`；队友工牌来自角色文件，不继承父会话 | DSC 的队友按角色文件冻结工牌，这是有意的设计差异 |
 
+这张表是设计期的决策。移植时逐行对出来的另外四处刻意差异（沙箱、会话创建、中途投递、并发
+名额）记在 §17.5，不并进来——它的粒度是「一行代码对应一行代码」，混在一起会看不清。
+
 ### 11.4 关于 QQ / 微信
 
 - **QQ 官方机器人**：可以接，结构上与飞书同构（长连接收事件 + HTTP 发消息），做成 `kind: 'qq'`。
@@ -880,6 +883,7 @@ pnpm run check:plugin
 | 4 | 要不要给 worker 配 `subagent` 工具 | **仍待定**：P0/P1 都没给。给了等于允许它自己再派子代理，成本与并发都要重新算，P3 再评估 |
 | 5 | 飞书来源走哪条路 | **已定**：保留 `lark-cli` 子进程（收发都走 CLI，不自己写一套 HTTP 客户端）。代价是它进运行时依赖，装不上这个来源就不启动；§16.5 / §16.6 已按这条路实现完 |
 | 6 | 判定模型换掉后要不要重建运行期 | **已定**：要。模型名在装配时读一次，改完重开宿主；改一条设置就重建整个运行期（锁、泵、worker）代价太大，设置项 help 里写清了 |
+| 7 | 多来源注册表要不要做 | **仍待定**：见 §17.4 的 P5。一台实例只能挂一个 GitHub 仓库，短期没有第二个仓库就一直压着；要做的话是唯一一批会动设置存储结构的 |
 
 ---
 
@@ -1291,6 +1295,7 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
 | --- | --- | --- |
 | 真账号验收 | GitHub 要仓库 + `GITHUB_TOKEN`，`@` 一次要真的产出 PR；飞书要有可用的企业与应用（自建应用 + 5 个 IM 权限 + 长连接订阅）。这两条都只能人来做，代码侧已经就位 | 用户 |
 | `lark-cli` 的打包 | **已定（2026-11-14）**：不进运行时依赖清单，用户自己装；设置页 `feishuCli` 的 help 与体检项 `superagent/dependencies` 的 fix 都写明装法（`npm install -g @larksuite/cli`，官方仓库 github.com/larksuite/cli）。装不上这个来源就不启动，不报错、不影响插件其余部分 | 已拍板 |
+| 与上游功能对齐 | 六项差距（主会话工具、worker 协作工具、面板回答入口、PR 认领、提示词定制、多来源注册表）。**它们全在上游 super agent 项目里**（`src/app/`、`prompts/`、`sources/`），不是 DSH 平台的功能；DSH 提供的宿主能力（会话、preset、jobs、权限）我们已用 DSC 对应件替完。**已实施，记录与对照见 §17.8-17.11**：19 个工具对齐 18 个（`eval_read` 并入读取资源），剩 `policy_sync` 与多来源注册表没做，理由都写在那儿 | 已实施 |
 
 飞书那条路线的代价说清楚：轮询能替代「配置点名的群」的补收，替代不了「新群 / 私聊自动发现」
 与秒级延迟（`feishu-loops.ts:71`、`feishu-channel.ts:23` 都是子进程调用）。
@@ -1303,3 +1308,219 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
   本仓库）与 `ticketBranch`（分支末段等于工单短名）认领，线程 id 用 PR 号——与适配器报
   `threadClosed` 时用的 id 必须一致，否则工单永远等不到「PR 合并了」。顺序是「先认领、再看
   CI」，反了会白等一拍。
+
+## 17 与上游 dsh-superagent 的功能对齐计划
+
+### 17.1 口径
+
+先把「谁的东西」分清，再谈补什么。三层分工：
+
+| 层 | 上游在哪 | 我们怎么办 | 现状 |
+| --- | --- | --- | --- |
+| 领域规则 | `src/core/` 15 文件 2,028 行 | 逐字复制，只改 import 后缀；`part.ts` 多 4 行（`now` 必填，为可重放） | 已完成，见 §9 |
+| 宿主能力 | DSH 的会话 + preset、jobs 服务、permission preset、事件总线 | 换 DSC 对应件：`Session.create`、`ctx.jobs`、`workspace-write`、自己发事件 | 已完成，差异见 §17.5 |
+| 功能入口 | `src/app/tools/*`、`prompts/*.md`、`sources/*` | **本轮要补的都在这一层** | 缺六项 |
+
+三条不改：
+
+1. `core/` 一行不动。所有动作都从 `Engine` 的公开方法走，它已经全齐：
+   `decide`（`core/engine.ts:100`）、`attach`（`:109`）、`requestStatus`（`:127`）、`reply`（`:135`）、
+   `reevaluate`（`:145`）、`unsubscribe`（`:155`）、`retryTicket`（`:166`）、`note`（`:221`）。
+2. 界面只调 `INVOKABLE_METHODS` 里的白名单方法，不新开旁路。
+3. 工具只走 `ctx.tools.register` + `ctx.tools.project`，跟现有的 `superagent_report` 同一条路
+   （`index.ts:1247-1260`）。
+
+判据：每一项都要写得出「上游行为（`文件:行号`）→ DSC 等价物（`文件:行号`）→ 一条包级测试」。
+三样缺一样，算没做。
+
+### 17.2 六项差距
+
+| # | 项 | 上游位置 | 我们缺什么 | 改造方式 |
+| --- | --- | --- | --- | --- |
+| 1 | 主会话工具 14 个 | `src/app/tools/main.ts:155-300` | 一个都没有；`core/errors.ts:14-35` 的拒话点了 `orchestrator_route`、`orchestrator_ticket_request_status` 的名，在 DSC 里指向不存在的工具 | 新增 `main-tools.ts`，逐条包成 DSC 工具；数据读 `service.surface()` 快照，不搬上游 303 行资源分页框架（`app/resources.ts`） |
+| 2 | worker 协作工具 4 个 | `src/app/tools/executor.ts:1-103` | 只有 `superagent_report`；worker 没法说「这条消息不归我」 | 补 `ack` / `thread_unrelated` / `thread_follow` / `trigger_handback`，落点复用 `core/tickets.ts` 已有的 `handback` 路径 |
+| 3 | 面板回答入口 | 上游由 `orchestrator_reply` + 来源消息承担 | 7 个 RPC 里没有 answer：工单停在「等你回答」时，面板只能停或重试，必须去 GitHub 评论 / 飞书回话才能解开 | 新增 `superagentAnswer`，造一条 `human: true, addressed: 'direct'` 的 manual Trigger，threads 取这张单订阅的线程，走 `Engine.receive` —— 与 GitHub 评论进来同一条路（`core/intake.ts:31-59`），不新增分支 |
+| 4 | PR 认领 | `app/tools/executor.ts` 的 `pr_number` | `pr_number` 全仓 0 命中；现在只能靠分支名自动绑定（`bind.ts`） | `superagent_report` 加 `pr_number`，写进 `Ticket.follows`（`core/model.ts`），`pullOf`（`github/pull.ts:47`）与 `pollPullChecks` 已经能消费它 |
+| 5 | 提示词定制 | `prompts/` 15 个 md + `app/prompts.ts:244` | 只有 `prompts/worker.md` 一篇（`executor.ts:506-516` 已按文件读，读不到用兜底常量） | 拆成 `shared.md` + `worker.md` + `orchestrator.md` 三卷，按角色组装；设置里先做只读预览，可编辑放后一批 |
+| 6 | 多来源注册表 | `sources/registry.ts:135`、`kind.ts:112`、`host.ts:66` | 三个来源写死在 `index.ts`，`repoPath` 是全局单值，一台实例只能挂一个 GitHub 仓库 | 抽 `SuperagentSource` 接口（start / stop / status / scope / views）+ 登记表，设置按 `source:<id>` 分块；改动面最大，压到最后 |
+
+### 17.3 工具名映射
+
+上游前缀 `orchestrator_`，我们统一 `superagent_`（与已有的 `superagent_report` 一致）。语义不变，
+描述文字按上游逐条对齐（`main.ts` 里每条的 description 就是行为规范），措辞按本仓风格写中文。
+
+| 上游 | 我们 | 批 |
+| --- | --- | --- |
+| `orchestrator_read`（`main.ts:158`） | `superagent_read` | P1 |
+| `orchestrator_route`（`:125-153`） | `superagent_route` | P1 |
+| `orchestrator_ticket_request_status`（`:167-175`） | `superagent_ticket_status` | P1 |
+| `orchestrator_ticket_note`（`:176-187`） | `superagent_ticket_note` | P1 |
+| `orchestrator_reply`（`:223-239`） | `superagent_reply` | P1 |
+| `orchestrator_ticket_retry`（`:161-166`） | `superagent_ticket_retry` | P2 |
+| `orchestrator_trigger_requeue`（`:188-201`） | `superagent_trigger_requeue` | P2 |
+| `orchestrator_eval` / `_read` / `_decide`（`:202-222`） | `superagent_eval*` | P2 |
+| `orchestrator_thread_unsubscribe`（`:240-247`） | `superagent_thread_unsubscribe` | P2 |
+| `orchestrator_settings_save` / `_policy_sync` / `_prompts_save`（`:248-299`） | `superagent_settings_save` 等 | P2 |
+| `orchestrator_ack` / `_thread_unrelated` / `_thread_follow` / `_trigger_handback` | `superagent_ack` 等 | P3 |
+| `orchestrator_report` | `superagent_report`（已有，`tools.ts:81`） | 完成 |
+
+### 17.4 五个批次
+
+每批能独立验收，做完一批提交一次。
+
+**P1 主会话工具（5 个：read / route / ticket_status / ticket_note / reply）**
+
+- 为什么先这 5 个：`route` 是接受、挂靠、忽略、停止候选的唯一正路，现在只有面板按钮；`reply` 是
+  worker 答案回到人的那条路；`read` 与 `ticket_status` 是模型判断前要看的现场。
+- 改哪些：新增 `src/packages/superagent/main-tools.ts`（与 `tools.ts` 同构：一个
+  `createXxxTool(deps)` 一个文件内函数，依赖面收窄到一个「主会话端口」）；`runtime.ts` 加这个
+  端口（九个引擎方法的薄包装 + 读快照 + `isWorkerSession`）；`index.ts` 里 `ctx.tools.register`。
+- **worker 不会被污染**：执行器的工具目录是按 `WORKER_TOOL_NAMES` 白名单挑的
+  （`executor.ts:936-956`），新注册的工具不加进那份名单就到不了 worker。所以这里**不需要**在
+  executor 里再滤一道，也不需要 `project` ——主会话工具对每个用户会话可见，跟 `web_search`
+  这类工具一个待遇。要收窄到特定模式，给 `ToolEntry.presets` 打标签即可（`core/tools.ts:129`）。
+- **主会话怎么认**：`project` 的第二个参数是 `AgentScope`（`src/packages/tools/index.ts:44-47`），
+  按它判「这条会话是不是 superagent 的 worker」；工具内部再用 `ctx.sessionId` 兜一道
+  （不是 worker 会话就抛一句人话），两道都过不了才是干净。
+- 验收：`tests/main-tools.test.mjs`，至少覆盖 route 四个分支（accept / attach / ignore / stop）、
+  一个被拒的分支（`UserError` 转成 `refused` 而不是抛出去）、`requestStatus` 只对 idle 工单生效
+  返回 true。全部用假 Engine，不起真会话。
+
+**P2 剩下 9 个主会话工具**
+
+- 其中 3 个 `eval*` 会碰评估器（`adapters/assessor.ts` 已有），`settings_save` 碰设置块与 revision
+  校验（上游 `app/settings.ts:263` 那套）。风险点是 revision 冲突：上游失败就拒，我们要给出
+  「设置已被别处改过，先读再改」的明确回话，不能静默覆盖。
+
+**P3 worker 四件套 + PR 认领**
+
+- 四件套里 `thread_unrelated` / `thread_follow` 依赖线程订阅，我们 `thread` 表已经有
+  `subscriptions` / `context` 两列（`core/intake.ts:38-46` 在用）；`ack` 是纯状态标记。
+- `trigger_handback` 的语义是「这条消息不归我」，落点 `core/tickets.ts` 的 handback，然后重新入
+  候选队列——这条要单测覆盖「交回去之后出现在候选里，且原工单不重复收」。
+- PR 认领：`superagent_report` 加可选 `pr_number`，`runtime.reportBySession` 里把它转成
+  `Ticket.follows` 的一条；已有 `bindAgentPulls` 兜底，两条路不冲突（认领是幂等的按 PR 号去重）。
+
+**P4 提示词三卷**
+
+- 现状是单卷（`prompts/worker.md`），读文件失败有兜底常量（`executor.ts:506-516`）。
+- 改成 `shared.md`（工单与环境段）+ `worker.md`（执行者视角）+ `orchestrator.md`（主会话视角），
+  执行器按角色拼。设置里加「查看当前提示词」一项，先只读；可编辑需要接版本号防覆盖，放 P5 之后。
+- 风险：主会话提示词住在宿主（DSC 的会话提示词骨架），要塞进 `prompt.registerSkeletonFilter`
+  那套机制（`src/packages/presets/index.ts:205-211` 是现成例子），别绕过它直接写系统提示词。
+
+**P5 多来源注册表**
+
+- 现状：`index.ts` 里 github / feishu / manual 三处写死，设置是 19 个平铺字段
+  （`index.ts:439-583`）。
+- 改成：`adapters/sources.ts` 定义 `SuperagentSource` 与登记表，每个来源一份 `source:<id>` 配置块，
+  设置面板按来源渲染。这是唯一会动到设置存储结构的批次，要单独一批、单独回滚点。
+- 代价说清楚：改完旧设置的迁移要写（`adapters/store.ts` 的 `MIGRATIONS` 加一版），且
+  `superagentAcceptCandidate` 那几个 RPC 的参数要从「全局」变成「来源 + 全局」。收益是一台实例
+  能挂多个仓库——如果短期没有第二个仓库，这批可以一直压着。
+
+### 17.5 刻意不追平的四处
+
+| 项 | 上游 | 我们 | 理由 |
+| --- | --- | --- | --- |
+| 沙箱 | 以操作者身份、免审批（`docs/006`） | 钉 `workspace-write`（`executor.ts:577-581`） | 后台无人值守的 agent 不该有全盘写权限 |
+| 会话 | `sessions.ensure` + preset（前台命令 5 秒转后台） | `Session.create`，`run_in_background` 进 `ctx.jobs` | DSC 没有 preset 与那个 5 秒规则；行为等价，实现不同 |
+| 中途投递 | `steer`（插进当前回合） | `followup`（回合收尾后读，`executor.ts:1039`） | DSC 的 agent 没有 steer 语义；代价是新消息晚一拍 |
+| 并发 | `maxWorkers` + 额外一格只给人唤醒 | 只有 `maxWorkers`（`executor.ts:972`），等人时 worker 不退场 | 换来的是人一回话就接着干，不重启会话；代价是两张单都在等人时会占满名额 |
+
+### 17.6 不做
+
+| 项 | 上游 | 为什么不搬 |
+| --- | --- | --- |
+| `deployment.ts`（123 行）、`versions.ts`（33 行） | 部署单实例、自报版本 | 桌面应用没有「部署」这一步；版本由 `package.json` 与 tag 管 |
+| `app/resources.ts`（303 行）分页 | 面板一次只给一页，模型按 offset 翻 | DSC 的 `surface()` 一次给全量，分页是上游宿主限制的产物 |
+| `app/skill-files.ts`（32 行） | 往 DSH 技能目录写文件 | 我们的提示词走包内 md（`executor.ts:507`），不需要第二条路 |
+
+### 17.7 顺序与验收
+
+顺序 P1 → P2 → P3 → P4 → P5。P1 是地基：`read` 与 `route` 会被另外几批的提示词引用。
+
+每批的验收命令（一条不能少）：
+
+```
+pnpm run build
+pnpm run check:plugin
+node scripts/package-tests.mjs
+```
+
+- 新增测试文件会自动进门禁，用例数记在 `package-tests.mjs` 的汇总里；
+- 动到 `src/contract/runtime.ts`（P3 的回答入口要加 `SuperagentAnswerInput`）时，单独提交，
+  因为契约一动界面与运行期两边同时编译，不能和别人并行；
+- 不改 `core/`，改了就是越界——需要新能力时先看 `Engine` 有没有，没有就写在适配层，别往核心里塞。
+
+### 17.8 实施记录（2026-11-16，八批）
+
+每批派一个子代理实现，主协调者逐批读代码、独立重跑门禁后才放行。八批里有四批在审查中发现了偏离或既有缺陷，当场修掉：
+
+| 批 | 内容 | 审查时改了什么 |
+| --- | --- | --- |
+| P1 | 主会话 5 工具（read / route / ticket_status / ticket_note / reply）+ 运行期窄端口 | 子代理用 `as unknown as` 去读执行器私有 `workers` 表；改成执行器露只读方法 `ownsSession`，运行期按结构探一次 |
+| P2 | 再 3 个（ticket_retry / trigger_requeue / thread_unsubscribe） | 无 |
+| P3 | worker 四件套 + `report` 扩到 5 参数 + worker 白名单与投影 | 子代理为兼容旧测试保留了隐式旧参数名 `question`；删掉别名并改测试，参数表只有 `human_action` |
+| P4 | 接 `prepareTicket`（修 `execution` 从不写入的缺陷）+ PR 认领 | 无；它自己把 `execution.name` 存成完整工作树名（含 id 后缀）而不是原始短名，核对后确认这是对的——分支末段就是完整名，存短名会让 `ticketBranch` 永远为假 |
+| P5 | 面板回答入口（契约 + RPC + 界面） | 补了 `attention.question` 的显示链路（否则回答框在盲回）；顺手修掉 HEAD 上 `overview.tsx` 的既有类型错误——`build:ui` 在开工前就是红的 |
+| P6 | 提示词拆两卷（shared / worker）+ 覆盖 + 保存与读取 | 无；正文零增删，只把分隔空行移到拼接处 |
+| P7 | `settings_save` + `eval` / `eval_decide` + settings / candidate 资源 | 无 |
+| P8 | worker 上下文读取 `superagent_context` | 无 |
+
+顺带修掉的既有缺陷（都不是本计划引入的）：
+
+1. **`Ticket.execution` 从来没被写过**（§17.4 的目标之一）。后果：`ticketBranch` 永远为假，`bindAgentPulls` 里「机器人开的、分支名对得上」这条自动绑 PR 的路一直绑不上任何东西；`route` 的 `worktree_name` 也是空转。P4 接上 `prepareTicket` 之后两条都通了。
+2. **`build:ui` 在 HEAD 上就是失败的**：`ui-superagent/ui/overview.tsx` 把 `{ text, detail }` 塞给了字符串状态。P5 顺手修掉。
+3. **运行期读执行器私有字段**（P1 引入、审查时改掉）。
+
+### 17.9 工具对照（上游 19 → 本仓 18）
+
+| 上游（`orchestrator_*`） | 本仓 | 角色 | 一致性 |
+| --- | --- | --- | --- |
+| `read`（主会话） | `superagent_read` | 主 | 参数同形状（resource / offset / limit）；资源集换成快照面能给的 |
+| `read`（worker） | `superagent_context` | worker | **收窄**：只有 ticket / thread / input 三种资源，没有图片与文件；只读自己这张单 |
+| `route` | `superagent_route` | 主 | 四种 kind、每条独立成败、字段按 kind 校验，逐条对齐 |
+| `ticket_retry` | `superagent_ticket_retry` | 主 | 一致 |
+| `ticket_request_status` | `superagent_ticket_status` | 主 | 一致 |
+| `ticket_note` | `superagent_ticket_note` | 主 | 一致（上限从 30 词改 500 字） |
+| `trigger_requeue` | `superagent_trigger_requeue` | 主 | 一致（含「还归某张单」的拒绝） |
+| `eval` | `superagent_eval` | 主 | **换实现**：判定已由判定模型做完，这里只载入结论现场 |
+| `eval_read` | —（并入 `superagent_read` 的 `candidate:<id>`） | 主 | **合并**：少一个工具，能力等价 |
+| `eval_decide` | `superagent_eval_decide` | 主 | **换实现**：接 / 忽略一条已有结论，不是重新判定 |
+| `reply` | `superagent_reply` | 主 | 三种 purpose、参数上限一致 |
+| `thread_unsubscribe` | `superagent_thread_unsubscribe` | 主 | 一致 |
+| `settings_save` | `superagent_settings_save` | 主 | **换实现**：按单字段保存（与设置页同一个 save），没有块 + revision |
+| `policy_sync` | **未实现** | — | 我们没有「同步群」这个概念，飞书允许名单直接由 `settings_save` 改 |
+| `prompts_save` | `superagent_prompts_save` | 主 | **收窄**：只保存 worker 侧两卷，主会话提示词归宿主 |
+| `ack` | `superagent_ack` | worker | 一致 |
+| `thread_unrelated` | `superagent_thread_unrelated` | worker | 一致 |
+| `thread_follow` | `superagent_thread_follow` | worker | 一致（reason 只做校验与回话，不落通知） |
+| `trigger_handback` | `superagent_trigger_handback` | worker | 一致 |
+| `report` | `superagent_report` | worker | 五态 + `human_action` + `askedBy` + `answers` 对齐；`pr_number` 走认领 |
+
+### 17.10 仍然存在的差异（逐条说清影响）
+
+| 项 | 上游 | 本仓 | 影响 |
+| --- | --- | --- | --- |
+| 工具名前缀 | `orchestrator_` | `superagent_` | 仅命名；模型看到的是新名字，提示词已同步 |
+| 评估三件 | 主会话模型亲自研判（eval → eval_read → eval_decide） | 判定模型已出结论，工具只看结论并拍板 | DSC 的候选收件箱就是这个架构；功能上「人能否接单」一致，差别是没人能改判定理由 |
+| 设置并发 | 块 + revision，版本不符就拒 | 单字段、最后写入生效 | 多人同时改同一项时没有冲突提示；桌面单用户场景影响很小 |
+| 提示词卷数 | 三卷（含 orchestrator） | 两卷（worker 侧） | 主会话提示词归宿主的提示词骨架，插件不越界；worker 侧可覆盖可保存 |
+| worker 读的资源 | 消息 / 图片 / 文件 / 线程 | ticket / thread / input | worker 读不到图片与仓库文件清单（文件本来就能用 `read` 工具读） |
+| `policy_sync` | 从飞书同步群刷新名单 | 未实现 | 名单在设置里手填或用 `settings_save` 改 |
+| 多来源注册表 | 有（`sources/registry.ts`） | 不做（§14 第 7 条） | 单仓库；要做时按 §17.4 的 P5 走 |
+| `Ticket.branch` / `changedFiles` | —— | 契约与界面都有字段，运行期仍不填 | 既有缺口，与本次无关；`execution.name` 现在有了，填 `branch` 是几行的事，留给界面改版时一起做 |
+
+### 17.11 验收证据（最终树，2026-11-16）
+
+```
+pnpm run build            → exit 0
+pnpm run build:ui         → exit 0（22 份 bundle，SDK 类型树重写 0 份）
+node scripts/style-check.mjs → exit 0（1438 个文件）
+pnpm run check:plugin     → exit 0（91 个包 / 127 个用例 / 通过 127 / 失败 0；换包 e2e 17 PASS / 0 FAIL）
+```
+
+代码量：23 个受跟踪文件 +2378 / −205，新增 `main-tools.ts`（1243 行）、`prompts/shared.md`（34 行）与 6 个测试文件（2016 行）。
+
+新增测试：`main-tools`（20 组）、`worker-tools`（14 组）、`answer`（6 组）、`pull-claim`（6 组）、`prompts`（7 组）、`eval-settings`（11 组）。
