@@ -189,3 +189,82 @@ export function lastSessionPointer(target: CliHome): string | null {
 export function countLines(path: string): number {
   return readFileSync(path, 'utf8').split(/\r?\n/).filter((line) => line.trim() !== '').length
 }
+
+/** C3 的 PTY 驱动：POSIX 标准库实现，Windows 上由调用方显式 skip。 */
+export const PTY_DRIVER = join(ROOT, 'tests', 'cli', 'pty-driver.py')
+
+/** PTY 脚本的一步：等 `after` 出现、再等 `delayMs`，然后送 `send`。 */
+export interface PtyStep {
+  send: string
+  /** 输出里出现该子串后才发送（例如等模型回复落地）。 */
+  after?: string
+  /** 发送前至少等待的毫秒数。 */
+  delayMs?: number
+}
+
+/** PTY 驱动的结果：退出码、是否超时、去掉不了 ANSI 的整段输出。 */
+export interface PtyResult {
+  code: number | null
+  timedOut: boolean
+  output: string
+}
+
+/**
+ * 在真 PTY 里跑 `bin/dsc.js`：C3 需要「往 TUI 里敲字」，管道 stdin 做不到。
+ *
+ * @param args - 传给 `bin/dsc.js` 的参数
+ * @param target - 隔离主目录
+ * @param steps - 按键脚本（见 `PtyStep`）
+ * @param opts - 超时与额外环境变量（例如假模型的 key）
+ */
+export async function runInPty(
+  args: string[],
+  target: CliHome,
+  steps: PtyStep[],
+  opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+): Promise<PtyResult> {
+  const timeoutMs = opts.timeoutMs ?? 60_000
+  const python = process.env['DSC_PYTHON'] ?? 'python3'
+  const child = spawn(python, [PTY_DRIVER, String(timeoutMs), process.execPath, CLI_ENTRY, ...args], {
+    cwd: target.home,
+    env: {
+      ...envFor(target),
+      ...(opts.env ?? {}),
+      DSC_PTY_STEPS: JSON.stringify(steps),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  })
+  const closed = new Promise<number | null>((resolveClose, rejectClose) => {
+    child.on('error', (error) => rejectClose(new Error(`PTY 驱动起不来（${python}）：${error.message}`)))
+    child.on('close', (code) => resolveClose(code))
+  })
+  // 驱动自己有超时；这层是防「驱动本身卡死」的兜底，比它多给 10 秒。
+  const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs + 10_000)
+  let code: number | null
+  try {
+    code = await closed
+  } finally {
+    clearTimeout(timer)
+  }
+  const lastLine = stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '')
+    .at(-1)
+  if (lastLine === undefined) {
+    throw new Error(`PTY 驱动没有输出（exit ${String(code)}）：${stderr.slice(-500)}`)
+  }
+  try {
+    return JSON.parse(lastLine) as PtyResult
+  } catch {
+    throw new Error(`PTY 驱动输出不是 JSON（exit ${String(code)}）：${lastLine.slice(0, 500)}`)
+  }
+}

@@ -7,11 +7,12 @@
  * 走 `bin/dsc.js` → `lib/boot.js` 的产物平面。所以它也是唯一能发现「启动器自己坏了」
  * 的层——参数翻译、子进程转发、退出码传递都在这里。
  *
- * ## 六条能自动跑，一条只在有 key 时跑
+ * ## 七条无网无 key，C3 在 POSIX 上用 PTY 跑
  *
- * C1/C2/C4/C5/C6/C7/C8 全部无网无 key。C3（无参数 + 一句输入 → 真模型回复）需要
- * live key，而且要往 TUI 里敲字——没有 PTY 的管道 stdin 不能模拟按键，所以 C3 在
- * 本层**只做跳过**（见文末 test.skip 的理由），真模型链由 `tests/live/` 那五条覆盖。
+ * C1/C2/C4/C5/C6/C7/C8 全部无网无 key。C3（无参数 + 一句输入 → 回复）需要往 TUI 里
+ * 敲字：管道 stdin 模拟不了按键，所以用 `pty.fork()` 起一个真终端（`tests/cli/pty-driver.py`，
+ * 与 DSH 的 headless-shutdown e2e 同一套标准库口径）。模型用 `fakeLLM`，不连真 API。
+ * Windows 没有 `pty` 模块，C3 在 Windows 上显式 skip；Linux/CI 上真跑。
  *
  * ## C4/C6 是本批同时修好的产品行为
  *
@@ -24,8 +25,17 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { runCli } from '../harness.js'
-import { CLI_ENTRY, ROOT, lastSessionPointer, makeHome, spawnCli, waitForLeases } from './support.js'
+import { fakeLLM, runCli } from '../harness.js'
+import {
+  CLI_ENTRY,
+  ROOT,
+  lastSessionPointer,
+  makeHome,
+  runInPty,
+  sessionFiles,
+  spawnCli,
+  waitForLeases,
+} from './support.js'
 
 /** `package.json` 的版本：C2 的判据来源（不写死，发一次版不用改测试）。 */
 const VERSION = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string }).version
@@ -121,11 +131,42 @@ describe('真入口 e2e（bin/dsc.js）', () => {
     expect(`${resumed.stdout}${resumed.stderr}`).not.toContain('启动失败')
   })
 
-  test.skip('C3 无参数 + 一句输入：有 key 时回复非空 [B42]', () => {
-    // 见文件头：管道 stdin 模拟不了 TUI 按键，这一条没有 PTY 就跑不起来。
-    // 不留条件跳过（有 key 时也不跑）——条件跳过会给人「配了 key 就覆盖了」的错觉。
-    // 真模型链由 tests/live/ 的五条覆盖；本用例等 node-pty 进依赖后补（B42）。
-  })
+  test.skipIf(process.platform === 'win32')(
+    'C3 无参数 + 一句输入：PTY 里敲字，假模型回复落地、两次 Ctrl+C 退出 0',
+    async () => {
+      const target = makeHome()
+      const llm = await fakeLLM({ turns: ['收到，这里是测试回复。'] })
+      try {
+        // 最小可用配置：端点指向假模型，key 从环境变量来（config 的 apiKeyEnv 语义）。
+        writeFileSync(
+          join(target.dscHome, 'config.yaml'),
+          `default:\n  provider: test\n  model: m\nproviders:\n  test:\n` +
+            `    baseURL: ${llm.baseUrl}\n    apiKeyEnv: K\n    models:\n      - id: m\n        name: m\n`,
+          'utf8',
+        )
+        const result = await runInPty(
+          [],
+          target,
+          [
+            // TUI 起来要装配全部插件；冷启动给足 10 秒（CI 上比开发机慢）。
+            { send: '你好\r', delayMs: 10_000 },
+            // 等回复真的画出来，再按退出组合键（第一次 Ctrl+C 是打断，第二次才退出）。
+            { send: '\u0003', after: '收到，这里是测试回复。' },
+            { send: '\u0003', delayMs: 200 },
+          ],
+          { timeoutMs: 90_000, env: { K: 'k' } },
+        )
+        expect(result.timedOut, result.output.slice(-800)).toBe(false)
+        expect(result.output).toContain('收到，这里是测试回复。')
+        expect(result.code, result.output.slice(-800)).toBe(0)
+        // 真会话落盘：C3 不只验屏幕，还验这句输入进了会话文件。
+        expect(sessionFiles(target).length).toBeGreaterThan(0)
+      } finally {
+        await llm.close()
+      }
+    },
+    120_000,
+  )
 
   test('入口文件存在且可被 node 解析（防止改名后所有 CLI 用例假绿）', () => {
     expect(CLI_ENTRY.endsWith('dsc.js')).toBe(true)
