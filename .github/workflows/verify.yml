@@ -390,6 +390,10 @@ jobs:
         run: pnpm -C ui-shell build
       - name: 界面自检
         run: pnpm run check:ui
+      # B49：产物层（插件 client.js / 界面 SDK 类型树 + examples tsc）。到这一步两份产物
+      # 都刚构建完，正好是它要的输入。
+      - name: 构建产物层
+        run: pnpm run test:built
       # 插件门禁放这里而不是 PR 门：它包含 plugin-inventory-check，需要上面刚刚构建出来的
       # lib/ui/plugins/。到这里两份产物都齐了，加这条不多花构建时间。
       # 包级测试已不在这一串里：119 条 2026-11-13 迁进 Vitest，由 PR 门的 pnpm test 覆盖。

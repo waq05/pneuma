@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | `vitest.config.ts` | 主配置：四个常驻 project（unit / integration / ui / snapshot） | P0 |
 | `vitest.e2e.config.ts` | 真 Chromium 的独立配置 | P3 |
-| `vitest.bench.config.ts` | 性能基准的独立配置（plain node，禁 tsx） | P5 |
+| `vitest.bench.config.ts` | ~~性能基准的独立配置~~ **未建**：实做是 plain node `tests/bench/run.mjs`（D34） | P5 |
 | `vitest.live.config.ts` | 真模型冒烟的独立配置（无 key 整层跳过） | P5 |
 | `tests/plugins/js-to-ts.ts` | 解析插件：`.js` → `.ts` 回退 | P0 |
 | `tests/harness.ts` | 共享夹具（7 个导出） | P1a |
@@ -63,8 +63,11 @@
 "jsdom": "^26.1.0",
 "@vitejs/plugin-react": "^5.2.0",
 "react-dom": "^19.2.0",          // 见下方「为什么根项目也要一份」
-"fast-check": "^3.23.0"          // P7 属性测试才用，可后装
+"fast-check": "^4.10.2",          // P7 属性测试；实际装的是 4.x，用 fc.assert(fc.property(...))，不装 @fast-check/vitest
+"@testing-library/react": "^16.3.3" // 渲染批 R1/R2/R3a/R3b 实装后加的；design 早期写「不装」，已被 42 个 ui spec 使用
 ```
+
+**不装**：`jest`、`c8`、`nyc`、`ts-jest`（与 Vitest 冲突或重复）。
 
 约束与理由：
 
@@ -127,20 +130,20 @@ export default defineConfig({
 而 `--passWithNoTests` 因为一条测试都没跑，照样绿。实装时做过对照实验：去掉 `extends`，
 同一个冒烟用例立刻失败。
 
-### 3.2 四个常驻 project 的字段值与理由
+### 3.2 五个常驻 project 的字段值与理由（实做，比设计多一个 tui）
 
-| 字段 | `unit` | `integration` | `ui` | `snapshot` |
-| --- | --- | --- | --- | --- |
-| `include` | `['src/**/*.spec.ts']` | `['src/**/*.int.spec.ts']` | `['src/packages/*/ui/**/*.spec.{ts,tsx}']` | `['tests/snapshots/**/*.snapshot.ts']` |
-| `exclude` | `['src/packages/*/ui/**', 'src/**/*.int.spec.ts', '**/node_modules/**']` | `['src/packages/*/ui/**']` | `['**/node_modules/**']` | 不写（沿用默认） |
-| `environment` | `'node'` | `'node'` | `'jsdom'` | `'node'` |
-| `testTimeout` | `5_000` | `60_000` | `10_000` | `60_000` |
-| `hookTimeout` | `5_000` | `30_000` | `10_000` | `30_000` |
-| `retry` | `0` | `1` | `0` | `1` |
-| `pool` | 默认（threads） | `'forks'` | 默认 | `'forks'` |
-| `sequence.concurrent` | 默认 | `false` | 默认 | `false` |
-| `setupFiles` | 无 | `['tests/setup/temp-home.ts']` | `['tests/setup/dom.ts']` | 无 |
-| `plugins` | 继承 | 继承 | `[react()]` 追加 | 继承 |
+| 字段 | `unit` | `integration` | `ui` | `snapshot` | `tui` |
+| --- | --- | --- | --- | --- | --- |
+| `include` | `['src/**/*.spec.ts', 'tests/**/*.spec.ts']` | `['src/**/*.int.spec.ts', 'tests/**/*.int.spec.ts']` | `['src/packages/*/ui/**/*.spec.{ts,tsx}']` | `['tests/snapshots/**/*.snapshot.ts']` | `['src/packages/tui/**/*.spec.{ts,tsx}']` |
+| `exclude` | ui 半 / tui / int / live / cli / node_modules | ui 半 / live / cli | node_modules | 不写（沿用默认） | `src/**/*.int.spec.ts` / node_modules |
+| `environment` | `'node'` | `'node'` | `'jsdom'` | `'node'` | `'node'` + 假终端 |
+| `testTimeout` | `5_000` | `60_000` | `10_000` | `60_000` | `15_000` |
+| `hookTimeout` | `5_000` | `60_000` | `10_000` | `60_000` | `15_000` |
+| `retry` | `0` | `1` | `0` | `1` | `0` |
+| `pool` | 默认（threads） | `'forks'` + `maxWorkers: 4` | 默认 | `'forks'` | `'forks'` |
+| `sequence.groupOrder` | 1 | 2 | 3 | 4 | 5 |
+| `setupFiles` | 无 | `['tests/setup/temp-home.ts']` | `['tests/setup/dom.ts']` | 无 | 无 |
+| `plugins` | 继承 | 继承 | `[react()]` 追加 | 继承 | 继承 |
 
 理由：
 
@@ -157,32 +160,27 @@ export default defineConfig({
 
 ### 3.3 覆盖率配置（分阶段）
 
-P3（只度量，不设门槛）：
+P3/P4 实做（2026-11-16 审计后口径统一为**全五 project**，见 D40/B47）：
 
 ```ts
 coverage: {
   provider: 'v8',
   reporter: ['text', 'html', 'json-summary'],
-  include: ['src/core/**/*.ts', 'src/packages/*/*.ts'],
+  include: ['src/core/**/*.ts', 'src/packages/**/*.ts', 'src/packages/**/*.tsx'],
   exclude: [
-    'src/packages/*/ui/**',        // 界面半单独算
-    '**/*.d.ts',
-    '**/types.ts',                 // 纯类型文件
-    'src/packages/*/ui/plugins/**',// 构建产物
+    'src/**/*.spec.ts',
+    'src/**/*.int.spec.ts',
+    'src/**/types.ts',
+    'src/packages/tui/**',       // tui 由 tui project 单独跑；include 它会重复计
+    '**/node_modules/**',
   ],
+  thresholds: { ...coverageBaseline }, // 全局四项 + directories 的 glob 门
 }
 ```
 
-P4（冻结基线）起，加自定义门槛，**不用** `perFile: 100`：
-
-```ts
-thresholds: {
-  lines: baselineCoverage.lines,      // 从 coverage-baseline.json 读，初始即当前值
-  branches: baselineCoverage.branches,
-  functions: baselineCoverage.functions,
-  statements: baselineCoverage.statements,
-}
-```
+`test:coverage` 显式跑 unit / integration / ui / snapshot / tui 五个 project；阈值从
+`coverage-baseline.json` 读（实测值减 0.5）。90% 目标与 W1–W6 分批见
+[testing-coverage-plan.md](testing-coverage-plan.md)。
 
 `coverage-baseline.json` 格式：
 
@@ -553,7 +551,7 @@ export function expectGolden(actual: string, name: string, opts?: { update?: boo
 
 | 项 | 规定 |
 | --- | --- |
-| 位置 | `src/**/*.e2e.ts`，独立 config |
+| 位置 | `tests/e2e/**/*.e2e.ts`（配置 `vitest.e2e.config.ts`；产物层走 `tests/built/**/*.built.e2e.ts` + `vitest.built.config.ts`） |
 | 环境 | 真 Chromium（Playwright 或现有 Electron 通道） |
 | 门禁 | 夜跑；默认 `pnpm test` 不包含 |
 | 单条预算 | < 120s |
@@ -578,20 +576,28 @@ export function expectGolden(actual: string, name: string, opts?: { update?: boo
 
 ## 8 快照层（录制会话回放）
 
-### 8.1 目录结构
+### 8.1 目录结构（实做）
 
 ```
 tests/snapshots/
 ├── session/
-│   ├── basic-turn/
-│   │   ├── scenario.snapshot.ts
-│   │   ├── session.jsonl
-│   │   └── expected.json
-│   ├── tool-call/
-│   ├── compact/
-│   └── ...
-└── golden/                      ← expectGolden 的文本快照（TUI 帧等）
+│   └── basic-turn/
+│       └── scenario.snapshot.ts     # 录制文件 session.jsonl 未入库 → 当前整段 skip（B45）
+├── tui/
+│   ├── frame-kit.ts
+│   └── frames.snapshot.ts           # 30 个 TUI 整屏帧
+├── browser/
+│   ├── dom.snapshot.ts              # 11 个真宿主 + 真 Electron 场景（含 review-findings）
+│   └── drivers/dom-shot.cjs         # CDP 驱动；支持 counts 与 computed styles
+├── recorder.ts                      # 录制代理（设计里的 support/scenario.ts 未采用）
+└── golden/
+    ├── tui/*.txt                    # 30 份
+    └── browser/*.txt                # 11 份
 ```
+
+`defineSnapshotScenario` / `tests/snapshots/support/scenario.ts` 未采用：实做是
+`scenario.snapshot.ts` 里直接用 `bootKernel` + `replayLLM`，录制走 `recorder.ts` 代理。
+会话场景的三种形态（回放 / 录制 / 显式 skip）与请求指纹校验仍按 §8.2–§8.5 的语义。
 
 ### 8.2 `scenario.snapshot.ts` 接口
 
@@ -793,42 +799,37 @@ CI workflow 里两步：
 
 ## 12 CI 配置
 
-### 12.1 `verify.yml` 改动
+### 12.1 `verify.yml` 实装（2026-11-16）
 
 ```yaml
-  core:
-    steps:
-      # ... 现有：安装、typecheck
-      - name: 测试代码的类型检查（两份 tsconfig）
-        run: pnpm run typecheck:spec
-      # ... 现有：check:style
-      - name: 单元与界面测试
-        run: pnpm test
-      - name: 集成测试
-        run: pnpm test:int          # 2026-11-13 提前到 PR 门，见下方说明
+# PR 门（每次 push / PR）
+core:        typecheck:spec + check:style + pnpm test（unit/ui/tui，Node 22/24 矩阵）
+integration: build + vitest --project integration --shard N/3
+bench:       build + test:bench
+cli:         build + test:cli
+ui:          ui-shell typecheck
+desktop:     build + desktop typecheck
+windows:     typecheck:spec + pnpm test（Windows 车道）
 
-  # 2026-11-13 曾短暂存在一个 plugin job（装依赖 → build → 跑 package-tests.mjs）。
-  # 2026-11-14 删除：119 条迁进 Vitest 后跟着 pnpm test 走 PR 门，它没有存在理由了。
+# 夜跑 / 手动（schedule + workflow_dispatch）
+probe:    build + check:core + ui-shell build + check:ui + check:plugin + check:ui:e2e
+snapshot: build + ui-shell build + xvfb-run test:snapshot
+e2e:      build + ui-shell build + xvfb-run test:e2e
+coverage: build + ui-shell build + xvfb-run test:coverage
 
-  probe:
-    steps:
-      # ... 现有：build、check:core、pnpm -C ui-shell build、check:ui
-      - name: 插件门禁全量
-        run: pnpm run check:plugin   # 需要 lib/ui/plugins/，所以排在界面壳构建之后
-      - name: 真入口 e2e
-        run: pnpm test:cli
-      - name: 覆盖率
-        run: pnpm test:coverage
-      - name: 性能基准
-        run: pnpm test:bench
+# 分支保护只认一个聚合 check
+all-checks-passed: needs [core, ui, desktop, integration, bench, cli, windows]
 ```
 
-两处与最初设想不同，都是实装时量出来的：
+`probe` / `snapshot` / `e2e` / `coverage` **不进 `needs`**：它们只在夜跑与手动触发，
+PR 上是 skipped；放进聚合门会把每个 PR 判红（B51 已定，注释写在 job 里）。
+
+与最初设想不同的两处：
 
 | 项 | 最初设想 | 实装 |
 | --- | --- | --- |
 | `check:plugin` | PR 门整串跑 | PR **不再跑它**：119 条包级测试已进 `pnpm test`；整串（模型校验/包标准/清单快照/装配/热替换）留夜跑，因为它含 `plugin-inventory-check`，要读 `lib/ui/plugins/`，得先编界面壳 |
-| `test:int` | 夜跑 | PR 门。15 条守线上事故（同一 callId 两条工具结果 → 网关 400），隔夜太慢；它只解析 `src/**` 不依赖 `lib/`，本地 905ms。超过两分钟再移回夜跑 |
+| `test:int` | 夜跑 | PR 门。15 条守线上事故（同一 callId 两条工具结果 → 网关 400），隔夜太慢。2026-11-14 起它手工带 `pnpm run build`，因为跑的是 lib 平面 |
 
 ### 12.2 新增 `test-live.yml`
 
@@ -876,8 +877,7 @@ jobs:
 
 ## 13 `package.json` scripts
 
-以下七条是**实际在跑的**（2026-11-14 抄自 package.json；设计稿里另列过 e2e/bench/live/cli/coverage，
-那些属 P3–P5，还没建）：
+以下为**实际在跑的**（2026-11-16 抄自 package.json）：
 
 ```jsonc
 {
@@ -886,17 +886,25 @@ jobs:
   "test:int": "pnpm run build && vitest run --project integration",
   "test:ui": "vitest run --project ui",
   "test:tui": "vitest run --project tui",
+  "test:e2e": "vitest run --config vitest.e2e.config.ts",
   "test:snapshot": "vitest run --project snapshot --passWithNoTests",
+  "test:cli": "vitest run --config vitest.cli.config.ts",
+  "test:live": "vitest run --config vitest.live.config.ts",
+  "test:built": "vitest run --config vitest.built.config.ts",
+  "test:bench": "node tests/bench/run.mjs",
+  "test:coverage": "vitest run --coverage --project unit --project integration --project ui --project snapshot --project tui --hookTimeout=20000 --testTimeout=20000",
   "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit && tsc -p ui-shell/tsconfig.spec.json --noEmit"
 }
 ```
 
-三条与设计稿不同，都是实装时改的：
+与设计稿的差异，都是实装时改的：
 
-- `test` 纳入了 `tui`。原本只跑 unit + ui，新加的 tui project 121 条用例从来没进过门禁。
-- `test:int` 前面加了 `pnpm run build`。integration 层跑的是 `lib` 平面（D25），不构建就是拿旧产物验新代码。
-- `test:snapshot` 带 `--passWithNoTests`：快照层（P4）还没建，不带这个参数照文档跑一次必红。
-`check:all` 在现有链尾追加 `pnpm run test`（只加快档）。
+- `test` 纳入了 `tui`（121 条 TUI 用例要进 PR 门）；snapshot 不进 `test`（要 Electron、分钟级）。
+- `test:int` 前面加了 `pnpm run build`：integration 跑的是 `lib` 平面（D25）。
+- `test:snapshot` 带 `--passWithNoTests`；会话场景当前整段 skip（B45）。
+- `test:e2e` / `test:cli` / `test:live` / `test:built` 各自独立 config，不挂主 projects。
+- `test:coverage` 显式全五 project（D40/B47），不是 `vitest run --coverage`。
+- `check:all` 链尾**没有**追加 `pnpm test`：CI 的 `core` job 已单列跑。
 
 ---
 

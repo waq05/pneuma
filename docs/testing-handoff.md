@@ -36,7 +36,7 @@
 | --- | --- |
 | `pnpm test`（unit + ui + tui） | **295 文件 / 3251 条 / exit 0**（2026-11-16 审计复跑） |
 | `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0**（交接时记录，审计未重跑） |
-| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 10 全绿；**会话回放 1 场景是 skip**（无 `session.jsonl`，B45） |
+| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 11 全绿；**会话回放 1 场景是 skip**（无 `session.jsonl`，B45） |
 | `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42/B50） |
 | `pnpm run test:e2e` | **8 文件 / 161 通过 + 1 skip / exit 0**（2026-11-16 审计复跑；B40 的 6 红已归零） |
 | `pnpm run typecheck:spec` | exit 0（2026-11-16 审计复跑，两份 tsconfig） |
@@ -56,7 +56,7 @@
 | `integration` | `**/*.int.spec.ts` | node + forks，60s，`maxWorkers: 4` | 先 `pnpm run build`（D25 混合平面） |
 | `ui` | `src/packages/*/ui/**/*.spec.{ts,tsx}` | jsdom，10s | 真渲染 React 组件 |
 | `tui` | `src/packages/tui/**/*.spec.{ts,tsx}` | node + 假终端，15s | ink 整屏帧（快照版工具 `tests/snapshots/tui/frame-kit.ts`） |
-| `snapshot` | `tests/snapshots/**/*.snapshot.ts` | node + forks，60s | TUI golden 30 + 会话回放 + 浏览器 DOM 10 |
+| `snapshot` | `tests/snapshots/**/*.snapshot.ts` | node + forks，60s | TUI golden 30 + 会话回放 + 浏览器 DOM 11 |
 | `cli`（独立配置） | `tests/cli/**/*.cli.e2e.ts` | node，60s | spawn 真 `bin/dsc.js` |
 | `live`（独立配置） | `tests/live/**/*.live.spec.ts` | node，180s | 无 key 整层跳过；`test-live.yml` 防假绿 |
 | `bench`（独立入口） | `tests/bench/*.mjs` | plain node | 只认 `lib/**`，先 build |
@@ -89,7 +89,7 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 1. **e2e 已全绿**：B40 修完（`779498b7`），全量 `8 文件 / 161 通过 + 1 skip / exit 0`。
    原 6 条已知红（`ui-anchor`×5、`ui-plugin-disable`×1）全部转绿，不再是已知态。
 2. **快照层的会话回放其实没跑**（B45）：`tests/snapshots/session/basic-turn/` 没有
-   `session.jsonl`，4 条用例整段 skip；TUI 帧 30 与浏览器 10 是实跑的。
+   `session.jsonl`，4 条用例整段 skip；TUI 帧 30 与浏览器 11 是实跑的。
 3. **CI 不跑 e2e / snapshot / coverage**（B46）：`verify.yml` 只有 `pnpm test`、`test:int`、
    `test:bench`、`test:cli`；快照与覆盖率门目前只在本机存在。
 4. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
@@ -161,7 +161,7 @@ git status --porcelain          # 应为空
 git log --oneline -10           # 本阶段的提交（P3–P7 + 2026-11-16 审计修复）
 pnpm test                       # 295 文件 / 3251 条
 pnpm run test:int               # 先 build；integration 全量（114 / 1883 + 1 skip）
-pnpm run test:snapshot          # TUI 30 + 浏览器 10；会话回放当前 skip（B45）
+pnpm run test:snapshot          # TUI 30 + 浏览器 11；会话回放当前 skip（B45）
 pnpm run test:cli               # 8 + 1 skip
 pnpm run test:e2e               # 8 文件 / 161 通过 + 1 skip
 pnpm run typecheck:spec && pnpm run check:style
