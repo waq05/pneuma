@@ -31,7 +31,7 @@ afterEach(() => {
       // Windows 上子进程刚退出时还攥着 cwd：临时目录留给系统清，不让收尾拖红用例。
     }
   }
-})
+}, 15_000)
 
 interface Setup {
   manager: LspManager
