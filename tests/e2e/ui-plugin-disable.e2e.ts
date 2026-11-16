@@ -245,8 +245,12 @@ describe.skipIf(!fresh.ok)('ui-plugin-disable e2e：停用 ui-ask 之后右侧�
   test('全部停用后：页签条只剩开始页', () => {
     expect(JSON.stringify(parsed?.final?.chips), JSON.stringify(parsed?.final?.chips)).toBe(JSON.stringify(['开始']))
   })
-  test('全部停用后：侧栏只剩「技能」（插件钮已随插件消失）', () => {
-    expect(JSON.stringify(parsed?.final?.nav), JSON.stringify(parsed?.final?.nav)).toBe(JSON.stringify(['技能']))
+  test('全部停用后：侧栏只剩「技能 / Super Agent」（本用例停掉的插件钮都已消失）', () => {
+    // 本用例停用的是 ui-ask / ui-preview / ui-files / ui-terminal / ui-browser / ui-plugins；
+    // ui-superagent 不在停用清单里，它的「Super Agent」一级入口仍在（产品现状）。
+    expect(JSON.stringify(parsed?.final?.nav), JSON.stringify(parsed?.final?.nav)).toBe(
+      JSON.stringify(['技能', 'Super Agent']),
+    )
   })
   test('全程页面没有 error/warning', () => {
     expect(Array.isArray(parsed?.console) && parsed?.console?.length === 0, JSON.stringify(parsed?.console).slice(0, 500)).toBe(true)
