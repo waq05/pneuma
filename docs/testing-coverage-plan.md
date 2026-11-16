@@ -251,6 +251,35 @@ ui-primitives 434、computer-use 344、ui-settings 313、tools-default 251，以
 `tui/app/App.tsx:1257` 的 hardline 审批卡键盘仍可放行（与 `ApprovalCard.tsx:157` 矛盾）；
 `ui-settings/ui/models.tsx:230` 的重复模型 id 校验漏了 `seen.add`，永远不触发。
 
+### 1.7 W9（2026-11-16，8 条线 / 321 条）
+
+W9 按 W4–W8 的包级缺口榜切分，八条线并行；重点从「大页面」转向「近零小包 + 残部分支」。
+
+| 线 | 条数 | 主攻 |
+| --- | ---: | --- |
+| superagent 残部 | 35 | replies 确认/结果/问答、store-read 游标与坏行、health 两库体检 |
+| goal/agent/ptc/llm/presets | 36 | 五个近零包的工具/命令/设置/回合投影（原先 1.5–21% 行覆盖） |
+| plugin-manager/permission-presets/ask/prompt/session | 55 | 插件启停/安装、预设切换、问答卡与超时、提示段与预算、会话生命周期 |
+| ops/doctor/commands/host-stdio/ui-runtime | 51 | worker 与 render、五类体检、斜杠命令、宿主桥、runtime 通道 |
+| ui-transcript | 30 | 检索/读取/待办/重试/附件/编辑/子代理/改动卡/刻度条 |
+| ui-composer + ui-settings | 52 | 排队条/通知条/模型菜单/@ 提及；模式/归档/用量/手机连接 |
+| ui-primitives + ui-ask + ui-sessions | 39 | 时间路径/Toast/Confirm/Select/Diff/Code/markdown；问答流；列表菜单 |
+| sandbox + computer-use | 43 | doctor 六项、装配 fail-closed、桌面控制闸门与审计 |
+
+实测：**38,888 / 46,646 = 83.36%**（W4–W8 36,043 / 77.26，+2,845 行 / +6.10 点）；
+statements 80.19 / functions 81.39 **已过 80 门**；branches 71.10 仍是短板；
+`src/core` 88.91 / 77.01 / 89.88 / 85.33。536 文件（535 过 / 1 skip）、7,081 用例（7,076 过 / 5 skip）、exit 0；
+基线抬到 83.3 / 71.1 / 81.3 / 80.1（`src/core` 88.9 / 77.0 / 89.8 / 85.3）。0% 文件 7 → 4（19 行）。
+
+**W9 复盘与分支债**：距 90% 还差 3,094 行，但 branches 差 8.9 点（约 3,594 个分支）才是真正的难点；
+行覆盖高的文件里仍藏着大量未走条件。分支缺口榜前几名：`computer-use/desktop-control.ts` 317、
+`ui-status/ui.tsx` 231、`superagent/core/tickets.ts` 198（行仅 34.65%）、`core/plugin-loader.ts` 189、
+`ui-sessions/ui.tsx` 172、`approval/index.ts` 157、`sandbox/win/runner-entry.ts` 157、
+`subagent/index.ts` 152、`ui-dockkit/dock-model.ts` 152。下一波按「行缺口 + 分支缺口」双榜切分，
+每条线都要求补错误路径/默认值/坏输入分支，不能只铺主路径。
+`runner-entry.ts` 已确认不可黑盒测（顶层无条件 `main()`、真 Windows 令牌/CreateProcessAsUserW/ConPTY、
+宿主只探测 lib 产物），进入排除台账候选。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
