@@ -123,6 +123,8 @@ interface Scenario {
   /** 窗口尺寸（窄屏场景用）。 */
   width?: number
   height?: number
+  /** 首帧前注入页面的脚本（驱动注册后补一次 reload）；「页面时钟钉死」这类能力走这里。 */
+  bootScript?: string
   actions: BrowserAction[]
   counts: CountSpec[]
   /** 真 Chromium 的 computed style（CSS 残留的替代断言；见 B37-R）。 */
@@ -297,13 +299,30 @@ function writeTeammateLog(dsc: string): string {
   return file
 }
 
+/**
+ * 快照的「今天」：钉死的时刻（本地正午）。热力图这类按真实日期铺格子的读数以它为锚，
+ * golden 才不会随真实日历每天挪一格——2026-11-17 起实测跨天必红：网格从「今天」回溯、
+ * 按周日对齐、尾部半列照收，`usage.heat.cells` 与 `dom.elements` 每天都 +1。
+ * 种子与页面时钟（`bootScript`）都用同一锚，场景内的时间函数全部确定。
+ */
+const SNAP_NOW = Date.parse('2026-11-17T04:00:00Z') // +08:00 本地正午
+
+/** 把页面 `Date` 钉死在 SNAP_NOW：`new Date()` 与 `Date.now()` 走固定值，parse/UTC/带参构造不动。 */
+const PIN_CLOCK_BOOT = `(() => {
+  const fixed = ${String(SNAP_NOW)}
+  class PinnedDate extends Date {
+    constructor(...args) { args.length === 0 ? super(fixed) : super(...args) }
+    static now() { return fixed }
+  }
+  window.Date = PinnedDate
+})()`
+
 /** 用量流水：近七天的固定条数，热力图、趋势、环形图都有数据。 */
 function writeUsage(dsc: string): void {
   const dir = join(dsc, 'usage')
   mkdirSync(dir, { recursive: true })
-  const now = Date.now()
   const rows = Array.from({ length: 7 }, (_, index) => {
-    const at = new Date(now - (index + 1) * 86_400_000)
+    const at = new Date(SNAP_NOW - (index + 1) * 86_400_000)
     at.setHours(10, 0, 0, 0)
     return {
       t: at.getTime(),
@@ -498,12 +517,14 @@ const SCENARIOS: readonly Scenario[] = [
     slug: '05-settings-usage',
     title: '设置-用量（热力图 + 趋势 + 环形图）',
     stable:
-      '用量流水按「相对今天」的固定条数生成，汇总值（总 token / 活跃天数 / 缓存命中）只随种子变化；' +
-      '日期与月标签是时间函数，归一成 `<date>` / `<month>`。',
+      '页面时钟钉死在 SNAP_NOW（2026-11-17 本地正午），用量流水按固定日期种子生成：' +
+      '热力图按「今天」回溯铺格，格子数与元素总数不再随真实日历逐日漂移（2026-11-17 跨天必红的根因）；' +
+      '汇总值（总 token / 活跃天数 / 缓存命中）只随种子变化；日期与月标签是时间函数，归一成 `<date>` / `<month>`。',
     seed: (dsc) => {
       writeConfig(dsc)
       writeUsage(dsc)
     },
+    bootScript: PIN_CLOCK_BOOT,
     actions: [
       { type: 'wait', selector: '.app' },
       {
@@ -836,6 +857,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
         DSC_DOM_STYLES: JSON.stringify(scenario.styles ?? []),
         DSC_DOM_WIDTH: String(scenario.width ?? 1280),
         DSC_DOM_HEIGHT: String(scenario.height ?? 860),
+        ...(scenario.bootScript === undefined ? {} : { DSC_DOM_BOOT_SCRIPT: scenario.bootScript }),
         DSC_DOM_BOOT: '.composer',
         DSC_DOM_SETTLE_MS: '1200',
       },

@@ -21,6 +21,7 @@
  * | `DSC_DOM_WIDTH` / `DSC_DOM_HEIGHT` | 窗口尺寸（窄屏场景靠它进 `max-width: 860px`） |
  * | `DSC_DOM_BOOT` | 首帧选择器（缺省 `.app`） |
  * | `DSC_DOM_SETTLE_MS` | 动作跑完后的静置时间（缺省 1200ms） |
+ * | `DSC_DOM_BOOT_SCRIPT` | 首帧前注入页面的脚本（`Page.addScriptToEvaluateOnNewDocument` 后补一次 reload；缺省不注入） |
  *
  * 动作类型：
  *
@@ -59,6 +60,7 @@ const width = Number(process.env['DSC_DOM_WIDTH'] || 1280)
 const height = Number(process.env['DSC_DOM_HEIGHT'] || 860)
 const bootSelector = String(process.env['DSC_DOM_BOOT'] || '.app')
 const settleMs = Number(process.env['DSC_DOM_SETTLE_MS'] || 1200)
+const bootScript = String(process.env['DSC_DOM_BOOT_SCRIPT'] || '')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -322,6 +324,13 @@ app.whenReady().then(async () => {
     const target = await pageTarget(60_000)
     cdp = await connect(target.webSocketDebuggerUrl)
     await cdp.send('Runtime.enable')
+    // 场景可选的「首帧前注入」：注入脚本必须在任何页面脚本之前执行，而 CDP 接上时
+    // 首帧已经放完，所以注册后补一次 reload，让应用带着注入重新启动（05 场景钉时钟用）。
+    if (bootScript !== '') {
+      await cdp.send('Page.enable')
+      await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: bootScript })
+      await cdp.send('Page.reload')
+    }
     // 等壳把第一帧挂上：比 `readyState` 更贴近「界面真的能操作了」。
     await waitFor(cdp, `document.querySelector(${JSON.stringify(bootSelector)}) !== null`, 60_000, `首帧选择器 ${bootSelector}`)
 
