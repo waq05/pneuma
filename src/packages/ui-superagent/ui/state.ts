@@ -40,6 +40,8 @@ export interface SuperagentTicket {
   branch?: string
   changedFiles?: string[]
   summary?: string
+  /** 等人回答时的那个问题原话；回答框据此写清在问什么。 */
+  question?: string
 }
 
 /** 三组计数；字段缺失时由工单阶段现数，不拿 0 冒充。 */
@@ -228,6 +230,7 @@ function ticketOf(value: unknown): SuperagentTicket | null {
   if (id === '') return null
   const branch = typeof record['branch'] === 'string' && record['branch'] !== '' ? record['branch'] : undefined
   const summary = typeof record['summary'] === 'string' && record['summary'] !== '' ? record['summary'] : undefined
+  const question = typeof record['question'] === 'string' && record['question'] !== '' ? record['question'] : undefined
   const rawFiles = record['changedFiles']
   const changedFiles = Array.isArray(rawFiles)
     ? rawFiles.filter((item): item is string => typeof item === 'string')
@@ -239,6 +242,7 @@ function ticketOf(value: unknown): SuperagentTicket | null {
     at: typeof record['at'] === 'string' ? record['at'] : '',
     ...(branch === undefined ? {} : { branch }),
     ...(summary === undefined ? {} : { summary }),
+    ...(question === undefined ? {} : { question }),
     ...(changedFiles === undefined ? {} : { changedFiles }),
   }
 }
@@ -416,6 +420,7 @@ function sameTicket(left: SuperagentTicket, right: SuperagentTicket): boolean {
     left.at === right.at &&
     left.summary === right.summary &&
     left.branch === right.branch &&
+    left.question === right.question &&
     stageFingerprint(left.stage) === stageFingerprint(right.stage) &&
     (left.changedFiles?.join('|') ?? '') === (right.changedFiles?.join('|') ?? '')
   )

@@ -155,7 +155,9 @@ function CandidatesBlock({ candidates }: { candidates: readonly SuperagentCandid
       })
       .catch((error: unknown) => {
         setBusy(null)
-        setFailure(humanErrorText(error))
+        // `humanErrorText` 给的是 `{ text, detail }`：界面只摊那一行人话，`detail` 留给
+        // 折叠的原文（与 detail.tsx 同一口径）。这里早先直接塞了对象，类型对不上。
+        setFailure(humanErrorText(error).text)
       })
   }
   return (
