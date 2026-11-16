@@ -38,7 +38,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { tempHome } from '../../../../tests/harness.js'
 import {
   appendComputerAudit,
@@ -49,6 +49,7 @@ import {
   diffFrames,
   dragScript,
   elementActionScript,
+  frameForWindow,
   gradeDesktopAction,
   keyScript,
   killAllPowerShell,
@@ -57,14 +58,75 @@ import {
   observeScript,
   pasteScript,
   parseFrame,
+  probeWindowScript,
   resetFrames,
+  resolveScreenPoint,
   resolveTarget,
+  runPowerShell,
   screenshotScript,
   scrollScript,
   screensScript,
   settleObserve,
+  toSendKeys,
   typeScript,
 } from '../desktop-control.js'
+
+/**
+ * 假 PowerShell 子进程句柄。
+ *
+ * `runPowerShell` 只用到 stdout/stderr 的 `data`、child 的 `close`/`error` 与 `kill`；
+ * 这里按这四个事件造一个可手动触发的桩，测试自己决定什么时候吐数据、什么时候退出。
+ * 用 `vi.hoisted` 是因为 `vi.mock` 的工厂会在 import 之前执行，普通顶层变量还拿不到。
+ */
+const childProcessMock = vi.hoisted(() => {
+  type Listener = (...args: unknown[]) => void
+  interface FakeChild {
+    stdout: { on: (event: string, fn: Listener) => void }
+    stderr: { on: (event: string, fn: Listener) => void }
+    on: (event: string, fn: Listener) => FakeChild
+    kill: ReturnType<typeof vi.fn>
+    killed: boolean
+    emit: (event: string, ...args: unknown[]) => void
+    emitStdout: (chunk: string | Buffer) => void
+    emitStderr: (chunk: string | Buffer) => void
+  }
+
+  const created: FakeChild[] = []
+  const spawn = vi.fn((_command: string, _args: string[], _options: Record<string, unknown>) => {
+    const listeners = new Map<string, Listener[]>()
+    const listen = (key: string, fn: Listener): void => {
+      const list = listeners.get(key) ?? []
+      list.push(fn)
+      listeners.set(key, list)
+    }
+    const fire = (key: string, ...args: unknown[]): void => {
+      for (const fn of listeners.get(key) ?? []) fn(...args)
+    }
+    const child: FakeChild = {
+      stdout: { on: (event, fn) => listen(`stdout:${event}`, fn) },
+      stderr: { on: (event, fn) => listen(`stderr:${event}`, fn) },
+      on: (event, fn) => {
+        listen(event, fn)
+        return child
+      },
+      kill: vi.fn(() => {
+        child.killed = true
+        return true
+      }),
+      killed: false,
+      emit: (event, ...args) => fire(event, ...args),
+      emitStdout: (chunk) => fire('stdout:data', Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+      emitStderr: (chunk) => fire('stderr:data', Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+    }
+    created.push(child)
+    return child
+  })
+
+  return { spawn, created }
+})
+
+// 整个文件替换掉 spawn：`runPowerShell` 在 import 时解构了这个绑定。
+vi.mock('node:child_process', () => ({ spawn: childProcessMock.spawn }))
 
 /** 临时主目录：插件读配置与审计落盘都只往这里写（`tempHome` 一个文件只能调一次）。 */
 const home = tempHome('dsc-computer-use-')
@@ -604,3 +666,404 @@ function fakeWorld(sequence: string[]): {
     },
   }
 }
+
+// ── 以下为覆盖率补充：按键翻译 / 脚本转义 / runPowerShell 生命周期 / 坐标与帧缓存 ──
+
+beforeEach(() => {
+  childProcessMock.created.length = 0
+  childProcessMock.spawn.mockClear()
+})
+
+afterEach(() => {
+  // 把还挂着的子进程收尾：触发 close 让 runPowerShell 清掉计时器与 abort 监听。
+  for (const child of childProcessMock.created) child.emit('close', 0)
+  killAllPowerShell()
+  vi.useRealTimers()
+})
+
+/** 取最近一次 spawn 出来的假子进程（没有就报错，避免断言静默落空）。 */
+function lastChild(): (typeof childProcessMock.created)[number] {
+  const child = childProcessMock.created.at(-1)
+  if (child === undefined) throw new Error('runPowerShell 没有 spawn 出子进程')
+  return child
+}
+
+describe('⑥ toSendKeys 键名翻译与拒绝', () => {
+  test('修饰键组合、键名映射与大小写归一', () => {
+    expect(toSendKeys('CTRL+SHIFT+S')).toBe('^+s')
+    expect(toSendKeys('ctrl+alt+delete')).toBe('^%{DELETE}')
+    expect(toSendKeys(' Enter ')).toBe('{ENTER}')
+    expect(toSendKeys('esc')).toBe('{ESC}')
+    expect(toSendKeys('pageup')).toBe('{PGUP}')
+    expect(toSendKeys('f12')).toBe('{F12}')
+    expect(toSendKeys('space')).toBe(' ')
+    expect(toSendKeys('a')).toBe('a')
+  })
+
+  test('多键串联：修饰符在前、可执行键按顺序拼接', () => {
+    expect(toSendKeys('ctrl+a+b')).toBe('^ab')
+    expect(toSendKeys('shift+tab')).toBe('+{TAB}')
+  })
+
+  test('Win/Cmd 类按键一律拒绝（会把桌面切走）', () => {
+    for (const key of ['win', 'cmd', 'super', 'meta', 'ctrl+win+e']) {
+      expect(() => toSendKeys(key)).toThrow(/不允许按 Win 键/)
+    }
+  })
+
+  test('不认识的键名 / 只有修饰符 / 空串都报错，而不是把原文喂给 SendKeys', () => {
+    expect(() => toSendKeys('hyper')).toThrow(/不认识的按键「hyper」/)
+    expect(() => toSendKeys('ctrl+shift')).toThrow(/没有可执行的键/)
+    expect(() => toSendKeys('')).toThrow(/没有可执行的键/)
+    expect(() => toSendKeys('++')).toThrow(/没有可执行的键/)
+  })
+})
+
+describe('⑦ 脚本生成的转义与边界参数', () => {
+  test('observeScript：窗口标题里的单引号加倍、中文保留、负数句柄归零、maxElements 下限 10', () => {
+    const script = observeScript({ windowId: -5, windowText: "记事本' 标题", maxElements: 3 })
+    expect(script).toContain("$win = Resolve-Win 0 '记事本'' 标题'")
+    expect(script).toContain('$max = 10')
+    // 元素超限时明确写进文本，模型不会以为看到的是全树。
+    expect(script).toContain('$script:idx -ge $max')
+  })
+
+  test('observeScript：maxElements 四舍五入、缺省用 OBSERVE_MAX_ELEMENTS', () => {
+    expect(observeScript({ windowId: 12.6, maxElements: 50.6 })).toContain('$max = 51')
+    expect(observeScript({ windowId: 1 })).toContain('$max = 400')
+    expect(observeScript({ windowId: 12.6 })).toContain('Resolve-Win 13')
+  })
+
+  test('set_value：值里的单引号双写、换行与中文原样保留（PowerShell 单引号串可跨行）', () => {
+    const value = "第一行\na'b"
+    const script = elementActionScript('set_value', { windowId: 7, index: 2, value })
+    expect(script).toContain("SetValue('第一行\na''b')")
+  })
+
+  test('elementActionScript：index 负数归零、小数四舍五入、窗口标题转义', () => {
+    expect(elementActionScript('set_value', { windowId: 7, index: -3, value: 'x' })).toContain('$target = 0')
+    expect(elementActionScript('set_value', { windowId: 7, index: 3.6, value: 'x' })).toContain('$target = 4')
+    expect(
+      elementActionScript('set_value', { windowId: 0, windowText: "it's", index: 0, value: 'x' }),
+    ).toContain("Resolve-Win 0 'it''s'")
+  })
+
+  test('perform_action：认不出的 pattern 生成显式 throw（带可认列表），不静默变 invoke', () => {
+    const script = elementActionScript('perform_action', { windowId: 7, index: 1, pattern: 'Destroy' })
+    expect(script).toContain("throw '不认识的 action「destroy」")
+    expect(script).toContain('scrollintoview')
+    // 默认 pattern 才是 invoke。
+    expect(elementActionScript('perform_action', { windowId: 7, index: 1 })).toContain('InvokePattern')
+  })
+
+  test('dragScript：步数下限 2、延迟取整且不为负、坐标四舍五入', () => {
+    const script = dragScript({ x: 10.6, y: 20.4 }, { x: 100.6, y: 50.4 }, 0, -5)
+    expect(script).toContain('[DscMouse]::SetCursorPos(11, 20)')
+    expect(script).toContain('$i -le 2')
+    expect(script).toContain('(101 - 11)')
+    expect(script).toContain('(50 - 20)')
+    expect(script).toContain('Start-Sleep -Milliseconds 0')
+  })
+
+  test('clickScript：右键映射 8/16、未知键回落左键、双击两次、暂停只在 >0 时出现', () => {
+    const right = clickScript({ x: 5, y: 6 }, 'right', true, '', 0)
+    expect(right.match(/mouse_event\(8,0,0,0/g) ?? []).toHaveLength(2)
+    expect(right.match(/mouse_event\(16,0,0,0/g) ?? []).toHaveLength(2)
+    expect(right).not.toContain('Start-Sleep -Milliseconds 0')
+
+    const fallback = clickScript({ x: 5, y: 6 }, 'scroll-wheel', false, '', 100)
+    expect(fallback).toContain('mouse_event(2,0,0,0')
+    expect(fallback).toContain('mouse_event(4,0,0,0')
+    expect(fallback).toContain('Start-Sleep -Milliseconds 100')
+    expect(fallback).toContain('SetCursorPos(5, 6)')
+  })
+
+  test('clickScript：坐标四舍五入（含负数），激活片段原样插在移动之前', () => {
+    const script = clickScript({ x: 5.6, y: -3.4 }, 'left', false, '[DscWin]::SetForegroundWindow([IntPtr]9) | Out-Null', 0)
+    expect(script).toContain('SetCursorPos(6, -3)')
+    expect(script.indexOf('SetForegroundWindow')).toBeLessThan(script.indexOf('SetCursorPos(6, -3)'))
+  })
+
+  test('scrollScript：0 档不滚、负数向下用 120、正数向上用 4294967176、move 片段保留', () => {
+    const zero = scrollScript(0, '', 0)
+    expect(zero).toContain('$i -lt 0')
+    expect(zero).toContain(' 120,')
+
+    const down = scrollScript(-2, '[DscMouse]::SetCursorPos(1, 2) | Out-Null', 50)
+    expect(down).toContain('$i -lt 2')
+    expect(down).toContain(' 120,')
+    expect(down).toContain('[DscMouse]::SetCursorPos(1, 2) | Out-Null')
+
+    expect(scrollScript(3, '', 0)).toContain(' 4294967176,')
+    expect(scrollScript(3, '', 0)).toContain('$i -lt 3')
+  })
+
+  test('keyScript：repeat 下限 1、hold 毫秒取整且非正数不等待、keys 单引号加倍', () => {
+    const once = keyScript('^s', 0, 0)
+    expect(once).toContain('$i -lt 1')
+    expect(once).not.toContain('Start-Sleep')
+
+    const held = keyScript("a'b", 7.6, 0.35)
+    expect(held).toContain("SendWait('a''b')")
+    expect(held).toContain('$i -lt 8')
+    expect(held).toContain('Start-Sleep -Milliseconds 350')
+
+    expect(keyScript('x', 3, -1)).not.toContain('Start-Sleep')
+  })
+
+  test('type/paste：先写剪贴板再 Ctrl+V，最后还原旧文本；单引号双写、换行保留', () => {
+    const text = "第一行\nit's"
+    const typed = typeScript(text)
+    expect(typed).toContain("Set-Clipboard -Value '第一行\nit''s'")
+    expect(typed.indexOf('Set-Clipboard -Value')).toBeLessThan(typed.indexOf("SendWait('^v')"))
+    expect(typed.lastIndexOf('Set-Clipboard -Value $old')).toBeGreaterThan(typed.indexOf("SendWait('^v')"))
+
+    const pasted = pasteScript(text)
+    expect(pasted).toContain("Set-Clipboard -Value '第一行\nit''s'")
+    expect(pasted).toContain('if ($null -ne $old) { Set-Clipboard -Value $old }')
+  })
+
+  test('list_windows / list_apps / screens 脚本带关键 Win32 调用（不是只有字段名）', () => {
+    const windows = listWindowsScript()
+    expect(windows).toContain('GetForegroundWindow()')
+    expect(windows).toContain('GetWindowThreadProcessId')
+    expect(windows).toContain('IsOffscreen')
+
+    const apps = listAppsScript()
+    expect(apps).toContain('MainWindowHandle -ne 0')
+    expect(apps).toContain('Sort-Object ProcessName -Unique')
+    expect(apps).toContain('GetForegroundWindow()')
+
+    const screens = screensScript()
+    expect(screens).toContain('[System.Windows.Forms.Screen]::AllScreens')
+    expect(screens).toContain('$s.DeviceName')
+    expect(screens).toContain('$s.Primary')
+    expect(screens).toContain('[int]$s.Bounds.X')
+  })
+
+  test('probeWindowScript：数字/纯数字串走句柄，其他走标题；负数归零、标题单引号转义', () => {
+    const handle = probeWindowScript(12.6)
+    expect(handle).toContain('$winId = 13')
+    expect(handle).toContain("$winText = ''")
+
+    expect(probeWindowScript(' 42 ')).toContain('$winId = 42')
+    expect(probeWindowScript(' 42 ')).toContain("$winText = ''")
+
+    const byTitle = probeWindowScript('记事本')
+    expect(byTitle).toContain('$winId = 0')
+    expect(byTitle).toContain("$winText = '记事本'")
+    expect(probeWindowScript("it's")).toContain("$winText = 'it''s'")
+
+    const negative = probeWindowScript(-7)
+    expect(negative).toContain('$winId = 0')
+    expect(negative).toContain("$winText = ''")
+  })
+})
+
+describe('⑧ runPowerShell 生命周期（假 spawn）', () => {
+  test('成功：按固定参数启动 powershell.exe，stdout 分块累加后 resolve', async () => {
+    const pending = runPowerShell('echo hi')
+    const promise = pending.then((value) => ({ value }), (error: unknown) => ({ error }))
+
+    expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', 'echo hi'],
+      { windowsHide: true },
+    )
+
+    const child = lastChild()
+    child.emitStdout('he')
+    child.emitStdout(Buffer.from('llo'))
+    child.emit('close', 0)
+
+    const settled = await promise
+    expect(settled).toEqual({ value: 'hello' })
+  })
+
+  test('非零退出：优先把 stderr 原文抛给调用方', async () => {
+    const pending = runPowerShell('bad')
+    const promise = pending.then((value) => ({ value }), (error: unknown) => ({ error }))
+    const child = lastChild()
+    child.emitStderr('坏掉了\n')
+    child.emit('close', 1)
+
+    const settled = await promise
+    expect(settled).toHaveProperty('error')
+    expect((settled as { error: Error }).error.message).toBe('坏掉了')
+  })
+
+  test('非零退出且 stderr 为空：报出退出码，不留空错误', async () => {
+    const promise = runPowerShell('bad')
+    lastChild().emit('close', 3)
+    await expect(promise).rejects.toThrow('powershell 退出码 3')
+  })
+
+  test('超时：按 timeoutMs 杀掉子进程并拒绝（假时钟）', async () => {
+    vi.useFakeTimers()
+    const pending = runPowerShell('slow', 5_000)
+    const promise = pending.then((value) => ({ value }), (error: unknown) => ({ error }))
+    const child = lastChild()
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    const settled = await promise
+    expect((settled as { error: Error }).error.message).toBe('桌面操作超时（5 秒）')
+    expect(child.kill).toHaveBeenCalledTimes(1)
+  })
+
+  test('abort：立刻杀进程并拒绝；close 之后才 abort 则不再杀（监听已移除）', async () => {
+    const controller = new AbortController()
+    const pending = runPowerShell('click', 20_000, controller.signal)
+    const promise = pending.then((value) => ({ value }), (error: unknown) => ({ error }))
+    const child = lastChild()
+
+    controller.abort()
+    const aborted = await promise
+    expect((aborted as { error: Error }).error.message).toBe('桌面操作被取消')
+    expect(child.kill).toHaveBeenCalledTimes(1)
+
+    const finished = runPowerShell('done', 20_000, controller.signal)
+    const finishedPromise = finished.then((value) => ({ value }), (error: unknown) => ({ error }))
+    const doneChild = lastChild()
+    doneChild.emit('close', 0)
+    await expect(finishedPromise).resolves.toEqual({ value: '' })
+    controller.abort()
+    expect(doneChild.kill).not.toHaveBeenCalled()
+  })
+
+  test('spawn 失败（error 事件）→ 原样拒绝，并从急停集合移除', async () => {
+    const promise = runPowerShell('x')
+    lastChild().emit('error', new Error('spawn ENOENT'))
+    await expect(promise).rejects.toThrow('spawn ENOENT')
+    expect(killAllPowerShell()).toBe(0)
+  })
+
+  test('killAllPowerShell：杀掉所有在跑的子进程并返回数量，集合清空后为 0', async () => {
+    const first = runPowerShell('a')
+    const second = runPowerShell('b')
+    const settle = Promise.all([first, second].map((p) => p.then((value) => value, () => '')))
+
+    expect(childProcessMock.created).toHaveLength(2)
+    expect(killAllPowerShell()).toBe(2)
+    expect(childProcessMock.created[0]!.kill).toHaveBeenCalledTimes(1)
+    expect(childProcessMock.created[1]!.kill).toHaveBeenCalledTimes(1)
+    expect(killAllPowerShell()).toBe(0)
+
+    for (const child of childProcessMock.created) child.emit('close', 0)
+    await settle
+  })
+})
+
+describe('⑨ resolveScreenPoint / 目标解析补充边界', () => {
+  const bounds = { left: 0, top: 0, width: 1920, height: 1080 }
+
+  test('按缩放系数换算并四舍五入', () => {
+    expect(resolveScreenPoint({ x: 200, y: 101 }, bounds, 2)).toEqual({ x: 100, y: 51 })
+    expect(resolveScreenPoint({ x: 10, y: 10 }, bounds, 1.5)).toEqual({ x: 7, y: 7 })
+  })
+
+  test('缺坐标 / 小数坐标 / 屏幕外（含负坐标虚拟屏边界）都报错', () => {
+    expect(() => resolveScreenPoint({ x: 1 }, bounds, 1)).toThrow(/要带 x 与 y/)
+    expect(() => resolveScreenPoint({ x: 1.5, y: 2 }, bounds, 1)).toThrow(/必须是整数/)
+    expect(() => resolveScreenPoint({ x: 1920, y: 5 }, bounds, 1)).toThrow(/在屏幕外/)
+
+    const virtual = { left: -100, top: -50, width: 200, height: 100 }
+    expect(resolveScreenPoint({ x: -100, y: -50 }, virtual, 1)).toEqual({ x: -100, y: -50 })
+    expect(() => resolveScreenPoint({ x: -101, y: 0 }, virtual, 1)).toThrow(/在屏幕外/)
+    expect(() => resolveScreenPoint({ x: 100, y: 0 }, virtual, 1)).toThrow(/在屏幕外/)
+  })
+
+  test('resolveTarget 兼容 legacy 扁平 x/y（target 缺省时）', () => {
+    expect(resolveTarget(undefined, { x: 10, y: 20 }, undefined, bounds, 1)).toMatchObject({ x: 10, y: 20 })
+  })
+
+  test('元素在屏外 / 没有矩形 / 尺寸为 0 → 一律 ELEMENT_UNAVAILABLE', () => {
+    resetFrames()
+    const frame = parseFrame(
+      JSON.stringify({
+        ok: true,
+        app: 'notepad',
+        window: { id: 9, title: '记事本', bounds: { x: 0, y: 0, width: 800, height: 600 } },
+        elements: [
+          { index: 0, controlType: 'Edit', title: '屏外', bounds: { x: 10, y: 10, width: 10, height: 10 }, offscreen: true },
+          { index: 1, controlType: 'Edit', title: '无矩形', bounds: null },
+          { index: 2, controlType: 'Edit', title: '零宽', bounds: { x: 10, y: 10, width: 0, height: 10 } },
+          { index: 3, controlType: 'Edit', title: '正常', bounds: { x: 100, y: 100, width: 10, height: 20 } },
+        ],
+        text: '',
+      }),
+    )
+
+    for (const index of [0, 1, 2]) {
+      expect(() => resolveTarget(asTarget({ type: 'element', index }), undefined, frame, bounds, 1)).toThrow(
+        /ELEMENT_UNAVAILABLE/,
+      )
+    }
+    expect(resolveTarget(asTarget({ type: 'element', index: 3 }), undefined, frame, bounds, 1)).toMatchObject({
+      x: 105,
+      y: 110,
+    })
+  })
+
+  test('state_id 与当前帧一致时放行；元素中心在屏幕外时拒绝', () => {
+    resetFrames()
+    const frame = parseFrame(
+      JSON.stringify({
+        ok: true,
+        app: 'notepad',
+        window: { id: 10, title: '记事本', bounds: { x: 0, y: 0, width: 800, height: 600 } },
+        elements: [
+          { index: 0, controlType: 'Edit', title: '正常', bounds: { x: 10, y: 10, width: 10, height: 10 } },
+          { index: 1, controlType: 'Edit', title: '出屏', bounds: { x: 5000, y: 10, width: 10, height: 10 } },
+        ],
+        text: '',
+      }),
+    )
+
+    expect(
+      resolveTarget(asTarget({ type: 'element', index: 0, state_id: frame.state_id }), undefined, frame, bounds, 1),
+    ).toMatchObject({ x: 15, y: 15 })
+    expect(() => resolveTarget(asTarget({ type: 'element', index: 1 }), undefined, frame, bounds, 1)).toThrow(
+      /在屏幕外/,
+    )
+  })
+})
+
+describe('⑩ frameForWindow / resetFrames', () => {
+  test('按窗口键（数字或字符串）与 latest 取帧；未命中返回 undefined', () => {
+    resetFrames()
+    expect(frameForWindow()).toBeUndefined()
+    expect(frameForWindow(501)).toBeUndefined()
+
+    const first = parseFrame(
+      JSON.stringify({ ok: true, app: 'a', window: { id: 501, title: 'A', bounds: null }, elements: [], text: '' }),
+    )
+    expect(frameForWindow(501)).toBe(first)
+    expect(frameForWindow('501')).toBe(first)
+    expect(frameForWindow()).toBe(first)
+
+    const second = parseFrame(
+      JSON.stringify({ ok: true, app: 'b', window: { id: 502, title: 'B', bounds: null }, elements: [], text: '' }),
+    )
+    expect(frameForWindow(502)).toBe(second)
+    expect(frameForWindow()).toBe(second)
+    expect(frameForWindow(501)).toBe(first)
+    expect(frameForWindow(999)).toBeUndefined()
+  })
+
+  test('resetFrames 清空缓存并把 state_id 计数归零', () => {
+    resetFrames()
+    const before = parseFrame(
+      JSON.stringify({ ok: true, app: 'a', window: { id: 601, title: 'A', bounds: null }, elements: [], text: '' }),
+    )
+    expect(before.state_id).toBe('st-1')
+
+    resetFrames()
+    expect(frameForWindow(601)).toBeUndefined()
+    expect(frameForWindow()).toBeUndefined()
+
+    const after = parseFrame(
+      JSON.stringify({ ok: true, app: 'a', window: { id: 601, title: 'A', bounds: null }, elements: [], text: '' }),
+    )
+    expect(after.state_id).toBe('st-1')
+  })
+})
