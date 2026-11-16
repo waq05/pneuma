@@ -1,15 +1,15 @@
 {
-  "note": "覆盖率基线（P4 冻结，P6 逐目录抬杠；2026-11-16 审计后重录，W1 收尾、W2 首轮与 W2 中点后抬高）。口径：**全部五个 project**（unit + integration + ui + snapshot + tui）的全量跑法，命令见 package.json 的 test:coverage。integration 与 tui 是 src/core 覆盖的主要来源，三面口径会让 core 掉到 34%——D40/B47 已定案只用这一套。数值 = 2026-11-16 W2 中点实测值（lines 55.36 / branches 45.80 / functions 49.81 / statements 53.05；src/core lines 86.81 / branches 74.97 / functions 86.24 / statements 83.13）向下取整到 0.1；阈值由 vitest.config.ts 再减 0.5 个百分点作噪声余量。只降不升：抬基线须手动跑 `pnpm test:coverage` 后改这里并 review。90% 目标见 docs/testing-coverage-plan.md。",
+  "note": "覆盖率基线（P4 冻结，P6 逐目录抬杠；2026-11-16 审计后重录，W1 收尾、W2 首轮、W2 中点与 W3 中点后抬高）。口径：**全部五个 project**（unit + integration + ui + snapshot + tui）的全量跑法，命令见 package.json 的 test:coverage。integration 与 tui 是 src/core 覆盖的主要来源，三面口径会让 core 掉到 34%——D40/B47 已定案只用这一套。数值 = 2026-11-16 W3 中点实测值（lines 58.84 / branches 49.03 / functions 54.12 / statements 56.29；src/core lines 86.88 / branches 75.01 / functions 86.36 / statements 83.19）向下取整到 0.1；阈值由 vitest.config.ts 再减 0.5 个百分点作噪声余量。只降不升：抬基线须手动跑 `pnpm test:coverage` 后改这里并 review。90% 目标见 docs/testing-coverage-plan.md。",
   "updatedAt": "2026-11-16",
-  "lines": 55.3,
-  "branches": 45.8,
-  "functions": 49.8,
-  "statements": 53.0,
+  "lines": 58.8,
+  "branches": 49.0,
+  "functions": 54.1,
+  "statements": 56.2,
   "directories": {
     "src/core/**": {
       "lines": 86.8,
-      "branches": 74.9,
-      "functions": 86.2,
+      "branches": 75.0,
+      "functions": 86.3,
       "statements": 83.1
     }
   }

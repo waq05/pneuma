@@ -169,6 +169,35 @@ LSP/CDP/作业表都有现成注入点（假 socket、假服务器、socketFacto
 `approval` 的 apply 把依赖写死在闭包里，只能靠 `vi.mock` 或假 ctx 硬撬，ROI 明显更低。
 剩余界面页按同一套假通道推进；装配层留到排除台账前再评估。
 
+### 1.5 W3 中点（2026-11-16，第三批 7 个 spec / 69 条）
+
+界面页批量。前端高频面统一走「槽位登记收组件 + `RuntimeProvider` + 假宿主通道」；
+hooks 与 MCP 用假 ctx / 真 node 子进程补装配面与协议面。
+
+| spec | 条数 | 钉住的行为 |
+| --- | ---: | --- |
+| `ui-skills/ui/ui.spec.tsx` + `ui-plugins/ui/ui.spec.tsx` | 15 | 技能页分组/筛选/启停/市场安装/源编辑；插件页分组展开/详情/信任确认/组合包启停/读失败（§1.4 已列，提交晚于 W2 实测，实际计入本轮） |
+| `ui-sessions/ui/sidebar-actions.spec.tsx` | 9 | 新建/打开/跳页、搜索与 Esc、视图菜单偏好、Ctrl+Alt+R 改名、Ctrl+Shift+A 归档、空态与刷新故障 |
+| `ui-prompt/ui/prompt-cards.spec.tsx` | 13 | 审批卡三档范围/硬线/快捷键 y/s/a/n/Esc/打字目标守卫/失败/差异；计划批准与驳回；问答单条/批量/跳过/失败；空态；CardBoundary 隔离 |
+| `ui-status/ui/ui.spec.tsx` | 4 | 壳层锚点与假 ResizeObserver、团队板空态、胶囊自动模式、目标/待办/计划展开、模式菜单写偏好、分区折叠、无数据不出胶囊 |
+| `ui-composer/ui/composer.spec.tsx` | 6 | 空输入禁发、按钮与回车发送、Shift+Enter 换行、`/` 命令派发、失败保留正文、审批锁、运行中停止 |
+| `packages/hooks/tests/wiring.spec.ts` | 10 | 守卫链两档与观察者两档、deny 落审计、ask 叫审批卡、脚本 exit 2、post-tool 异步审计、设置读写与动作、`/hooks`、投影与服务 |
+| `packages/mcp/tests/connection.spec.ts` | 12 | stdio 握手与版本校验、工具翻页与坏项丢弃、调用/资源/提示模板归并、JSON-RPC 错误、elicitation 双向、能力缺省、超时 |
+
+实测：**27,449 / 46,646 = 58.84%**（W2 中点 25,824 / 55.36，+1,625 行 / +3.48 点）；
+branches 49.03 / functions 54.12 / statements 56.29；`src/core` 86.88 / 75.01 / 86.36 / 83.19。
+跑法 `pnpm test:coverage`，459 文件（458 通过 / 1 skip）、5,788 用例（5,783 通过 / 5 skip）、exit 0；
+基线抬到 58.8 / 49.0 / 54.1 / 56.2（`src/core` 86.8 / 75.0 / 86.3 / 83.1）。
+0% 文件从 72 降到 31（3,847 → 1,660 行）——上一批的点状小文件基本清空，剩下的是整包未碰的大件。
+
+同批另写了 `lsp/tests/wiring.spec.ts`（8 条，装配面），提交晚于本次实测，不计入 58.84。
+
+**W3 中点复盘**：69 条换来 +1,625 行，单条约 23.6 行，是 W2（10.7）的两倍多——界面页一次渲染
+能把组件的分支成片点亮。但距 W3 目标（~4,600 行）仍差约 3,000 行，且最大几块（`browser` 495、
+`subagent` 439、`remote` 429）依赖写死在 apply 闭包里，需要 `vi.mock` 或注入缝。下一批按缺口排序：
+`browser`、`subagent`、`remote`、`self-improve/index`（414，纯文件面已备好）、`approval`（385）、
+`ui-sessions` 剩余（359）、`ui-status` 剩余（299）、`desktop-dock`（295）。
+
 ## 2 口径已定案（D40/B47）
 
 2026-11-16 实测：全五 project 跑法 lines 45.56 / branches 37.07 / functions 41.81 / statements 43.52，
