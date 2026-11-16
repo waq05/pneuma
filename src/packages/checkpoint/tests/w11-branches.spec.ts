@@ -25,7 +25,7 @@ process.env.USERPROFILE = home
 mkdirSync(process.env.DSC_HOME, { recursive: true })
 
 const shadow = await import('../shadow.js')
-const { bumpTurn, currentTurn, listSnapshots, readLedger, recordTurnLedger, repoSizeMB, restoreTurn, shadowRoot, snapshot, snapshotManual } =
+const { bumpTurn, currentTurn, listSnapshots, readLedger, recordTurnLedger, repoSizeMB, restoreTurn, shadowRepoPath, shadowRoot, snapshot, snapshotManual } =
   shadow
 
 const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
@@ -231,4 +231,12 @@ test.skipIf(!gitAvailable)('账本：文件不存在时 readLedger 给空数组'
   const cwd = makeWorkspace({ 'a.txt': 'a\n' })
   expect(readLedger(cwd)).toEqual([])
   expect(existsSync(join(shadowRoot(cwd), 'ledger.jsonl'))).toBe(false)
+})
+
+test('repo 目录看起来存在但 git 读不了：listSnapshots / repoSizeMB 都咽掉错误', async () => {
+  const cwd = makeWorkspace({ 'a.txt': 'a\n' })
+  mkdirSync(shadowRepoPath(cwd), { recursive: true })
+  writeFileSync(join(shadowRepoPath(cwd), 'HEAD'), 'garbage\n', 'utf8')
+  await expect(listSnapshots(cwd)).resolves.toEqual([])
+  await expect(repoSizeMB(cwd)).resolves.toBe(0)
 })

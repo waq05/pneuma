@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
-import { defaultRuntimeValues, type LspRuntimeValues } from '../client.js'
+import { defaultRuntimeValues, LspInstance, type LspRuntimeValues } from '../client.js'
 import { encodeMessage, MAX_MESSAGE_BYTES, MessageDecoder, StderrTail } from '../framing.js'
 import { buildLineShift, shiftDiagnostics } from '../line-shift.js'
 import { LspManager } from '../manager.js'
@@ -269,5 +269,38 @@ describe('manager 失败与过期分支', () => {
     const { manager } = project('ok')
     manager.dispose()
     await expect(manager.sweepIdle()).resolves.toBeUndefined()
+  })
+})
+
+describe('LspInstance 启动失败', () => {
+  test('可执行文件不存在：子进程 error 走 fail/finish，查询拿到致命错误', async () => {
+    const root = tempDir('dsc-lsp-inst-')
+    mkdirSync(join(root, 'src'), { recursive: true })
+    const file = join(root, 'src', 'a.ts')
+    writeFileSync(file, 'const a = 1\n', 'utf8')
+    const exits: string[] = []
+    const instance = new LspInstance({
+      server: {
+        id: 'missing',
+        languageId: 'typescript',
+        extensions: ['.ts'],
+        command: join(root, 'no-such-lsp.exe'),
+        args: [],
+        markers: [],
+      },
+      root,
+      target: { file: join(root, 'no-such-lsp.exe'), shell: false },
+      env: { ...process.env } as Record<string, string>,
+      values: { ...defaultRuntimeValues(), initializeTimeoutMs: 3_000 },
+      onExit: (reason) => exits.push(reason),
+    })
+    try {
+      const error = (await instance.query('goToDefinition', file, position, undefined).catch((item: unknown) => item)) as Error
+      expect(error).toBeInstanceOf(Error)
+      expect(error.message).toContain('语言服务器进程起不来')
+    } finally {
+      instance.terminateNow()
+    }
+    expect(exits.length).toBeGreaterThan(0)
   })
 })
