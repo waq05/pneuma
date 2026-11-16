@@ -35,7 +35,7 @@
 | 命令 | 结果 |
 | --- | --- |
 | `pnpm test`（unit + ui + tui） | **294 文件 / 3245 条 / exit 0** |
-| `pnpm run test:int` | 114 文件 / 约 1880 条；含 1 条 skip（ops 无 worker，B24） |
+| `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0** |
 | `pnpm run test:snapshot` | TUI 帧 30 份 + 会话回放 1 场景 + 浏览器 10 份，全绿（浏览器单跑约 200s） |
 | `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42） |
 | `pnpm run test:e2e` | 143 通过 / **6 红（已知，B40）** / 13 skip |
@@ -44,7 +44,7 @@
 | `node scripts/check-core.mjs` | **7/7 通过**（Vitest 表达不了的探针，§4） |
 | `node scripts/check-ui.mjs` | **42/42 通过** |
 | `pnpm run test:bench` | 4 条 vs 本机基线，全部 ≤1.5×；runner 不符只记录（D35） |
-| `pnpm run test:coverage` | 三面口径 lines 33.77 / branches 26.95 / functions 32.68 / statements 32.2（D37） |
+| `pnpm run test:coverage` | 三面口径 lines 33.77 / branches 26.95 / functions 32.68 / statements 32.2（D37）；逐目录门 `src/core/**` 40.68% 线已生效（D39：设计目标 60% 未达到，待立项） |
 
 ## 3 这套东西长什么样
 

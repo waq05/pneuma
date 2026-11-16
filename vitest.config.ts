@@ -44,18 +44,22 @@ import { jsToTsFallback } from './tests/plugins/js-to-ts.js'
  */
 const coverageBaseline = (() => {
   try {
-    const parsed = JSON.parse(readFileSync(new URL('./coverage-baseline.json', import.meta.url), 'utf8')) as {
-      lines: number
-      branches: number
-      functions: number
-      statements: number
+    type Row = { lines: number; branches: number; functions: number; statements: number }
+    const parsed = JSON.parse(readFileSync(new URL('./coverage-baseline.json', import.meta.url), 'utf8')) as Row & {
+      directories?: Record<string, Row>
     }
-    return {
-      lines: parsed.lines - 0.5,
-      branches: parsed.branches - 0.5,
-      functions: parsed.functions - 0.5,
-      statements: parsed.statements - 0.5,
-    }
+    const margin = (row: Row): Row => ({
+      lines: row.lines - 0.5,
+      branches: row.branches - 0.5,
+      functions: row.functions - 0.5,
+      statements: row.statements - 0.5,
+    })
+    // 逐目录门（P6）：design 的「src/core 先 60% 再 70%」还没达到，先把当前值钉住，
+    // 保证只升不降；目标值与差距写在 deviations D39。
+    const directories = Object.fromEntries(
+      Object.entries(parsed.directories ?? {}).map(([glob, row]) => [glob, margin(row)]),
+    )
+    return { ...margin(parsed), ...directories }
   } catch {
     return null
   }
