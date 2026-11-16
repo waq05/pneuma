@@ -191,3 +191,11 @@ splitUnifiedDiffByFile(CRLF 的 diff)          → path = 'a/src/a.ts b/src/a.ts
 | --- | --- | --- |
 | `terminal-env.ts` 的探测/缓存族 8 个导出：`detectShells`、`shellsCached`、`forgetShellDetection`、`readShellChoice`、`wslDistroName`、`shellLabel`、`resolveShellExecutable`、`shellChoiceLabel` | 要么 spawn 子进程、要么读 `<DSC_HOME>/cache/shells.json`、要么读写模块级单例缓存，unit 层（node、5s、无 setup）注入不了假 HOME | integration 层，`tests/setup/temp-home.ts` 已具备 |
 | `shellOf` 的 POSIX 分支 | 开发机是 Windows，只跑到 win32 那一支 | CI 的 ubuntu job，或打桩 `process.platform` |
+### F14 `DiffBlock.tsx` 的可用行数算错：4 行 hunk 会显示「… 还有 10 行」
+
+- 文件：`src/packages/tui/app/DiffBlock.tsx:38`（`shown/hidden` 的算法）
+- 现象：P4 TUI 帧快照 `12-approval-diff.txt` 如实记录——4 行 hunk 的帧里出现「… 还有 10 行」
+- 判据：快照帧是整屏真渲染的逐字节固化，非测试侧拼装
+- 影响：审批卡里的 diff 预览行数与实际不符，用户会以为还有没看到的改动
+- 处置：golden **如实记录**（快照层不制造「预期正确」的假象），场景文件头与 backlog B41 都已标注。
+  修产品时要同批重生成该 golden
