@@ -41,6 +41,20 @@ function superagentTicketId(input: unknown): string {
 }
 
 /**
+ * 回答工单问题的入参：`{ ticketId, text }`。
+ *
+ * 为什么在这里校验：实参规格只保证「是一个不超过字节上限的 JSON 对象」，里面可以什么
+ * 都没有。ticketId 交给 `superagentTicketId` 收窄（它同时认 `{ id }` 与裸字符串），
+ * text 在这里只判空与类型——4000 字的业务上限归服务层，那是业务规则，不是通道闸。
+ */
+function superagentAnswerOf(input: unknown): { ticketId: string; text: string } {
+  if (input === null || typeof input !== 'object') throw new Error('要给 `{ ticketId, text }`：回哪张工单、回什么')
+  const { ticketId, text } = input as { ticketId?: unknown; text?: unknown }
+  if (typeof text !== 'string' || text.trim() === '') throw new Error('回答不能为空：写一句要回它的话')
+  return { ticketId: superagentTicketId(ticketId), text }
+}
+
+/**
  * 候选收件箱两个动作的入参：`{ id, title?, reason? }` 或裸 id 字符串。
  *
  * 为什么允许裸字符串：命令行与界面半的写法不必统一（与工单那几个同一个口径）。
@@ -343,7 +357,7 @@ export const runtimePlugin: Plugin.Object = {
 
       // ── Super Agent 工单 ───────────────────────────────────────────────────
       // 宿主插件默认关着，所以只能 ctx.get（不写进 inject：关着时不该把整条运行期拖挂）。
-      // 这五条只做转发，业务与装配都在 @pneuma/superagent（service.ts / surface.ts）。
+      // 这几条只做转发，业务与装配都在 @pneuma/superagent（service.ts / surface.ts）。
       superagentPublish(input) {
         const superagent = ctx.get('superagent')
         if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，发不了工单'))
@@ -360,6 +374,13 @@ export const runtimePlugin: Plugin.Object = {
         const superagent = ctx.get('superagent')
         if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有工单可重试'))
         return superagent.retry(superagentTicketId(input))
+      },
+
+      superagentAnswer(input) {
+        const superagent = ctx.get('superagent')
+        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没法回话'))
+        const { ticketId, text } = superagentAnswerOf(input)
+        return superagent.answer({ ticketId, text })
       },
 
       superagentCleanWorktree(input) {

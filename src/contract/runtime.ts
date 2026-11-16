@@ -268,6 +268,13 @@ export interface SuperagentTicketView {
   changedFiles?: string[]
   /** 最近一份 worker 报告的摘要（它说干了什么）；一次都没报过时没有这一项。 */
   summary?: string
+  /**
+   * 工单等人回答的那个问题原话（`stage.action === 'answer'` 时有）。
+   *
+   * 界面据此在回话输入框上面写清「它在问什么」；没有问题的档位不带这一项，
+   * 与「有但为空」区分开（前者整块不画）。
+   */
+  question?: string
 }
 
 /**
@@ -387,6 +394,19 @@ export interface SuperagentPublishInput {
   base?: string
 }
 
+/**
+ * 面板上回一句工单当前问题的入参（`superagentAnswer` 的唯一实参）。
+ *
+ * 为什么是「一张工单 + 一段话」而不是「线程 + 一段话」：界面上人看见的是工单，
+ * 线程是工单内部的挂接关系（哪条 issue / 哪个群），不该让界面知道。
+ */
+export interface SuperagentAnswerInput {
+  /** 要回答的工单 id。 */
+  ticketId: string
+  /** 回答正文；原样作为一条人的消息走 `Engine.receive`，与 GitHub 评论进来同一条路。 */
+  text: string
+}
+
 /** 按工单 id 操作（停 / 重试 / 清理 / 看执行会话）的入参。 */
 export interface SuperagentTicketRef {
   id: string
@@ -395,7 +415,7 @@ export interface SuperagentTicketRef {
 /**
  * superagent 插件提供的服务（`ctx.superagent`）。
  *
- * 为什么这五个动作要有服务：内核的 runtime 包不能 import 插件的类，界面通道只能经
+ * 为什么这些动作要有服务：内核的 runtime 包不能 import 插件的类，界面通道只能经
  * `ctx.get('superagent')` 转发。契约声明在这里（而不是 `services/types.ts`），是因为
  * `DscRuntime` 的签名与快照面同属这一个域文件，界面侧只认这一个来源。
  */
@@ -406,6 +426,14 @@ export interface SuperagentService {
   stop(id: string): Promise<void>
   /** 重试一张失败 / 卡住的工单。 */
   retry(id: string): Promise<void>
+  /**
+   * 回答工单当前的那个问题（它停在「等你回答」时用）。
+   *
+   * 走的是与 GitHub 评论 / 飞书消息**同一条**路：造一条人的 Trigger，挂到这张工单的
+   * 线程上，交给 `Engine.receive`。所以「面板上回的话」与「来源里回的话」在核心里
+   * 没有第二条分支。
+   */
+  answer(input: SuperagentAnswerInput): Promise<void>
   /** 清理一张**已结束**工单的工作树。 */
   clean(id: string): Promise<void>
   /** 只读读一张工单的执行会话转录（不落盘、不拿写租约）。 */
@@ -472,12 +500,12 @@ export interface RuntimeSurfaces {
 }
 
 /**
- * `DscRuntime` 上的 Super Agent 通道（五个可调方法）。
+ * `DscRuntime` 上的 Super Agent 通道。
  *
  * 为什么写在这里而不是 `snapshot.ts`：`DscRuntime` 的本体在 `snapshot.ts:115`，而这份
  * 契约的改动面按分工只开 `runtime.ts`。模块增强（`declare module './snapshot.js'`）
  * 与写在原文件里对类型系统等价——`INVOKABLE_METHODS` / `bridge` 那些按 `keyof DscRuntime`
- * 推导的清单照样看得到这五条，漏一条编译就红。
+ * 推导的清单照样看得到这些方法，漏一条编译就红。
  *
  * 参数为什么是对象而不是裸字符串：界面通道的实参规格用 `json`（个数 1 / 可序列化 /
  * 长度上限），对象与裸字符串都能过校验；实现层两种形状都收（见 `packages/runtime`），
@@ -491,6 +519,12 @@ declare module './snapshot.js' {
     superagentStopTicket(input: SuperagentTicketRef | string): Promise<void>
     /** 重试一张失败 / 卡住的工单。 */
     superagentRetryTicket(input: SuperagentTicketRef | string): Promise<void>
+    /**
+     * 回答工单当前的那个问题（它停在「等你回答」时用）。
+     *
+     * 只收 `{ ticketId, text }`：不认裸字符串——「回答」是两个字段，不是一个 id。
+     */
+    superagentAnswer(input: SuperagentAnswerInput): Promise<void>
     /** 清理一张已结束工单的工作树。 */
     superagentCleanWorktree(input: SuperagentTicketRef | string): Promise<void>
     /** 只读读一张工单的执行会话转录。 */

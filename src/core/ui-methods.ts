@@ -27,8 +27,8 @@
  *   - 设置页：`getSettingsSections` / `getSectionValues` / `setSettingValue` / `runSettingAction`
  *   - 队友：`listTeammates` / `stopTeammate` / `messageTeammate` / `removeTeammate`
  *   - 工单：`superagentPublish` / `superagentStopTicket` / `superagentRetryTicket`
- *     / `superagentCleanWorktree` / `superagentPeekSession`（superagent 插件默认关着；
- *     五个方法都只是转发宿主插件提供的服务，插件没开时调用会得到一句「没开」）
+ *     / `superagentAnswer` / `superagentCleanWorktree` / `superagentPeekSession`（superagent 插件默认关着；
+ *     这几条都只是转发宿主插件提供的服务，插件没开时调用会得到一句「没开」）
  *   - 任务与目标：`clearTodos` / `goalAction`
  *   - 壳的 `/` 命令菜单：`listUiCommands`（只读元数据）+ `runUiCommand`——**只认
  *     `shell: true` 那批命令**（清单与挑选尺子在 `packages/commands-core/commands-completion.ts`：
@@ -116,11 +116,12 @@ export const UI_METHODS = [
   'sideAsk',
   'sideAskCancel',
   'peekTranscript',
-  // Super Agent 工单：发布 + 停 / 重试 / 清理 + 看执行会话。写类只对电脑上的界面开放；
+  // Super Agent 工单：发布 + 停 / 重试 / 回答 / 清理 + 看执行会话。写类只对电脑上的界面开放；
   // 远程壳只放行只读的 superagentPeekSession（见 packages/remote/types.ts）。
   'superagentPublish',
   'superagentStopTicket',
   'superagentRetryTicket',
+  'superagentAnswer',
   'superagentCleanWorktree',
   'superagentPeekSession',
   // 推断候选收件箱（backlog G1）：人在界面上给一条候选定结论。两个都是写类，
@@ -454,6 +455,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   // MAX_TICKET_JSON 兜住，能不能当目录名由宿主那边的 sessionsDir 再判一次。
   superagentStopTicket: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   superagentRetryTicket: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
+  // 回答工单的问题：一个 `{ ticketId, text }` 对象。**不能用 MAX_TICKET_JSON**——它的定义是
+  // 「id 的长度 + 对象壳的余量」，回答正文会超；正文的量级与发布正文一样，所以跟
+  // superagentPublish 同一档（4000 字的业务上限在服务层卡，这里是通道闸）。
+  superagentAnswer: [{ shape: { kind: 'json', maxBytes: MAX_PUBLISH_JSON } }],
   superagentCleanWorktree: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   superagentPeekSession: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   // 候选收件箱的两个动作：一个候选 id，外加（接单时）可选的标题覆盖。

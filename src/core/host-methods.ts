@@ -50,11 +50,13 @@ export const INVOKABLE_METHODS = [
   // 状态面板「终端」区的输出面：只读读一次输出快照（归属校验与 stop 同口径）
   'readBackground',
   'peekTranscript',
-  // Super Agent 工单（superagent 插件默认关着；界面通道里只放这五条，见 core/ui-methods.ts）。
-  // 停 / 重试 / 清理是写类，留在电脑上；看执行会话是只读，远程壳也放行（remote/types.ts）。
+  // Super Agent 工单（superagent 插件默认关着；界面通道里只放这几条，见 core/ui-methods.ts）。
+  // 停 / 重试 / 清理 / 回答是写类，留在电脑上；看执行会话是只读，远程壳也放行（remote/types.ts）。
   'superagentPublish',
   'superagentStopTicket',
   'superagentRetryTicket',
+  // 回答工单当前的那个问题：与「在 GitHub 评论里回一句」同一件事，只是入口在面板上。
+  'superagentAnswer',
   'superagentCleanWorktree',
   'superagentPeekSession',
   // 候选收件箱（backlog G1）：人在界面上给一条推断候选定结论。两个都是写类。
