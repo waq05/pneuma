@@ -52,6 +52,9 @@ const cdpPort = String(process.env['DSC_DOM_CDP_PORT'] || '')
 const userData = String(process.env['DSC_DOM_USER_DATA'] || '')
 const actions = parseJsonEnv('DSC_DOM_ACTIONS', [])
 const countSpec = parseJsonEnv('DSC_DOM_COUNTS', [])
+// CSS 断言：`[{ name, selector, props: ['text-wrap'] }]`。jsdom 不应用样式表，只有真 Chromium
+// 能读出 computed style；B37-R 的 CSS 残留靠这一段从「读源码文本」升级成「量真值」。
+const styleSpec = parseJsonEnv('DSC_DOM_STYLES', [])
 const width = Number(process.env['DSC_DOM_WIDTH'] || 1280)
 const height = Number(process.env['DSC_DOM_HEIGHT'] || 860)
 const bootSelector = String(process.env['DSC_DOM_BOOT'] || '.app')
@@ -260,7 +263,7 @@ async function settle(cdp) {
   }
 }
 
-/** 最终读数：整页文本 + hash + 关键 DOM 计数。 */
+/** 最终读数：整页文本 + hash + 关键 DOM 计数 + 指定选择器的 computed style。 */
 async function snapshot(cdp) {
   const counts = {}
   for (const spec of countSpec) {
@@ -271,6 +274,18 @@ async function snapshot(cdp) {
   counts['dom.elements'] = await cdp.evaluate('document.querySelectorAll("*").length')
   counts['dom.buttons'] = await cdp.evaluate('document.querySelectorAll("button").length')
   counts['dom.inputs'] = await cdp.evaluate('document.querySelectorAll("input, textarea, select").length')
+  const styles = {}
+  for (const spec of styleSpec) {
+    const name = String(spec.name ?? spec.selector)
+    const selector = JSON.stringify(String(spec.selector ?? ''))
+    const props = JSON.stringify(Array.isArray(spec.props) ? spec.props.map(String) : [])
+    styles[name] = await cdp.evaluate(`(() => {
+      const el = document.querySelector(${selector})
+      if (el === null) return null
+      const style = getComputedStyle(el)
+      return Object.fromEntries(${props}.map((prop) => [prop, style.getPropertyValue(prop)]))
+    })()`)
+  }
   return cdp.evaluate(`({
     url: location.href,
     hash: location.hash,
@@ -279,7 +294,7 @@ async function snapshot(cdp) {
     viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
     counts: ${JSON.stringify(counts)},
     text: document.body.innerText,
-  })`).then((value) => ({ ...value, console: consoleEvents.slice(-12) }))
+  })`).then((value) => ({ ...value, styles, console: consoleEvents.slice(-12) }))
 }
 
 app.disableHardwareAcceleration()

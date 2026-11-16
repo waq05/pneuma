@@ -85,6 +85,19 @@ interface CountSpec {
   selector: string
 }
 
+/**
+ * 一条 computed-style 读数。
+ *
+ * jsdom 不应用样式表、不布局，`text-wrap: balance` / 环形图尺寸这类只剩源码文本可钉；
+ * 真 Chromium 读出的值是 CSS 真的生效后的结果。读不到元素时记 null，golden 里是
+ * `（缺元素）`——元素被删会红，不会静默当 0。
+ */
+interface StyleSpec {
+  name: string
+  selector: string
+  props: readonly string[]
+}
+
 interface DomShot {
   error?: string
   url?: string
@@ -93,6 +106,7 @@ interface DomShot {
   title?: string
   viewport?: { width: number; height: number; dpr: number }
   counts?: Record<string, number>
+  styles?: Record<string, Record<string, string> | null>
   text?: string
   console?: string[]
 }
@@ -111,6 +125,8 @@ interface Scenario {
   height?: number
   actions: BrowserAction[]
   counts: CountSpec[]
+  /** 真 Chromium 的 computed style（CSS 残留的替代断言；见 B37-R）。 */
+  styles?: readonly StyleSpec[]
   /** 便宜的语义断言：整屏 diff 红之前先看场景意图有没有漂。 */
   expectText?: readonly string[]
 }
@@ -208,6 +224,24 @@ function messageRecords(): Record<string, unknown>[] {
       reasoning: '',
       ts: T0 + 6_000,
     },
+  ]
+}
+
+/** 一条只含审查结论卡的用户消息（B37-R：徽标色与卡片块的真机断言）。 */
+function reviewRecords(): Record<string, unknown>[] {
+  const body = [
+    '<review-findings teammate="writer-1" state="done">',
+    '### [P1] 徽标颜色与优先级语义不一致',
+    '- 位置：src/packages/ui-primitives/ui/review-findings-card.tsx:61',
+    '- 说明：P1 的徽标与 P3 同色，扫一眼分不出优先级。',
+    '- 建议：按 priority 分四档取色，并补 computed-style 断言。',
+    '### [P3] 卡片说明段的折行偏窄',
+    '- 位置：src/packages/ui-renderer/ui/styles/legacy/views.css:13000',
+    '</review-findings>',
+  ].join('\n')
+  return [
+    { type: 'meta', id: SESSION_ID, cwd: WORK, createdAt: T0 },
+    { type: 'user', text: body, ts: T0 + 1_000 },
   ]
 }
 
@@ -349,6 +383,10 @@ const SCENARIOS: readonly Scenario[] = [
       { name: 'sessions.rows', selector: '.sess-item' },
       { name: 'sidebar', selector: '.sidebar' },
     ],
+    styles: [
+      // B37-R：`text-wrap: balance` 只剩源码文本钉；真 Chromium 读 computed style 才是行为断言。
+      { name: 'welcome.h1', selector: '.welcome h1', props: ['text-wrap', 'line-height'] },
+    ],
     expectText: ['看懂代码', '做点东西', '审查改动'],
   },
   {
@@ -482,6 +520,11 @@ const SCENARIOS: readonly Scenario[] = [
       { name: 'usage.trend', selector: '.trend-svg' },
       { name: 'usage.donut', selector: '.donut-svg' },
     ],
+    styles: [
+      // B37-R：环形图的宽高来自 CSS/媒体查询，jsdom 量不到。
+      { name: 'usage.donut', selector: '.donut-svg', props: ['width', 'height'] },
+      { name: 'usage.card', selector: '.usage-card', props: ['border-radius'] },
+    ],
     expectText: ['Token 活动', '每日 Token 趋势', '模型用量', '累计 Token', '活跃天数'],
   },
   {
@@ -609,6 +652,36 @@ const SCENARIOS: readonly Scenario[] = [
     ],
     expectText: ['看懂代码', '做点东西'],
   },
+  {
+    slug: '11-review-findings',
+    title: '审查结论卡（review-findings）',
+    stable:
+      '用户消息里的 `<review-findings>` 块由壳解析成卡片：徽标、标题、位置、说明都来自种子文本；' +
+      '卡片不带流式状态，静置后 DOM 与 computed style 都不再变化（B37-R 的徽标色改量真值）。',
+    seed: (dsc) => {
+      writeConfig(dsc)
+      writeSession(dsc, SESSION_ID, reviewRecords(), T0 + 5_000)
+    },
+    actions: [
+      { type: 'wait', selector: '.sess-item' },
+      { type: 'click', selector: '.group-row', text: 'dom-work' },
+      { type: 'click', selector: '.sess-item', text: 'review-findings' },
+      { type: 'wait', selector: '.review-findings' },
+      { type: 'wait', selector: '.review-finding-badge' },
+    ],
+    counts: [
+      { name: 'review.cards', selector: '.review-findings' },
+      { name: 'review.findings', selector: '.review-finding' },
+      { name: 'review.badges', selector: '.review-finding-badge' },
+    ],
+    styles: [
+      // B37-R 的四档徽标色：真 Chromium 读出 priority=1 与 priority=3 的实际颜色。
+      { name: 'review.badge.p1', selector: '.review-finding[data-priority="P1"] .review-finding-badge', props: ['color', 'background-color', 'font-size', 'border-radius'] },
+      { name: 'review.badge.p3', selector: '.review-finding[data-priority="P3"] .review-finding-badge', props: ['color', 'background-color', 'font-size', 'border-radius'] },
+      { name: 'review.card', selector: '.review-findings', props: ['border-radius', 'padding-left'] },
+    ],
+    expectText: ['徽标颜色与优先级语义不一致', '卡片说明段的折行偏窄', 'P1', 'P3'],
+  },
 ]
 
 /**
@@ -699,12 +772,22 @@ function normalizeDom(text: string, home: string, branch: string): string {
 /** 把一次真机读数转成 golden 文本：场景说明 + hash + 计数 + 整页文本。 */
 function toGolden(scenario: Scenario, shot: DomShot, home: string, branch: string): string {
   const counts = Object.entries(shot.counts ?? {}).sort(([left], [right]) => left.localeCompare(right))
+  const styleLines = Object.entries(shot.styles ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([name, props]) =>
+      props === null
+        ? [`#   ${name} = （缺元素）`]
+        : Object.entries(props)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([prop, value]) => `#   ${name}.${prop} = ${value}`),
+    )
   const header = [
     `# 场景：${scenario.title}`,
     `# 稳定：${scenario.stable}`,
     `# hash：${shot.hash === undefined || shot.hash === '' ? '（空）' : shot.hash}`,
     '# 计数：',
     ...counts.map(([name, value]) => `#   ${name} = ${String(value)}`),
+    ...(styleLines.length === 0 ? [] : ['# 样式（真 Chromium computed style）：', ...styleLines]),
   ]
   return normalizeDom([...header, '', shot.text ?? ''].join('\n'), home, branch)
 }
@@ -750,6 +833,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
         DSC_DOM_USER_DATA: electronUserData(home),
         DSC_DOM_ACTIONS: JSON.stringify(actions),
         DSC_DOM_COUNTS: JSON.stringify(scenario.counts),
+        DSC_DOM_STYLES: JSON.stringify(scenario.styles ?? []),
         DSC_DOM_WIDTH: String(scenario.width ?? 1280),
         DSC_DOM_HEIGHT: String(scenario.height ?? 860),
         DSC_DOM_BOOT: '.composer',

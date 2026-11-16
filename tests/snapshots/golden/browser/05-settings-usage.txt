@@ -9,6 +9,10 @@
 #   usage.donut = 1
 #   usage.heat.cells = 371
 #   usage.trend = 1
+# 样式（真 Chromium computed style）：
+#   usage.card.border-radius = 14px
+#   usage.donut.height = 180px
+#   usage.donut.width = 180px
 
 Pneuma
 新会话

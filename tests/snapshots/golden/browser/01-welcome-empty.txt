@@ -8,6 +8,9 @@
 #   sessions.rows = 1
 #   sidebar = 1
 #   welcome.cards = 4
+# 样式（真 Chromium computed style）：
+#   welcome.h1.line-height = 35px
+#   welcome.h1.text-wrap = balance
 
 Pneuma
 新会话
