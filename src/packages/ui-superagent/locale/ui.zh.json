@@ -116,6 +116,7 @@
   "superagent.settings.rows.pick": "请选择",
   "superagent.settings.rows.remove": "删除",
   "superagent.settings.rows.removeTip": "删除这一行",
+  "superagent.settings.rows.save": "保存表格",
   "superagent.settings.history.title": "最近变更",
   "superagent.settings.history.empty": "还没有变更记录——保存成功且值真的变了才会记一条。",
   "superagent.settings.history.row": "{at}　{label}：{from} → {to}",

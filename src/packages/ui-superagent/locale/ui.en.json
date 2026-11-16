@@ -116,6 +116,7 @@
   "superagent.settings.rows.pick": "Select",
   "superagent.settings.rows.remove": "Remove",
   "superagent.settings.rows.removeTip": "Remove this row",
+  "superagent.settings.rows.save": "Save table",
   "superagent.settings.history.title": "Recent changes",
   "superagent.settings.history.empty": "No changes recorded yet - a change is recorded when a save succeeds and the value actually differs.",
   "superagent.settings.history.row": "{at}  {label}: {from} -> {to}",
