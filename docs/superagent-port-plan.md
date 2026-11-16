@@ -170,7 +170,7 @@
 
 ## 6 测试移植口径
 
-上游带 48 个 vitest spec、11,746 行。本仓门禁用 `node:test` 的 `*-test.mjs`（每个用例文件在末尾打印 `通过 N`，`package-tests` 读这一行），因此测试不能整目录照搬，按三类处理：
+上游带 48 个 vitest spec、11,746 行。本仓门禁用 `node:test` 的 `*.test.mjs`（每个用例文件在末尾打印 `通过 N`，`package-tests` 读这一行），因此测试不能整目录照搬，按三类处理：
 
 | 类 | 上游 spec | 处理 |
 | --- | --- | --- |
@@ -178,7 +178,7 @@
 | 依赖 DSH 运行时（要换成 DSC 的会话/执行体假件） | `runtime`、`runtime-concurrency`、`http`、`navigation`、`model-surface`、`index`、`service-script` | 在原模块原生重写完成后转写；`http`/`navigation` 不移植 |
 | 文档/打包检查（本仓自有等价闸门） | `class-docs`、`docs`、`bundle-patch`、`styles`、`locales` | 不移植，理由记进设计文档 |
 
-节奏：每个模块波落地后，由**测试子代理**补该模块的 `*-test.mjs`（不改实现代码），并负责每波末的四道闸；开发子代理只写实现、只跑 `npx tsc -p tsconfig.json --noEmit`。W9 切换包入口前，旧测试仍跑旧模块，删旧树时被删模块的旧测试同步换成已转写的新测试。
+节奏：每个模块波落地后，由**测试子代理**补该模块的 `*.test.mjs`（不改实现代码），并负责每波末的四道闸；开发子代理只写实现、只跑 `npx tsc -p tsconfig.json --noEmit`。W9 切换包入口前，旧测试仍跑旧模块，删旧树时被删模块的旧测试同步换成已转写的新测试。
 
 
 ---
