@@ -159,9 +159,24 @@
 
 ---
 
-
+## 5 风险与回滚
 
 1. **P9-C 数据迁移**是唯一碰用户已有库的一批：迁移前先复制库文件，测试覆盖「旧库 → 新库 → 旧功能仍可用」；迁移失败时插件拒绝启动并给可读原因，不做半迁移。
 2. **P9-F / P9-G 会删掉 3,700 行现有适配器**：删前打 tag，每批单独提交，可按批回滚。
 3. **P9-B2 动设置契约**（补 `rows` / `fact` 字段类型）：界面与内核同时编译，单独提交，不与其他批并行。
-4. 每批由主协调者独立重跑四次验收命令并记录退出码；子代理只负责实现与自测。
+4. 每波由主协调者独立重跑四道闸并记录退出码；开发子代理只实现 + `tsc --noEmit`，测试子代理另派。
+
+---
+
+## 6 测试移植口径
+
+上游带 48 个 vitest spec、11,746 行。本仓门禁用 `node:test` 的 `*-test.mjs`（每个用例文件在末尾打印 `通过 N`，`package-tests` 读这一行），因此测试不能整目录照搬，按三类处理：
+
+| 类 | 上游 spec | 处理 |
+| --- | --- | --- |
+| 纯逻辑（可 1:1 转 `node:test`） | `core-engine`、`policy`、`migration`、`store`、`cache`、`cards`、`outbox`、`effects`、`passes`、`retry-health`、`commands`、`deployment`、`environment`、`health`、`prompts`、`settings`、`views`、`sources`、`registry`、`admission-context`、`background`、`delivery`、`role-models`、`tools`、`assessment`、`github-read`、`feishu-read`、`feishu-image`、`queue`、`stage`、`timeline`、`followups`、`draft`、`marks`、`markdown` | 逐个转写，断言与夹具保留 |
+| 依赖 DSH 运行时（要换成 DSC 的会话/执行体假件） | `runtime`、`runtime-concurrency`、`http`、`navigation`、`model-surface`、`index`、`service-script` | 在原模块原生重写完成后转写；`http`/`navigation` 不移植 |
+| 文档/打包检查（本仓自有等价闸门） | `class-docs`、`docs`、`bundle-patch`、`styles`、`locales` | 不移植，理由记进设计文档 |
+
+节奏：每个模块波落地后，由**测试子代理**补该模块的 `*-test.mjs`（不改实现代码），并负责每波末的四道闸；开发子代理只写实现、只跑 `npx tsc -p tsconfig.json --noEmit`。W9 切换包入口前，旧测试仍跑旧模块，删旧树时被删模块的旧测试同步换成已转写的新测试。
+
