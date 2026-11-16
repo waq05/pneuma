@@ -16,7 +16,7 @@
  *
  * @module dsc/core/sandbox/net-proxy
  */
-import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import type {Duplex} from 'node:stream'
 import { allowlistMatches } from './policy.js'
@@ -133,11 +133,15 @@ export function createNetProxy(options: NetProxyOptions): Promise<NetProxy> {
       return
     }
     // 放行：按原样转发（去代理语义的 URL 前缀），流式直通不缓存。
-    // 代理专用的两个头要**删掉**而不是赋 undefined：Node 24 的 http.request 对显式
+    // 代理专用头要**跳过**而不是赋 undefined：Node 24 的 http.request 对显式
     // undefined 的 header 值直接抛 ERR_HTTP_INVALID_HEADER_VALUE（实测放行即崩）。
-    const headers: Record<string, unknown> = { ...req.headers, host: `${parsed.host}:${parsed.port}` }
-    delete headers['proxy_connection']
-    delete headers['proxy-authorization']
+    const headers: OutgoingHttpHeaders = {}
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue
+      if (key === 'proxy_connection' || key === 'proxy-authorization') continue
+      headers[key] = value
+    }
+    headers['host'] = `${parsed.host}:${parsed.port}`
     const upstream = httpRequest({
       host: parsed.host,
       port: Number(parsed.port),
