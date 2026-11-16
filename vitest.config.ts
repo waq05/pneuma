@@ -105,7 +105,7 @@ export default defineConfig({
     // P4 冻结基线、P6 逐目录抬杠）。纯类型文件与入口不算覆盖面。
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
+      reporter: ['text', 'html', 'json-summary'],
       // 只收代码文件：'src/packages/**' 会把 README.md / locale/*.json / *.yml 也收进来，
       // V8 provider 会把它们当 JS 解析并在日志里刷 PARSE_ERROR（覆盖率数字同时归零）。
       include: ['src/core/**/*.ts', 'src/packages/**/*.ts', 'src/packages/**/*.tsx'],

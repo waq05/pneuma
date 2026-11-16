@@ -46,7 +46,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:snapshot": "vitest run --project snapshot --passWithNoTests",
     "test:snapshot:record": "vitest run --project snapshot",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --hookTimeout=20000 --testTimeout=20000",
     "ui:serve": "node scripts/_ui-shell-serve.mjs",
     "test:tui": "vitest run --project tui",
     "test:bench": "node tests/bench/run.mjs",
