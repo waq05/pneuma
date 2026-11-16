@@ -100,5 +100,8 @@
 
 1. **B44/B40 已闭环**；`pnpm test` 295/3251、全量 e2e 8 文件 / 161+1 skip / exit 0。
 2. 先做 B46 CI 接线、B45 会话录制、B50 C3、B49 产物层、B48 CSS→Chromium、B53 文档订正。
-3. 再启动 [testing-coverage-plan.md](testing-coverage-plan.md) 的 W1–W6，目标整体 lines ≥ 90%。
+3. **覆盖率目标已达成（2026-11-17）**：全量实测 lines 92.09（42,960/46,646）/
+   branches 81.85 / functions 89.70 / statements 89.68（core 92.43 / 81.56），
+   四项全过门、exit 0、8,156 用例过；基线抬到 92.0 / 81.8 / 89.7 / 89.6。
+   见 [testing-coverage-plan.md](testing-coverage-plan.md) §1.8。
 
