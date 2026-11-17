@@ -12,7 +12,7 @@
  *
  * @module dsc-tui/app/settings-model
  */
-import type { SettingsSectionView } from '@pneuma/runtime/contract.js'
+import type { SettingsField, SettingsSectionView, SettingsValues } from '@pneuma/runtime/contract.js'
 
 /** 当前展开的组子页（null/缺省 = 不在组子页）。 */
 export interface SettingsGroupRef {
@@ -20,15 +20,64 @@ export interface SettingsGroupRef {
   groupId: string
 }
 
-/** 设置页的一行；section/field/hint/group 可聚焦，其余是结构行。 */
+/**
+ * 设置页的一行；section/field/table-head/table-cell/table-add/hint/group 可聚焦，其余是结构行。
+ *
+ * `rows` 字段（记录表）在行模型里摊成三种行：一行列头（`table-head`，不可聚焦）、
+ * 每个单元格一行（`table-cell`，可聚焦、Enter 编辑/删除）、末尾一行「添加」（`table-add`）。
+ * 为什么按单元格而不是按记录摊：本页的行高恒为 1，一行只放得下一个输入框/下拉。
+ */
 export type SettingsRow =
   | { kind: 'card-top'; sectionId: string; title: string; subtitle?: string }
   | { kind: 'card-bottom' }
   | { kind: 'spacer' }
   | { kind: 'section'; sectionId: string; title: string; subtitle?: string }
   | { kind: 'field'; sectionId: string; fieldIndex: number }
+  | { kind: 'table-head'; sectionId: string; fieldIndex: number }
+  | { kind: 'table-cell'; sectionId: string; fieldIndex: number; rowIndex: number; columnIndex: number }
+  | { kind: 'table-add'; sectionId: string; fieldIndex: number }
   | { kind: 'group'; sectionId: string; groupId: string; title: string; description?: string }
   | { kind: 'hint'; sectionId: string; text: string; jump?: 'model-picker' | 'usage' }
+
+/**
+ * `rows` 字段的当前记录表：值不是对象数组时按空表算（旧宿主 / 手改过的值不让界面崩）。
+ */
+export function tableRecordsOf(values: SettingsValues | undefined, key: string): Record<string, string>[] {
+  const value = values?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter(
+    (entry): entry is Record<string, string> => typeof entry === 'object' && entry !== null && !Array.isArray(entry),
+  )
+}
+
+/** 取某一行里的字段声明（下标越界返回 undefined）。 */
+function fieldAt(section: SettingsSectionView, fieldIndex: number): SettingsField | undefined {
+  return section.fields[fieldIndex]
+}
+
+/**
+ * 一个字段在行模型里占的行：普通字段一行；`rows` 字段摊成「列头 + 每格一行 + 添加行」。
+ * values 还没装填到时按 0 条记录画（列头与添加行仍在，不会白屏）。
+ */
+function fieldRows(
+  section: SettingsSectionView,
+  fieldIndex: number,
+  values: Record<string, SettingsValues> | undefined,
+): SettingsRow[] {
+  const field = fieldAt(section, fieldIndex)
+  if (field === undefined || field.type !== 'rows') {
+    return [{ kind: 'field', sectionId: section.id, fieldIndex }]
+  }
+  const rows: SettingsRow[] = [{ kind: 'table-head', sectionId: section.id, fieldIndex }]
+  const records = tableRecordsOf(values?.[section.id], field.key)
+  records.forEach((_, rowIndex) => {
+    field.columns.forEach((__, columnIndex) => {
+      rows.push({ kind: 'table-cell', sectionId: section.id, fieldIndex, rowIndex, columnIndex })
+    })
+  })
+  rows.push({ kind: 'table-add', sectionId: section.id, fieldIndex })
+  return rows
+}
 
 /**
  * custom 分区在 TUI 的指引内容：管理界面在桌面端自己画，TUI 只给入口与去处——
@@ -46,7 +95,10 @@ const CUSTOM_HINTS: Record<string, { text: string; jump?: 'model-picker' | 'usag
 }
 
 /** 单个分区的正文行（卡片顶边之后、底边之前的那段）；根页与分区页共用一份装配。 */
-function sectionBodyRows(section: SettingsSectionView): SettingsRow[] {
+function sectionBodyRows(
+  section: SettingsSectionView,
+  values: Record<string, SettingsValues> | undefined,
+): SettingsRow[] {
   const rows: SettingsRow[] = []
   const hints = CUSTOM_HINTS[section.id]
   if (section.custom) {
@@ -59,7 +111,7 @@ function sectionBodyRows(section: SettingsSectionView): SettingsRow[] {
   section.fields.forEach((field, fieldIndex) => {
     const spec = field.group === undefined ? undefined : section.groups?.find((entry) => entry.id === field.group)
     if (spec === undefined) {
-      rows.push({ kind: 'field', sectionId: section.id, fieldIndex })
+      rows.push(...fieldRows(section, fieldIndex, values))
       return
     }
     if (emitted.has(spec.id)) return
@@ -75,11 +127,14 @@ function sectionBodyRows(section: SettingsSectionView): SettingsRow[] {
  *   section != null        → 分区页（该分区一张卡片：字段/组导航/指引行）；
  *   两者都空               → 根页（每分区一行导航，不画卡片——名字本身就是入口）。
  * 分区/组没声明或没了就给空表（App 侧 Esc 兜底回上级，不会停在白屏）。
+ *
+ * `values` 只有 `rows` 字段用得到（记录表的行数决定几何）；没装填到时按 0 条记录画。
  */
 export function buildSettingsRows(
   sections: SettingsSectionView[],
   sectionId?: string | null,
   group?: SettingsGroupRef | null,
+  values?: Record<string, SettingsValues>,
 ): SettingsRow[] {
   if (group != null) {
     const section = sections.find((entry) => entry.id === group.sectionId)
@@ -87,7 +142,7 @@ export function buildSettingsRows(
     if (section === undefined || spec === undefined) return []
     const rows: SettingsRow[] = [{ kind: 'card-top', sectionId: section.id, title: spec.title, subtitle: section.title }]
     section.fields.forEach((field, fieldIndex) => {
-      if (field.group === group.groupId) rows.push({ kind: 'field', sectionId: section.id, fieldIndex })
+      if (field.group === group.groupId) rows.push(...fieldRows(section, fieldIndex, values))
     })
     rows.push({ kind: 'card-bottom' })
     return rows
@@ -97,7 +152,7 @@ export function buildSettingsRows(
     if (section === undefined) return []
     return [
       { kind: 'card-top', sectionId: section.id, title: section.title, subtitle: section.subtitle },
-      ...sectionBodyRows(section),
+      ...sectionBodyRows(section, values),
       { kind: 'card-bottom' },
     ]
   }
@@ -109,12 +164,18 @@ export function buildSettingsRows(
   }))
 }
 
-/** 该行能不能拿到焦点（有 Enter/←→ 动作才给焦点：info 仅 copyable 可聚焦，分区/组行恒可聚焦）。 */
+/**
+ * 该行能不能拿到焦点（有 Enter/←→ 动作才给焦点：`fact` 只读不聚焦，info 仅 copyable
+ * 可聚焦，分区/组行恒可聚焦，记录表的单元格与「添加」行可聚焦）。
+ */
 export function isFocusableRow(row: SettingsRow, fields: SettingsSectionView['fields']): boolean {
   if (row.kind === 'section' || row.kind === 'group') return true
+  if (row.kind === 'table-cell' || row.kind === 'table-add') return true
   if (row.kind === 'field') {
     const field = fields[row.fieldIndex]
-    return field !== undefined && (field.type !== 'info' || field.copyable === true)
+    if (field === undefined) return false
+    if (field.type === 'fact') return false
+    return field.type !== 'info' || field.copyable === true
   }
   return row.kind === 'hint' && row.jump !== undefined
 }
@@ -128,7 +189,7 @@ export function focusableRows(rows: SettingsRow[], sections: SettingsSectionView
       result.push(index)
       return
     }
-    if (row.kind !== 'field' && row.kind !== 'hint') return
+    if (row.kind !== 'field' && row.kind !== 'hint' && row.kind !== 'table-cell' && row.kind !== 'table-add') return
     const fields = byId.get(row.sectionId)?.fields ?? []
     if (isFocusableRow(row, fields)) result.push(index)
   })

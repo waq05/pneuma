@@ -361,13 +361,16 @@
   transform: rotate(90deg);
 }
 
+/* 三角顶掉文件夹图标只在两种真实意图下发生：鼠标悬停，或键盘焦点（:focus-visible）。
+   不能用 :focus-within / :focus：工作区行是 <div role="button" tabIndex={0}>，
+   鼠标点一下就会拿到焦点且不会自己丢，那样三角会常显、展开态的「打开的文件夹」永远看不到。 */
 .group-row:hover .folder-chevron,
-.group-row:focus-within .folder-chevron {
+.group-row:focus-visible .folder-chevron {
   display: inline-flex;
 }
 
 .group-row:hover .folder-icon,
-.group-row:focus-within .folder-icon {
+.group-row:focus-visible .folder-icon {
   display: none;
 }
 
@@ -6079,6 +6082,35 @@ body.resizing iframe {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
   line-height: 1.6;
+}
+
+/* 搜索型源（skills.sh）的关键词不够长：中性一行字，不是错误 —— 它只是还没输入 */
+.market-hint {
+  padding: 8px 2px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+}
+
+/* 后台刷新 / 搜索失手时的软提示：一行小字，已有列表原样留在下面 */
+.market-notice {
+  padding: 0 2px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.5;
+}
+
+/* 搜索中：同样只占一行，上一次的结果不清空 */
+.market-searching {
+  padding: 4px 2px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 搜索框拿到焦点时描边提一档：skills.sh 靠它取词，要让人一眼看到光标该落在哪 */
+.skills-search:focus-within {
+  border-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+  background: var(--dsc-bg-card);
 }
 
 /* ══════════ 设置面板 ══════════ */

@@ -331,10 +331,14 @@ describe('相对时间、状态点与单列表档', () => {
     await flush()
     expect(textOf(container.querySelector('.side-title'))).toBe(zh['head.sessions'])
     expect(container.querySelector('.group-row')).toBeNull()
+    // 单列表档是「各组会话按组序连成一条流」（ui.tsx:664-665 的 flatMap），不是全局按时间排。
+    // manual 档没排过序时组序按首次出现时间倒序（grouping.ts:190-207）：D:/other（createdAt 3）
+    // 在前、D:/demo（createdAt 1）在后；组内再按 updatedAt 倒序 → 丙（10 那一组唯一一条）、
+    // 甲（30）、乙（20）。三行跨两个工作区混排、不插组行，正是这一档要钉的形态。
     expect(rows(container).map((row) => textOf(row.querySelector('.title')))).toEqual([
+      '丙会话',
       '甲会话',
       '乙会话',
-      '丙会话',
     ])
   })
 })

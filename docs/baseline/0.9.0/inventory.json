@@ -425,6 +425,15 @@
       "bundle": null
     },
     {
+      "file": "superagent-webhook",
+      "name": "Super Agent Webhook",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "surfaces",
       "name": "快照片段注册表",
       "enabled": true,
@@ -686,6 +695,15 @@
       "bundle": null
     },
     {
+      "file": "web-fetch",
+      "name": "网页抓取",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "web-fetch",
+      "bundle": null
+    },
+    {
       "file": "web-search",
       "name": "联网搜索",
       "enabled": true,
@@ -769,7 +787,7 @@
       "id": "log",
       "title": "运行日志",
       "order": 880,
-      "builtin": false
+      "builtin": true
     },
     {
       "id": "memory",
@@ -854,6 +872,12 @@
       "title": "用量统计",
       "order": 25,
       "builtin": true
+    },
+    {
+      "id": "web-fetch",
+      "title": "网页抓取",
+      "order": 47,
+      "builtin": false
     },
     {
       "id": "web-search",

@@ -17,6 +17,7 @@ import { wrapUntrusted } from '../../core/untrusted.js'
 import { readShellChoice, resolveShellExecutable, shellLabel, wslDistroName, type ShellChoice } from '../../core/terminal-env.js'
 import { finishCommand, planCommand, type SpawnPlan } from '../../core/tools/command-runner.js'
 import { sandboxPermissionProperties } from '../../core/tools/sandbox-args.js'
+import type { JobsService, JobView } from '@pneuma/runtime/services/types.js'
 
 const isWin = process.platform === 'win32'
 
@@ -919,6 +920,59 @@ export function createJobTools(table: JobTable): ToolEntry[] {
       },
     },
   ]
+}
+
+/**
+ * 作业表的对外查询口（`ctx.jobs`，backlog G3）。
+ *
+ * 为什么要有这个口：作业的 `owner` 早就写的是发起会话 id（{@link JobTable.launch} 收
+ * `ctx.sessionId`），但外面查不到「这个会话还有几个作业在跑」。superagent 的执行器
+ * 要在 worker 回合结束后等这些作业收尾（对齐上游 `executor/background.ts` 的
+ * `untilQuiet`），只能靠它。
+ *
+ * 只有查询与终止：启动仍在 bash 工具的 `run_in_background` 上，这个服务不提供第二套
+ * 启动路径——「命令 → shell」的进程边界留在本文件收口。
+ *
+ * @param table - 本插件自己的作业表（`tools-default` 收摊时随进程一起清掉）
+ */
+export function createJobsService(table: JobTable): JobsService {
+  const toView = (job: JobRecord): JobView => ({
+    id: job.id,
+    ...(job.owner === undefined ? {} : { owner: job.owner }),
+    status: job.status,
+    command: job.command,
+    startedAt: job.startedAt,
+    ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+    exitCode: job.exitCode,
+  })
+  return {
+    list(owner) {
+      const jobs = table.list()
+      return (owner === undefined ? jobs : jobs.filter((job) => job.owner === owner)).map(toView)
+    },
+    running(owner) {
+      return table.list().filter((job) => job.status === 'running' && job.owner === owner).map(toView)
+    },
+    async wait(id, timeoutMs, signal) {
+      // 轮询而不是事件：作业数是个位、等的人也只有执行器一个，50ms 一次的代价远小于
+      // 给 `JobTable` 加一套订阅与广播；kill 之后进程真正退出也照这条路径看到。
+      const deadline = Date.now() + Math.max(0, timeoutMs)
+      for (;;) {
+        const job = table.get(id)
+        if (job === undefined || job.status !== 'running') return true
+        if (signal?.aborted === true) return false
+        if (Date.now() >= deadline) return false
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+    },
+    kill(id) {
+      const job = table.get(id)
+      if (job === undefined || job.status !== 'running') return false
+      table.markKilled(id)
+      stopBackgroundChild(id)
+      return true
+    },
+  }
 }
 
 // ── T20：持久终端会话（降级版：管道会话 + 读写分离） ─────────────────────────

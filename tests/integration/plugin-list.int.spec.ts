@@ -100,18 +100,18 @@ function rowOf(result: RunCliResult, id: string): string {
   return rowsOf(result).find((line) => line.trimStart().startsWith(`${id} `)) ?? ''
 }
 
-describe('① 清单本身：79 行、带开关、表头写了行数', () => {
+describe('① 清单本身：81 行、带开关、表头写了行数', () => {
   test('命令正常退出', () => {
     expect(run.code).toBe(0)
     expect(run.stderr.slice(0, 400)).toBe('')
   })
 
-  test('列出了 79 行（应用自带的全部功能与界面单元）', () => {
-    expect(rowsOf(run)).toHaveLength(79)
+  test('列出了 81 行（应用自带的全部功能与界面单元）', () => {
+    expect(rowsOf(run)).toHaveLength(81)
   })
 
   test('表头写了行数', () => {
-    expect(run.stdout).toMatch(/（79 行）/)
+    expect(run.stdout).toMatch(/（81 行）/)
   })
 
   test('每一行都带开关', () => {
@@ -149,8 +149,8 @@ describe('② 覆盖与 pinned：这一行现在到底用的是哪份代码', ()
 })
 
 describe('③ --profile 指到别的目录：只列那个目录，覆盖不算数', () => {
-  test('仍列出 79 行', () => {
-    expect(rowsOf(otherRun)).toHaveLength(79)
+  test('仍列出 81 行', () => {
+    expect(rowsOf(otherRun)).toHaveLength(81)
   })
 
   test('不算覆盖：仍显示应用版本，也不打「profile 覆盖」', () => {

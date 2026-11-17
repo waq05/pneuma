@@ -66,7 +66,11 @@ export type ArchivedFilter = 'hide' | 'show' | 'only'
 export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'
 
 /**
- * 全局字号缩放倍数（1 = 正文 13px 基准）。桌面端把它直接写成 `--dsc-font-scale`。
+ * 全局字号缩放倍数（1 = 正文 14px 基准）。桌面端把它直接写成 `--dsc-font-scale`。
+ *
+ * 2026-11 起这只是**派生值**：真源是 {@link UiPrefsView.textSizePx}（用户直接调 px），
+ * 倍率 = px ÷ 14（见 `contract/fonts.ts` 的 `fontScaleFromTextSizePx`）。保留这个字段
+ * 是给还没升级的消费方（旧界面、第三方插件、手机远程）读的，新代码一律读 textSizePx。
  *
  * 0.6 之前的存档里这里是 `'sm' | 'md' | 'lg'` 三档字符串，读档时迁移成
  * 0.92 / 1 / 1.12（见 core/prefs.ts 的 readPrefs）。
@@ -157,8 +161,36 @@ export interface UiPrefsView {
   workspaceAliases: Record<string, string>
   /** 主题模式。 */
   themeMode: ThemeMode
-  /** 字号缩放倍数（设置页滑杆可调范围 0.85–1.35）。 */
+  /**
+   * 会话正文的像素大小（10–22，默认 14）。**这是字号的唯一真源**：设置页滑杆直接写它，
+   * 界面按 `px ÷ 14` 算出 `--dsc-font-scale`，其余字号（标题、卡片、工具行）等比跟随。
+   *
+   * 为什么不继续存倍率：用户说的是「16px」，倍率只是实现细节。存 px 后
+   * 「设置里显示的数」与「实际画出来的数」是同一个数，不会因为基准从 13 改成 14
+   * 而出现「100% 却不是 14px」这种对不上的情况。
+   */
+  textSizePx: number
+  /**
+   * 字号缩放倍数（`textSizePx ÷ 14`），**派生值**，不单独写盘。
+   *
+   * 保留它是为了让还没升级的消费方继续读得到（手机远程、第三方插件、旧壳）。
+   * 新代码请读 {@link textSizePx}；两者不一致时以 textSizePx 为准（读档会重算这个值）。
+   */
   fontSize: UiFontSize
+  /**
+   * 正文字体（界面与会话正文）。空串 = 用内置栈。
+   *
+   * 值已经过 `normalizeFontList` 归一：逗号分隔、含空格的族带双引号、≤ 8 族、≤ 200 字符。
+   * 界面把它写成 `--dsc-font-text`，内置栈垫在它后面当兜底——用户填的字体缺某个字时
+   * 中文仍落到系统字体，不会掉宋体。
+   */
+  textFontFamily: string
+  /**
+   * 代码字体（代码块、行内代码、工具输出）。空串 = 用内置栈。
+   *
+   * 归一规则同 {@link textFontFamily}；界面写成 `--dsc-font-code`。
+   */
+  codeFontFamily: string
   /** 按钮缩放倍数（设置页滑杆可调范围 0.9–1.5），桌面端把它写成 `--dsc-btn-scale`。 */
   buttonScale: number
   /** 密度档位。 */

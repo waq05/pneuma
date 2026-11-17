@@ -438,13 +438,17 @@ describe('键盘、拖到末尾与展开剩余', () => {
     await flush()
     const transfer = dragTransfer()
 
-    fireEvent.dragStart(groupWhere(container, 'demo'), { dataTransfer: transfer })
+    // manual 档还没排过序时，组序按「工作区第一次出现时间」倒序（grouping.ts:190-193、
+    // :202-207）：D:/other（createdAt 3）在 D:/demo（createdAt 1）上面。要验「拖到末尾
+    // 真的换位」，得从第一组 D:/other 拖起——把本来就在末尾的 D:/demo 拖到末尾是空操作，
+    // 按 ui.tsx:743-748 的守卫不写盘。
+    fireEvent.dragStart(groupWhere(container, 'other'), { dataTransfer: transfer })
     const tail = container.querySelector('.drop-tail') as HTMLElement
     expect(tail).not.toBeNull()
     fireEvent.dragOver(tail, { dataTransfer: transfer })
     fireEvent.drop(tail, { dataTransfer: transfer })
     await flush()
-    expect(callsOf(harness, 'setUiPrefs').at(-1)?.args).toEqual([{ workspaceOrder: ['D:/other', 'D:/demo'] }])
+    expect(callsOf(harness, 'setUiPrefs').at(-1)?.args).toEqual([{ workspaceOrder: ['D:/demo', 'D:/other'] }])
 
     cleanup()
     const second = harnessOf()

@@ -5,17 +5,31 @@
  * 与假宿主通道里跑：列表分组/折叠、作用域与搜索筛选、启停、正文展开、市场浏览/安装、
  * 市场源编辑、读失败的常驻提示。真扫盘与真下载归宿主，这里钉界面自己的账。
  *
+ * 每条用例在 beforeEach 里 `vi.resetModules()` 重新求值一份 ui 模块：市场清单缓存、
+ * 上次页签与预取标记都是模块级 state（产品里表示「一次界面会话」），共用一份会让后一条
+ * 用例看见前一条的缓存（`ui.tsx:133`、`:151-160`）——那不是产品行为，是隔离没做。
+ *
  * @module dsc-ui-skills/ui/ui.spec
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentType } from 'react'
-import { RuntimeProvider, setShellPage, type HostChannel } from '@dsc/ui-runtime'
 import type { UiPluginApi } from '@dsc/ui'
-import plugin from './ui.js'
+import type { HostChannel } from '@dsc/ui-runtime'
 
-/** SkillsPage 不直接导出：照壳装载插件那条路，收下 `shell.page` 的登记。 */
-function skillsPage(): ComponentType {
+/** 一份新求值的界面运行时/产品模块（`@dsc/*` 在测试里解析到 `src/**`，同样会被重载）。 */
+type RuntimeModule = typeof import('@dsc/ui-runtime')
+
+interface Session {
+  runtime: RuntimeModule
+  Page: ComponentType
+}
+
+/** 重载模块并照壳装载插件那条路收下 `shell.page` 登记的技能页（SkillsPage 不直接导出）。 */
+async function loadSession(): Promise<Session> {
+  vi.resetModules()
+  const runtime = await import('@dsc/ui-runtime')
+  const plugin = (await import('./ui.js')).default
   const registered: Array<{ slot: string; component: unknown }> = []
   const fakeUi = {
     slots: {
@@ -31,10 +45,11 @@ function skillsPage(): ComponentType {
   plugin.apply(fakeUi)
   const found = registered.find((item) => item.slot === 'shell.page')
   if (found === undefined) throw new Error('skills 插件没有把页面登记进 shell.page')
-  return found.component as ComponentType
+  return { runtime, Page: found.component as ComponentType }
 }
 
-const SkillsPage = skillsPage()
+/** 当前用例的模块实例（页面组件与运行时 provider 必须来自同一份，否则上下文对不上）。 */
+let session = null as unknown as Session
 
 interface SkillRow {
   name: string
@@ -110,6 +125,9 @@ function harnessOf(overrides: Record<string, unknown> = {}): Harness {
     readSkill: { ok: true, skill: { name: 'pdf-tools', content: '# PDF 正文' } },
     setSkillEnabled: { ok: true, notice: '已启用' },
     setMarketSources: { ok: true },
+    // 进页面就会预取一次市场源（`ui.tsx:267` 的 prefetchMarket），回执必须是契约形状：
+    // 给个 `{ok:true}` 会被写进市场缓存，后面命中时 `result.sources` 是 undefined 直接崩。
+    browseMarket: { sources: [], source: '', items: [] },
     ...overrides,
   }
   const channel: HostChannel = {
@@ -144,29 +162,33 @@ function harnessOf(overrides: Record<string, unknown> = {}): Harness {
   return { channel, calls, nativeCalls, replies }
 }
 
-const mount = (harness: Harness): ReturnType<typeof render> =>
-  render(
+const mount = (harness: Harness): ReturnType<typeof render> => {
+  const { RuntimeProvider } = session.runtime
+  const Page = session.Page
+  return render(
     <RuntimeProvider channel={harness.channel}>
-      <SkillsPage />
+      <Page />
     </RuntimeProvider>,
   )
+}
 
-/** 让挂载期的一串 promise 落地。 */
+/** 让挂载期的一串 promise 落地（预取与页签效果会串几层）。 */
 const flush = (): Promise<void> =>
   act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let index = 0; index < 8; index += 1) await Promise.resolve()
   })
 
 const textOf = (element: Element | null): string => element?.textContent ?? ''
 
-beforeEach(() => {
-  setShellPage('skills')
+beforeEach(async () => {
+  session = await loadSession()
+  session.runtime.setShellPage('skills')
+  document.querySelector('.dsc-toasts')?.remove()
 })
 
 afterEach(() => {
   cleanup()
-  setShellPage(null)
+  session.runtime.setShellPage(null)
   delete (globalThis as { dscNative?: unknown }).dscNative
   vi.useRealTimers()
 })
@@ -294,7 +316,8 @@ describe('市场页', () => {
     fireEvent.click(tabs[1] as HTMLElement)
     await flush()
 
-    expect(harness.calls).toContainEqual({ method: 'browseMarket', args: ['', undefined] })
+    // 第二个实参是搜索词（非搜索型源恒为空串）。
+    expect(harness.calls).toContainEqual({ method: 'browseMarket', args: ['', ''] })
     expect(container.querySelectorAll('.source-chip')).toHaveLength(2)
     expect(container.querySelectorAll('.market-row')).toHaveLength(2)
     expect(textOf(container.querySelector('.skill-stats'))).toContain('1,200')

@@ -1,5 +1,5 @@
 /**
- * @pneuma/subagent 的包级测试：钉 11 条不变量。
+ * @pneuma/subagent 的包级测试：钉 12 条不变量。
  * 为什么只钉这些：入口只有插件对象，派活要会话与模型；能便宜钉住的是装配面、包形态、入口、
  * 文档、agent-roles 里那张不落盘的出厂角色表，以及 2026-11-06 并入的共享任务板
  * （team_task 工具、板子提示段、设置分区里的 board 子开关）装配面。
@@ -34,6 +34,14 @@ interface PatchRow {
   name?: string
 }
 
+/** 工具调用上下文里测试用得到的部分（真类型见 `core/tools.ts` 的 `ToolContext`）。 */
+interface CapturedRunContext {
+  cwd: string
+  sessionId: string
+  sessionPath: string
+  signal: AbortSignal
+}
+
 /** 工具声明里测试用得到的部分。 */
 interface CapturedTool {
   name: string
@@ -43,7 +51,7 @@ interface CapturedTool {
     properties: Record<string, { type?: string; enum?: string[]; description?: string }>
     required?: string[]
   }
-  run: (args: unknown) => unknown
+  run: (args: Record<string, unknown>, runCtx: CapturedRunContext) => unknown
 }
 
 /** 提示段注册项。 */
@@ -140,7 +148,8 @@ function fakeContext(): { ctx: Context; captured: { tools: CapturedTool[]; secti
       gate: () => ({ action: 'defer' }),
       observe: () => {},
     },
-    agent: {},
+    // 内核会话表：默认查不到任何会话（`subagent` 工具查不到父会话就报错，见 G6 那条用例）。
+    agent: { sessionById: () => undefined },
     get: () => undefined,
   }
   // 假 ctx 只实现测试用到的面；真实 Context 的字段远多于它。
@@ -266,4 +275,27 @@ test('subagent 工具有 keep 开关，缺省留用，描述里讲清一次性�
   expect(keep?.description, 'keep 的描述要说出「一次性」三个字').toContain('一次性')
   expect((tool?.parameters.required ?? []).includes('keep'), 'keep 不填默认留用，不能必填').toBe(false)
   expect(tool?.description, '工具描述要讲清 keep=false 的后果').toContain('一次性')
+})
+
+// G6：superagent 的 worker 会话是执行器自己造的，不经常驻 agent 名册。它调这个工具时
+// 父会话必须查得到（内核 `ctx.agent.attach` 登记过）；查不到要报错，**不能**回落
+// `ctx.session.current()`——那会把队友派到用户正看着的会话名下，名册、额度、任务板
+// 全落到错的那条会话上。
+test('subagent 工具：父会话查不到就报错，查得到就按那条会话干活', async () => {
+  const { ctx, captured } = fakeContext()
+  subagentPlugin.apply(ctx, undefined)
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')!
+  const runCtx: CapturedRunContext = {
+    cwd: process.cwd(),
+    sessionId: 'worker-t1',
+    sessionPath: join(home, 'nowhere.jsonl'),
+    signal: new AbortController().signal,
+  }
+  // 查不到：同步报错（不是 rejected promise），错误里点明「不在内核的会话表里」。
+  expect(() => tool.run({ action: 'list' }, runCtx)).toThrow(/不在内核的会话表里/)
+  // 查得到：按那条会话报名单（假会话没有队友，所以是空名单 + 角色表）。
+  const agent = ctx.agent as unknown as { sessionById: (sessionId: string) => unknown }
+  agent.sessionById = (sessionId) => (sessionId === 'worker-t1' ? { meta: { id: 'worker-t1' } } : undefined)
+  const listed = await tool.run({ action: 'list' }, runCtx)
+  expect(String(listed), '查得到就按那条会话报名单').toContain('本会话没有在队或收工的队友')
 })

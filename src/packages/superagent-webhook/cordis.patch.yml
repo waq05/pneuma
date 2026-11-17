@@ -1,0 +1,9 @@
+# Super Agent 的 Webhook 来源：只发不收的第三种来源。
+# 默认关（`disabled: true`）：装上不等于要它往外发东西，先去插件中心打开并填好 http(s) 地址，
+# 或在设置 → Super Agent 的来源区里配好目标和刷新间隔。
+# 它只做两件事：往注册表登记 `webhook` kind（连体检项一起领），然后按 `pollSeconds` 刷体检格；
+# 不改主包一行，就是「加一种来源」的插件级样板。
+- insert:
+    - id: superagent-webhook
+      name: '@pneuma/superagent-webhook'
+      disabled: true

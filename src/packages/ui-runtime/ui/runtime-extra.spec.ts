@@ -5,8 +5,8 @@
  *
  *   - `createHostChannel`：hello/frame/plugins/ask 四条事件、订阅容错、invoke 的成功/401/
  *     HTTP 错误/ok=false/超时/外部取消、帧号跳号重开流、onerror 区分宿主报错与连接终态；
- *   - `appearance`：字号归一化（旧三档与夹取）、applyAppearance 写 DOM、localStorage 镜像
- *     与地址上 `theme=` 的优先级；
+ *   - `appearance`：字号 px 归一与旧倍率换算、字体列表归一、applyAppearance 写 DOM、
+ *     localStorage 镜像与地址上 `theme=` 的优先级；
  *   - `page-state` / `thread-view`：切页与切脸的通知去重、openTrace 的一次性聚焦；
  *   - `useTodayUsage`：末位日合计、空列表、刷新键变化。
  *
@@ -17,13 +17,13 @@
 import { createElement, type ReactNode } from 'react'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { fontScaleFromTextSizePx, normalizeFontList, normalizeTextSizePx, textSizePxFromLegacy } from '@dsc/ui-core'
 import { HOST_PROTOCOL_VERSION } from '../../../core/dock-browser.js'
 import {
   DEFAULT_APPEARANCE,
   applyAppearance,
   appearanceFromPrefs,
   loadCachedAppearance,
-  normalizeFontScale,
   saveCachedAppearance,
 } from './appearance.js'
 import { HostInvokeAbortedError, createHostChannel, type HostChannel } from './host-channel.js'
@@ -229,14 +229,29 @@ describe('宿主通道：四条事件与订阅容错', () => {
 })
 
 describe('外观：归一化、DOM 落地与 localStorage 镜像', () => {
-  test('字号归一化认旧三档并夹回区间，其余项按白名单回落', () => {
-    expect(normalizeFontScale('lg')).toBe(1.12)
-    expect(normalizeFontScale('md')).toBe(1)
-    expect(normalizeFontScale('sm')).toBe(0.92)
-    expect(normalizeFontScale('nope')).toBe(1)
-    expect(normalizeFontScale(9)).toBe(1.35)
-    expect(normalizeFontScale(0.1)).toBe(0.85)
-    expect(normalizeFontScale(Number.NaN)).toBe(1)
+  test('字号归一化：px 夹回 10–22，旧倍率换算成 px，其余项按白名单回落', () => {
+    // 真源是 px（contract/fonts.ts 的 normalizeTextSizePx）：坏值/越界一律夹进 10–22。
+    expect(normalizeTextSizePx(14)).toBe(14)
+    expect(normalizeTextSizePx(9)).toBe(10)
+    expect(normalizeTextSizePx(30)).toBe(22)
+    expect(normalizeTextSizePx(12.6)).toBe(13)
+    expect(normalizeTextSizePx(Number.NaN)).toBe(14)
+    expect(normalizeTextSizePx('lg')).toBe(14)
+    // 旧存档只存倍率或三档字符串：读档时按基准 14px 换算（textSizePxFromLegacy）。
+    expect(textSizePxFromLegacy('lg')).toBe(16)
+    expect(textSizePxFromLegacy('md')).toBe(14)
+    expect(textSizePxFromLegacy('sm')).toBe(13)
+    expect(textSizePxFromLegacy('nope')).toBeNull()
+    // 旧倍率先夹到 0.85–1.35 再乘 14px：1.35 × 14 = 18.9 → 19；0.85 × 14 = 11.9 → 12。
+    expect(textSizePxFromLegacy(9)).toBe(19)
+    expect(textSizePxFromLegacy(0.1)).toBe(12)
+    // `--dsc-font-scale` 是由 px 派生的倍率，保留 4 位小数（12px 不会画成 11.96px）。
+    expect(fontScaleFromTextSizePx(14)).toBe(1)
+    expect(fontScaleFromTextSizePx(12)).toBe(0.8571)
+    // 字体列表归一：空串 = 用内置栈；含空格的族名补引号；分号/花括号这类会弄坏 CSS 的字符剔掉。
+    expect(normalizeFontList('')).toBe('')
+    expect(normalizeFontList('Noto Sans SC, monospace')).toBe('"Noto Sans SC", monospace')
+    expect(normalizeFontList('nope;font, monospace')).toBe('nopefont, monospace')
 
     expect(
       appearanceFromPrefs({
@@ -249,13 +264,17 @@ describe('外观：归一化、DOM 落地与 localStorage 镜像', () => {
       }),
     ).toEqual({
       themeMode: 'light',
-      fontSize: 1,
+      textSizePx: 14,
+      textFontFamily: '',
+      codeFontFamily: '',
       density: 'roomy',
       collapseTiming: 'next-input',
       foldedReplies: 'final',
     })
+    // textSizePx 是真源：同时给了派生倍率时以 px 为准（appearance.ts:129-134）。
+    expect(appearanceFromPrefs({ textSizePx: 18, fontSize: 0.9 }).textSizePx).toBe(18)
     // 注意：DEFAULT_APPEARANCE.foldedReplies 是 'final'，而 normalizeFoldedReplies 的兜底是
-    // 'all'（appearance.ts:71 与 :120）——目前两处口径不一致，这里按运行期实际值钉住。
+    // 'all'（appearance.ts:84 与 :117-119）——目前两处口径不一致，这里按运行期实际值钉住。
     expect(appearanceFromPrefs(undefined)).toEqual({ ...DEFAULT_APPEARANCE, foldedReplies: 'all' })
     expect(appearanceFromPrefs({ density: '紧凑' as never, collapseTiming: 'x' as never, foldedReplies: 'y' as never })).toMatchObject({
       density: 'standard',
@@ -264,17 +283,27 @@ describe('外观：归一化、DOM 落地与 localStorage 镜像', () => {
     })
   })
 
-  test('applyAppearance 写 data-theme / data-density / 字号；跟随系统在无 matchMedia 时落到 dark', () => {
+  test('applyAppearance 写 data-theme / data-density / 字号倍率；跟随系统在无 matchMedia 时落到 dark', () => {
+    const root = document.documentElement
     applyAppearance({ ...DEFAULT_APPEARANCE, themeMode: 'light' })
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(root.dataset.theme).toBe('light')
+    // 默认正文 14px，派生出的倍率就是 1。
+    expect(root.style.getPropertyValue('--dsc-font-scale')).toBe('1')
 
-    applyAppearance({ ...DEFAULT_APPEARANCE, themeMode: 'system', density: 'roomy', fontSize: 0.9 })
-    expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(document.documentElement.dataset.density).toBe('roomy')
-    expect(document.documentElement.style.getPropertyValue('--dsc-font-scale')).toBe('0.9')
+    applyAppearance({ ...DEFAULT_APPEARANCE, themeMode: 'system', density: 'roomy', textSizePx: 21 })
+    expect(root.dataset.theme).toBe('dark')
+    expect(root.dataset.density).toBe('roomy')
+    // 21px ÷ 基准 14px = 1.5：界面里那批 `calc(Npx * var(--dsc-font-scale))` 跟着 px 缩放。
+    expect(root.style.getPropertyValue('--dsc-font-scale')).toBe('1.5')
+
+    // 字体列表写进 CSS 变量；空串必须删变量（写空串会让整条 font-family 非法，见 appearance.ts:200-214）。
+    applyAppearance({ ...DEFAULT_APPEARANCE, textFontFamily: '"Noto Sans SC", sans-serif' })
+    expect(root.style.getPropertyValue('--dsc-font-text')).toBe('"Noto Sans SC", sans-serif')
+    applyAppearance({ ...DEFAULT_APPEARANCE })
+    expect(root.style.getPropertyValue('--dsc-font-text')).toBe('')
 
     applyAppearance({ ...DEFAULT_APPEARANCE, themeMode: 'claude' })
-    expect(document.documentElement.dataset.theme).toBe('claude')
+    expect(root.dataset.theme).toBe('claude')
   })
 
   test('localStorage 镜像往返；地址上的 theme 压过镜像；坏镜像回落默认', () => {

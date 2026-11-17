@@ -2,7 +2,9 @@
  * 工单详情：顶部读数、交付摘要、执行会话的只读时间线，以及停止 / 重试 / 清理三颗按钮。
  *
  * 时间线读 `superagentPeekSession`（宿主只读重放执行会话的 jsonl，不拿写租约）。
- * 这里刻意**不做输入框**：它是「看它干了什么」的只读面，不是第二个对话窗口。
+ * 平时**没有输入框**：它是「看它干了什么」的只读面，不是第二个对话窗口。只有工单停下来
+ * 等人回答时（阶段 `{ stage: 'person', action: 'answer' }`）才留一个口子：一个输入框 +
+ * 一颗「发送」，回的是当前那一个问题，答完（worker 继续跑）这一块就跟着消失。
  *
  * 清理只在 `stage === 'ended'` 时可点，点之前过 `confirmAction` 二次确认——删的是执行
  * 智能体的工作树，动作不可逆。停止 / 重试的可用性按阶段给：已结束不再停，跑着的不重试
@@ -36,6 +38,17 @@ const t = createT({ zh, en })
 
 /** 时间线一条正文最多留多少字：这是「看个大概」的面，完整转录不归这里。 */
 const ENTRY_CLIP = 1200
+
+/**
+ * 一条回答的字数上限，与宿主服务层 `service.ts` 的 `ANSWER_MAX_CHARS` 同值。
+ *
+ * 为什么不 import 那个常量：界面包不依赖宿主包（反向依赖会把两份运行期拖进来），
+ * 所以这里抄一份；两边不一致时服务层会再拒一次并给出「最多多少字」，不会静默截断。
+ */
+const ANSWER_MAX_CHARS = 4000
+
+/** 回答块的按钮行。 */
+const ANSWER_ACTIONS_STYLE = { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } as const
 
 /** 顶部左栏（标题与读数）与右栏（按钮）的排法。 */
 const HEAD_STYLE = { display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginTop: 4 } as const
@@ -126,14 +139,22 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
   const [peekError, setPeekError] = useState('')
   const [busy, setBusy] = useState<'stop' | 'retry' | 'clean' | null>(null)
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  /** 回话框：草稿、失败原因、发送中。只给「等你回答」那一档用。 */
+  const [answerText, setAnswerText] = useState('')
+  const [answerError, setAnswerError] = useState('')
+  const [answering, setAnswering] = useState(false)
   /** 请求编号：连着点两次刷新时，只认最后一次的响应。 */
   const requestRef = useRef(0)
 
-  const load = useCallback((): void => {
+  const load = useCallback((silent = false): void => {
     const token = requestRef.current + 1
     requestRef.current = token
-    setLoading(true)
-    setPeekError('')
+    // 静默刷新（自动轮询）不动 loading 与错误：转圈闪一下、或一次网络抖动把整块时间线
+    // 换成红字，都是打扰。手动点刷新时才报。
+    if (!silent) {
+      setLoading(true)
+      setPeekError('')
+    }
     void channel
       .invoke<TranscriptEntry[]>('superagentPeekSession', [{ id }])
       .then((list) => {
@@ -141,12 +162,12 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
         setEntries(Array.isArray(list) ? list : [])
       })
       .catch((error: unknown) => {
-        if (requestRef.current !== token) return
+        if (requestRef.current !== token || silent) return
         setEntries([])
         setPeekError(humanErrorText(error).text)
       })
       .finally(() => {
-        if (requestRef.current === token) setLoading(false)
+        if (requestRef.current === token && !silent) setLoading(false)
       })
   }, [channel, id])
 
@@ -155,9 +176,32 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
     if (ticket === null) return
     setEntries(null)
     setNote(null)
+    // 回话框的草稿与错误是「这张工单的」，换单必须清掉：否则上一张没发的半句话会
+    // 跟着带到下一张单上，看起来就像答错了对象。
+    setAnswerText('')
+    setAnswerError('')
+    setAnswering(false)
     load()
     // 只认工单 id：ticket 是每次渲染重新找出来的对象。
   }, [ticket === null, load])
+
+  /**
+   * 工单还在跑时自动重读时间线。
+   *
+   * 为什么只轮询 `working` / `idle`：已结束的工单转录不会再变，`person` 那几档在等人
+   * （worker 停着），轮询只会白读盘。5 秒是「人眼觉得跟得上」与「读盘次数」之间的折中：
+   * 详情页一次读的是执行会话的 jsonl，工单跑久了这个文件会很大。
+   */
+  const live = ticket !== null && (ticket.stage.stage === 'working' || ticket.stage.stage === 'idle')
+  useEffect(() => {
+    if (!live) return
+    const timer = setInterval(() => {
+      load(true)
+    }, 5000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [live, load])
 
   /** 停 / 重试 / 清理共用的执行壳：忙态、成功回执、失败原因都在这里收口。 */
   const act = (kind: 'stop' | 'retry' | 'clean', run: () => Promise<unknown>, okText: string): void => {
@@ -188,6 +232,30 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
     })
   }
 
+  /**
+   * 把回话送出去。
+   *
+   * 成功只清草稿，**不自己改阶段**：宿主下一帧快照会把工单推成新阶段，这一块跟着消失；
+   * 在本地也改一遍等于造第二份真相，快照晚一帧两边就打架。失败把原因留在输入框下面。
+   */
+  const sendAnswer = (): void => {
+    const text = answerText.trim()
+    if (answering || text === '') return
+    setAnswering(true)
+    setAnswerError('')
+    void channel
+      .invoke('superagentAnswer', [{ ticketId: id, text }])
+      .then(() => {
+        setAnswerText('')
+      })
+      .catch((error: unknown) => {
+        setAnswerError(t('superagent.detail.answer.failed', { message: humanErrorText(error).text }))
+      })
+      .finally(() => {
+        setAnswering(false)
+      })
+  }
+
   if (ticket === null) {
     return (
       <div className="plugin-detail">
@@ -204,6 +272,9 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
 
   const ended = ticket.stage.stage === 'ended'
   const running = ticket.stage.stage === 'working'
+  // 只有「等人回答」这一档才开回话口子：别的 person 档（等验收 / 等审阅 / 卡住 / 失败）
+  // 要人做的是另一件事，画一个输入框只会让人以为「在这里说一句就能推进」。
+  const awaitingAnswer = ticket.stage.stage === 'person' && ticket.stage.action === 'answer'
   const clock = formatAt(ticket.at)
   const rows = timelineOf(entries ?? [])
 
@@ -286,6 +357,51 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
         </div>
       )}
 
+      {awaitingAnswer ? (
+        <div className="plugin-detail-config">
+          <div className="settings-group-title">{t('superagent.detail.answer.title')}</div>
+          {/*
+            * 问题原话必须画在输入框上面：只写「它停在这里等你回答」，用户不知道在问什么，
+            * 就是盲回。`question` 缺省（旧快照 / 别的 person 档）时整块不画。
+            */}
+          {ticket.question === undefined ? null : (
+            <div className="settings-note">
+              {t('superagent.detail.answer.question')} {ticket.question}
+            </div>
+          )}
+          <div className="setting-help">{t('superagent.detail.answer.help')}</div>
+          <textarea
+            className="setting-input tall"
+            style={{ minWidth: 0 }}
+            aria-label={t('superagent.detail.answer.title')}
+            placeholder={t('superagent.detail.answer.placeholder')}
+            maxLength={ANSWER_MAX_CHARS}
+            value={answerText}
+            onChange={(event) => {
+              setAnswerText(event.target.value)
+            }}
+            onKeyDown={(event) => {
+              // Ctrl+Enter / Cmd+Enter 发送（桌面习惯）；单独回车留给换行——回答可能不止一句。
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                sendAnswer()
+              }
+            }}
+          />
+          <div style={ANSWER_ACTIONS_STYLE}>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={answering || answerText.trim() === ''}
+              onClick={sendAnswer}
+            >
+              {answering ? t('superagent.detail.answer.sending') : t('superagent.detail.answer.send')}
+            </button>
+          </div>
+          {answerError === '' ? null : <div className="settings-note error">{answerError}</div>}
+        </div>
+      ) : null}
+
       <div className="plugin-detail-config">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div className="settings-group-title">{t('superagent.detail.timeline')}</div>
@@ -295,7 +411,7 @@ export function DetailPage({ surface, id }: { surface: SuperagentView; id: strin
             title={t('superagent.detail.timeline.refresh')}
             aria-label={t('superagent.detail.timeline.refresh')}
             disabled={loading}
-            onClick={load}
+            onClick={() => { load() }}
           >
             <IconRefresh size={16} />
           </button>

@@ -76,7 +76,10 @@ const DEFAULT_PREFS: DscPrefs = {
     workspaceOrder: [],
     workspaceAliases: {},
     themeMode: 'claude',
+    textSizePx: 14,
     fontSize: 1,
+    textFontFamily: '',
+    codeFontFamily: '',
     buttonScale: 1,
     density: 'standard',
     processFold: 'standard',
@@ -237,7 +240,7 @@ describe('② settings 插件投影', () => {
 })
 
 describe('③ 写读对称与磁盘格式', () => {
-  test('writePrefs 深合并：只给嵌套段的一项，其余键不丢；读回与返回值逐字段相等', () => {
+  test('writePrefs 深合并：只给嵌套段的一项，其余键不丢；读回与返回值除派生字号外逐字段相等', () => {
     rmSync(prefs.DSC_SETTINGS_JSON, { force: true })
     const written = prefs.writePrefs({
       closeToTray: false,
@@ -250,19 +253,31 @@ describe('③ 写读对称与磁盘格式', () => {
       defaultPreset: 'plan',
       marketSources: [{ name: 'mine', url: 'https://example.com/skills' }],
       // 故意只给嵌套段的一项：writePrefs 必须与当前值深合并，其余键原样保留。
-      ui: { themeMode: 'dark', fontSize: 1.1 } as UiPrefsView,
+      // 字号写 px 不写倍率：2026-11 起 `textSizePx` 是唯一真源，`fontSize` 是读档时回算的派生值
+      //（见 contract/session.ts 的 UiPrefsView），写倍率会被重算覆盖掉。
+      ui: { themeMode: 'dark', textSizePx: 16 } as UiPrefsView,
       remote: { port: 21_000 } as RemotePrefs,
     })
 
-    // 返回的就是磁盘上那份：读回必须逐字段相等（读写对称）。
-    expect(prefs.readPrefs()).toStrictEqual(written)
+    // 写读对称：**除了派生的 fontSize**。writePrefs 只做浅合并、不回算派生字段，
+    // 返回的 fontSize 还是合并时留下的默认 1；读档（readPrefs）才按 textSizePx 重算成 1.1429。
+    // 这个不对称是产品口径（contract/session.ts 的 UiPrefsView：两者不一致时以 textSizePx 为准，
+    // 读档会重算），所以这里把 fontSize 抹平再比其余字段，别写成整对象严格相等。
+    const back = prefs.readPrefs()
+    const sameExceptFontSize = (value: typeof written): typeof written => ({
+      ...value,
+      ui: { ...value.ui, fontSize: 0 },
+    })
+    expect(sameExceptFontSize(back)).toStrictEqual(sameExceptFontSize(written))
     // 深合并的证据：没传的键还在，传了的键生效。
-    expect(written.ui.themeMode).toBe('dark')
-    expect(written.ui.fontSize).toBe(1.1)
-    expect(written.ui.density).toBe('standard')
-    expect(written.remote.port).toBe(21_000)
-    expect(written.remote.enabled).toBe(false)
-    expect(written.remote.notifyWebhook).toBe('')
+    expect(back.ui.themeMode).toBe('dark')
+    expect(back.ui.textSizePx).toBe(16)
+    // 派生值跟随真源：16px ÷ 14 ≈ 1.1429。
+    expect(back.ui.fontSize).toBeCloseTo(16 / 14, 3)
+    expect(back.ui.density).toBe('standard')
+    expect(back.remote.port).toBe(21_000)
+    expect(back.remote.enabled).toBe(false)
+    expect(back.remote.notifyWebhook).toBe('')
 
     // 磁盘格式：JSON 的键集就是契约（多一个键 = 多了没有人读的垃圾字段）。
     const disk = JSON.parse(readFileSync(prefs.DSC_SETTINGS_JSON, 'utf8')) as Record<string, unknown>
@@ -283,6 +298,7 @@ describe('③ 写读对称与磁盘格式', () => {
     expect(Object.keys(disk['ui'] as Record<string, unknown>).sort()).toEqual([
       'archivedFilter',
       'buttonScale',
+      'codeFontFamily',
       'collapseTiming',
       'density',
       'foldedReplies',
@@ -295,6 +311,8 @@ describe('③ 写读对称与磁盘格式', () => {
       'sessionOrder',
       'sessionSort',
       'statusBar',
+      'textFontFamily',
+      'textSizePx',
       'themeMode',
       'toolDefaultOpen',
       'turnCompleteNotify',

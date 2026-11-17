@@ -1,7 +1,7 @@
 /**
- * superagent 的落盘坐标：一个库、一把锁、每个工单一个会话目录、一块工作树根。
+ * superagent 的落盘坐标：一个库、一把锁、每个工单一个会话目录、一块提示词目录。
  *
- * 为什么单独一份：库文件、锁、会话、工作树这四样要由适配层、执行器、体检脚本分别拼路径。
+ * 为什么单独一份：库文件、锁、会话、提示词这四样要由适配层、执行器、体检脚本分别拼路径。
  * 各拼一遍就会冒出 `superagent` 与 `superagent/`、`\` 与 `/` 两种写法；Windows 上大小写
  * 不一致还会算成两个目录，于是「锁明明拿着」却能被第二个进程再拿一次。这里只留一份。
  *
@@ -43,7 +43,13 @@ export function sessionsDir(ticketId: string): string {
   return join(superagentRoot(), 'sessions', ticketId)
 }
 
-/** 执行器放置 git worktree 的根。 */
-export function worktreesDir(): string {
-  return join(superagentRoot(), 'worktrees')
+/**
+ * 可在运行期覆盖的提示词目录：`<DSC_HOME>/superagent/prompts`。
+ *
+ * 为什么和包内 `prompts/` 分开：包内那份是出厂文案（安装目录可能只读），主会话要改提示词
+ * 就得写用户的数据根。读的时候先看这里、没有再退回包内，包内也读不到才用内置兜底
+ * （`adapters/executor.ts` 的 `loadPromptVolumes`）。
+ */
+export function promptsDir(): string {
+  return join(superagentRoot(), 'prompts')
 }

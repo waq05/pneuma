@@ -596,9 +596,13 @@ describe('⑨ 名册僵尸：上次进程没 settle 就退了的 working 记录�
   let zombie: TeammateView | undefined
   let chipped = false
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const rosterDir = join(DSC_HOME, 'team')
     mkdirSync(rosterDir, { recursive: true })
+    // 等过一个文件系统 mtime 窗口再写：名册读缓存按 mtime 判「文件动过没有」，Windows 的
+    // mtimeMs 精度只有十来毫秒——同一窗口内写，缓存会命中旧名册，这条用例就会偶发读不到
+    // 刚写的僵尸（原探针在 check-core 里抓到过一次，合并 dev 时跟着移植过来）。
+    await new Promise((resolve) => setTimeout(resolve, 20))
     writeFileSync(
       join(rosterDir, 'roster.json'),
       `${JSON.stringify(

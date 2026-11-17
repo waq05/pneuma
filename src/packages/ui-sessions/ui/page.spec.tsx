@@ -638,7 +638,7 @@ describe('工作区新增、改名与删除', () => {
 })
 
 describe('手动排序拖拽（可靠部分）', () => {
-  test('拖组行到另一组下方：workspaceOrder 按落点写回', async () => {
+  test('拖组行到另一组上方：workspaceOrder 按落点写回', async () => {
     const harness = harnessOf()
     const { container } = mount(harness)
     await flush()
@@ -646,13 +646,14 @@ describe('手动排序拖拽（可靠部分）', () => {
     const demo = groupWhere(container, 'demo')
     const other = groupWhere(container, 'other')
     clearCalls(harness)
-    // jsdom 的 DragEvent 不带 clientY，组行恒按「落在上半段」算 → 拖 other 到 demo 之前。
-    fireEvent.dragStart(other, { dataTransfer: transfer })
-    fireEvent.dragOver(demo, { dataTransfer: transfer })
-    expect(demo.parentElement?.className).toContain('drop-above')
-    fireEvent.drop(demo, { dataTransfer: transfer })
+    // manual 档还没排过序时组序是 D:/demo 在前（首次出现时间倒序，grouping.ts:190-207）。
+    // jsdom 的 DragEvent 不带 clientY，组行恒按「落在上半段」算 → 拖 demo 到 other 之前。
+    fireEvent.dragStart(demo, { dataTransfer: transfer })
+    fireEvent.dragOver(other, { dataTransfer: transfer })
+    expect(other.parentElement?.className).toContain('drop-above')
+    fireEvent.drop(other, { dataTransfer: transfer })
     await flush()
-    expect(callsOf(harness, 'setUiPrefs')[0]?.args).toEqual([{ workspaceOrder: ['D:/other', 'D:/demo'] }])
+    expect(callsOf(harness, 'setUiPrefs')[0]?.args).toEqual([{ workspaceOrder: ['D:/demo', 'D:/other'] }])
   })
 
   test('拖会话行到同组同置顶块的下方：sessionOrder 按落点写回', async () => {

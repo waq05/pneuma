@@ -1,2 +1,2 @@
-{"kind":"request","turn":1,"requestHash":"sha256:0960cff1f753214e5db4183258ae3da24a20b22769f544adf57f96a8815f6985"}
-{"kind":"response","turn":1,"chunks":[{"text":"兄弟，我是 P"},{"text":"neuma：跑在你桌面"},{"text":"里的编程助手，能读"},{"text":"代码、改文件"},{"text":"、跑"},{"text":"命令；"},{"text":"动手"},{"text":"前先"},{"text":"弄清"},{"text":"现状，改完会"},{"text":"自查，"},{"text":"并说清"},{"text":"我"},{"text":"改了什么。"}]}
+{"kind":"request","turn":1,"requestHash":"sha256:4787c63189e7b6923b19ee3187104a213e8eb4e2cb5fb131699f2e27d2cc8fe4"}
+{"kind":"response","turn":1,"chunks":[{"text":"兄弟"},{"text":"，我是 Pne"},{"text":"uma，一个"},{"text":"运行"},{"text":"在你电脑"},{"text":"上的编程"},{"text":"助手："},{"text":"你要改"},{"text":"代码，我先读代码再"},{"text":"动手；你要"},{"text":"查"},{"text":"资料，我就"},{"text":"联网核实"},{"text":"；改完我会运行"},{"text":"检查并用证据"},{"text":"向你"},{"text":"说明。"}]}

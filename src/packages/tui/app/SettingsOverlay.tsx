@@ -19,7 +19,7 @@ import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
 import type { SettingsField, SettingsSectionView, SettingsValues } from '@pneuma/runtime/contract.js'
 import { displayWidth } from './display-width.js'
-import { focusableRows, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
+import { focusableRows, tableRecordsOf, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 设置页固定框架行数：外框上下边 2 + 标题 1 + 底部 notice 1 + 提示条 1。 */
@@ -40,11 +40,15 @@ const clipToWidth = (text: string, max: number): string => {
   return out
 }
 
-/** 编辑中的字段：显示草稿加光标（对齐 dsh 的 ▌）。 */
+/** 编辑中的字段：显示草稿加光标（对齐 dsh 的 ▌）。记录表的单元格带上行号与列 key。 */
 export interface SettingsEdit {
   sectionId: string
   key: string
   draft: string
+  /** 记录表用：正在编辑第几行（普通字段缺省）。 */
+  row?: number
+  /** 记录表用：正在编辑哪一列（列 key）。 */
+  column?: string
 }
 
 /**
@@ -63,6 +67,17 @@ function fieldValueText(field: SettingsField, values: SettingsValues | undefined
     case 'select': {
       const label = field.options.find((option) => option.value === String(current))?.label
       return `‹ ${label ?? String(current ?? '')} ›`
+    }
+    case 'fact': {
+      // 只读事实行：值来自 values[key]；片段可能来自部署检查，晚到就是占位。
+      if (typeof current === 'string') return current === '' ? '（没有值）' : current
+      if (typeof current === 'number' || typeof current === 'boolean') return String(current)
+      return '（没有值）'
+    }
+    case 'rows': {
+      // rows 字段本身不占 field 行（行模型里摊成列头/单元格/添加行），这里只兜个底。
+      const count = tableRecordsOf(values, field.key).length
+      return count === 0 ? '（空表）' : `${String(count)} 行`
     }
     default:
       // text / number：空值给「未设置」占位（对齐 dsh 的（未设置））
@@ -228,12 +243,75 @@ export function SettingsOverlay({
           </Text>
         )
       }
+      case 'table-head': {
+        // 记录表的列头：字段名 + 各列标题，一行放完（行高恒为 1）。
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'rows') return <Text key={index}> </Text>
+        const columns = field.columns.map((column) => column.label).join(' · ')
+        const title = clipToWidth(`${field.label} `, Math.max(8, innerWidth - 4))
+        const clipped = clipToWidth(columns, Math.max(4, innerWidth - displayWidth(title) - 2))
+        return (
+          <Text key={index} wrap="truncate-end">
+            <Text bold color={PALETTE.text}>
+              {title}
+            </Text>
+            <Text {...TEXT.secondary}>{clipped}</Text>
+          </Text>
+        )
+      }
+      case 'table-cell': {
+        // 一个单元格一行：`行号 列名  值`；编辑态显示草稿与光标。
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'rows') return <Text key={index}> </Text>
+        const column = field.columns[row.columnIndex]
+        const record = tableRecordsOf(values[row.sectionId], field.key)[row.rowIndex] ?? {}
+        const stored = column === undefined ? '' : (record[column.key] ?? '')
+        // 下拉列按单行 select 的样子画（‹ 选项名 ›）；找不到对应选项就把原值照实显示。
+        const shown =
+          column !== undefined && column.type === 'select' && stored !== ''
+            ? `‹ ${column.options.find((option) => option.value === stored)?.label ?? stored} ›`
+            : stored
+        const editingHere =
+          editing !== null &&
+          editing.sectionId === row.sectionId &&
+          editing.key === field.key &&
+          editing.row === row.rowIndex &&
+          editing.column === column?.key
+        const valueText = editingHere ? `${editing.draft}▌` : shown === '' ? '（空）' : shown
+        const head = ` ${String(row.rowIndex + 1)} ${column?.label ?? ''}  `
+        const headText = clipToWidth(head, Math.max(6, Math.floor(innerWidth / 3)))
+        const clipped = clipToWidth(valueText, Math.max(4, innerWidth - 2 - displayWidth(headText)))
+        return (
+          <Text key={index} wrap="truncate-end">
+            {focused ? MARK.selected : MARK.idle}
+            <Text {...TEXT.secondary}>{headText}</Text>
+            <Text color={editingHere ? PALETTE.text : undefined} {...(editingHere ? {} : TEXT.secondary)}>
+              {clipped}
+            </Text>
+          </Text>
+        )
+      }
+      case 'table-add': {
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'rows') return <Text key={index}> </Text>
+        return (
+          <Text key={index} wrap="truncate-end">
+            {focused ? MARK.selected : MARK.idle}
+            <Text {...(focused ? { color: ACCENT, bold: true } : TEXT.secondary)}>
+              {clipToWidth(`＋ 添加一行（${field.label}）`, Math.max(8, innerWidth - 2))}
+            </Text>
+          </Text>
+        )
+      }
     }
   }
 
   // 底部提示条：聚焦字段的 help（可复制的 info 追加复制提示）截断后靠左，按键靠右
   const focusedRow = rows[focusRow]
-  const focusedField = focusedRow?.kind === 'field' ? sectionById.get(focusedRow.sectionId)?.fields[focusedRow.fieldIndex] : undefined
+  const focusedField =
+    focusedRow !== undefined && (focusedRow.kind === 'field' || focusedRow.kind === 'table-cell' || focusedRow.kind === 'table-head' || focusedRow.kind === 'table-add')
+      ? sectionById.get(focusedRow.sectionId)?.fields[focusedRow.fieldIndex]
+      : undefined
   let help =
     focusedRow?.kind === 'group'
       ? (focusedRow.description ?? '')
@@ -246,9 +324,13 @@ export function SettingsOverlay({
   const keys =
     editing !== null
       ? 'Enter 确认并保存 · Esc 取消'
-      : groupSpec !== undefined || activeSection !== undefined
-        ? 'Enter 切换/编辑 · Esc 返回'
-        : 'Enter 切换/编辑 · Esc 关闭'
+      : focusedRow?.kind === 'table-cell'
+        ? 'Enter 编辑 · Del 删行 · Esc 返回'
+        : focusedRow?.kind === 'table-add'
+          ? 'Enter 添加一行 · Esc 返回'
+          : groupSpec !== undefined || activeSection !== undefined
+            ? 'Enter 切换/编辑 · Esc 返回'
+            : 'Enter 切换/编辑 · Esc 关闭'
   const helpText = clipToWidth(help, Math.max(0, innerWidth - displayWidth(keys) - 2))
 
   return (

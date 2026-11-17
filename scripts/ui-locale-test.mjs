@@ -276,10 +276,17 @@ for (const name of readdirSync(packagesDir).sort()) {
     uiFiles = []
   }
   // 宿主半：声明过设置分区的文件才算（同一份文件里的工具说明不是界面文案）。
+  // 分区既可以写在 `registerSection` 那个文件里，也可以由它 import 的 `hostT(...)` 模块提供
+  // （superagent 把分区搬进 `host/settings-section.ts` 后就是这种形状）。没有 `registerSection`
+  // 的包不扫：那类包里的 `hostT(...)` 可能只是取词工具，凭空纳入会报一堆历史死键。
   const hostFiles = []
   if (uiFiles.length === 0) {
-    for (const file of hostFilesOf(packageDir)) {
-      if (!readFileSync(file, 'utf8').includes('registerSection')) continue
+    const files = hostFilesOf(packageDir)
+    const registers = files.some((file) => readFileSync(file, 'utf8').includes('registerSection'))
+    if (!registers) continue
+    for (const file of files) {
+      const text = readFileSync(file, 'utf8')
+      if (!text.includes('registerSection') && !text.includes('hostT(')) continue
       hostFiles.push(file)
     }
   }

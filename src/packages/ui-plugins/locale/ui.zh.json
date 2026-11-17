@@ -122,5 +122,13 @@
   "plugins.err.openDesktopOnly": "用系统程序打开只在桌面版里有（浏览器里没有这条桥）",
   "plugins.err.open": "打开失败：{message}",
   "plugins.config.open": "打开",
-  "plugins.config.unrecognized": "{value} · 未识别"
+  "plugins.config.unrecognized": "{value} · 未识别",
+  "plugins.config.fact.empty": "（没有值）",
+  "plugins.config.rows.add": "添加一行",
+  "plugins.config.rows.cellAria": "第 {row} 行的{column}",
+  "plugins.config.rows.empty": "还没有记录，点「添加一行」建第一条。",
+  "plugins.config.rows.invalid": "{column} 这一格不符合格式：{value}",
+  "plugins.config.rows.pick": "请选择",
+  "plugins.config.rows.remove": "删除",
+  "plugins.config.rows.removeTip": "删除这一行"
 }

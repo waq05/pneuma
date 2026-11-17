@@ -239,11 +239,13 @@ describe('偏好写回失败：本地撤销七个字段', () => {
     const { container } = mount(harness)
     await flush()
 
-    // 工作区顺序（拖组行；这一档要求 group 还是 workspace，所以放在切分组之前）
+    // 工作区顺序（拖组行；这一档要求 group 还是 workspace，所以放在切分组之前）。
+    // manual 档没排过序时 D:/demo 在前（首次出现时间倒序，grouping.ts:190-207），
+    // 拖 demo 到 other 之前才会真的换位并写盘；拖第一组到它自己下面不写（ui.tsx:735-748）。
     const transfer = dragTransfer()
-    fireEvent.dragStart(groupWhere(container, 'other'), { dataTransfer: transfer })
-    fireEvent.dragOver(groupWhere(container, 'demo'), { dataTransfer: transfer })
-    fireEvent.drop(groupWhere(container, 'demo'), { dataTransfer: transfer })
+    fireEvent.dragStart(groupWhere(container, 'demo'), { dataTransfer: transfer })
+    fireEvent.dragOver(groupWhere(container, 'other'), { dataTransfer: transfer })
+    fireEvent.drop(groupWhere(container, 'other'), { dataTransfer: transfer })
     await flush()
 
     // 展开态（点组头）

@@ -48,6 +48,14 @@ export const agentPlugin: Plugin.Object = {
     const idleOrder: string[] = []
     /** 收摊 agent 的墓碑：id → jsonl 路径。非常驻投递（followup 带 id）靠它找文件。 */
     const tombstones = new Map<string, string>()
+    /**
+     * 登记过、但不归本插件管的会话（superagent 的 worker）：只让 `sessionById` 查得到。
+     *
+     * 为什么不并进 `agents`：那张表是「常驻 agent」的名册，`hasAgent`、`followup`、
+     * 收摊逻辑都按它算；塞进去会让一条由执行器自己管生命周期的会话被当成常驻 agent
+     * 去唤醒 / 收摊。这里只存 `Session`，够 `subagent` 认父会话、作业通知认归属。
+     */
+    const attached = new Map<string, Session>()
     /** 当前查看的 agent。不变量：它的会话就是 ctx.session.current() 那个对象。 */
     let active: MiniAgent | null = null
 
@@ -388,7 +396,13 @@ export const agentPlugin: Plugin.Object = {
         return active?.steerQueued(index) ?? false
       },
       sessionById(sessionId: string) {
-        return agents.get(sessionId)?.session
+        return agents.get(sessionId)?.session ?? attached.get(sessionId)
+      },
+      attach(session: Session) {
+        attached.set(session.meta.id, session)
+      },
+      detach(sessionId: string) {
+        attached.delete(sessionId)
       },
       sessionFor(filePath: string) {
         for (const agent of agents.values()) {

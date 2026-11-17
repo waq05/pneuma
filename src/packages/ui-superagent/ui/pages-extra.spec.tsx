@@ -7,7 +7,7 @@
  * - `state.ts`：阶段名 / 分组 / 时刻格式化、快照投影的形状检查与兜底、视图相等判断、
  *   页签与选中工单的模块级信号；
  * - `ui.tsx`：侧栏入口的徽标与三种收起语义、整页的路由（插件缺席 / 没启动 / 起不来 /
- *   三个页签）；
+ *   概览 / 发布 / 工单 / 设置四个页签）；
  * - `publish.tsx`：校验、提交参数、成功后的切页与高亮、失败回执、忙碌态、最近动态；
  * - `tickets.tsx`：空态、三组分组与计数、高亮自动清除、点行进详情；
  * - `detail.tsx`：只读时间线（各类条目 / 截断 / 跳过记账条目）、加载 / 失败 / 刷新、
@@ -173,7 +173,7 @@ function surfaceOf(over: Partial<SuperagentView> = {}): SuperagentView {
   }
 }
 
-/** 一页三签 + 选中工单的观察窗（模块级信号不在 props 链上，只能靠 hook 读）。 */
+/** 一页四签 + 选中工单的观察窗（模块级信号不在 props 链上，只能靠 hook 读）。 */
 function SignalProbe(): ReactNode {
   const tab = useSuperagentTab()
   const selected = useSelectedTicket()
@@ -245,10 +245,18 @@ const mountDetail = (harness: Harness, surface: SuperagentView, id: string): Ret
     </RuntimeProvider>,
   )
 
-const mountSettings = (harness: Harness): ReturnType<typeof render> =>
+/**
+ * 设置页也要收快照面：合并后它底部多了一块「最近变更」，数据来自
+ * `surfaces.superagent.settingsHistory`（`settings.tsx:338`）。默认给一份没有这一格的
+ * 视图，这块就不画，旧的字段断言不受影响。
+ */
+const mountSettings = (
+  harness: Harness,
+  surface: SuperagentView | null = surfaceOf(),
+): ReturnType<typeof render> =>
   render(
     <RuntimeProvider channel={harness.channel}>
-      <SettingsPage />
+      <SettingsPage surface={surface} />
     </RuntimeProvider>,
   )
 
@@ -477,14 +485,15 @@ describe('侧栏入口', () => {
 // ── ui.tsx：整页路由 ──────────────────────────────────────────────────────────
 
 describe('整页路由', () => {
-  test('快照里没有 superagent：画「没有启动」，三个页签仍在但内容不换成空白', () => {
+  test('快照里没有 superagent：画「没有启动」，四个页签仍在但内容不换成空白', () => {
     const harness = harnessOf(null)
     const page = mountPage(harness)
     expect(page.container.querySelector('.plugins-empty')?.textContent).toContain('没有启动')
-    const tabs = page.container.querySelectorAll('[role="tab"]')
-    expect(tabs).toHaveLength(3)
-    fireEvent.click(tabs[1] as HTMLElement)
-    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true')
+    // 合并后页签行是「概览 / 发布 / 工单 / 设置」，顺序与 `ui.tsx:151-196` 一致。
+    const tabs = [...page.container.querySelectorAll('[role="tab"]')]
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['概览', '发布', '工单', '设置'])
+    fireEvent.click(tabs[2] as HTMLElement)
+    expect(tabs[2]?.getAttribute('aria-selected')).toBe('true')
     expect(page.container.querySelector('.plugins-empty')?.textContent).toContain('没有启动')
   })
 
@@ -520,11 +529,12 @@ describe('整页路由', () => {
       },
     )
     const page = mountPage(harness)
-    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[2] as HTMLElement)
+    // 页签顺序「概览 / 发布 / 工单 / 设置」：设置是第 4 个（`ui.tsx:185-195`）。
+    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[3] as HTMLElement)
     await waitFor(() => expect(page.container.querySelector('.settings-group-title')?.textContent).toBe('Super Agent 设置'))
   })
 
-  test('三个页签各自画自己的内容：发布表单 / 工单空态 / 设置加载', async () => {
+  test('四个页签各自画自己的内容：概览计数 / 发布表单 / 工单空态 / 设置加载', async () => {
     const harness = harnessOf(
       snapshotOf(surfaceOf({ tickets: [] })),
       (method) => {
@@ -533,13 +543,28 @@ describe('整页路由', () => {
       },
     )
     const page = mountPage(harness)
+    // 默认停在发布页（`state.ts:458`）。
     expect(page.container.querySelector('input[aria-label="标题"]')).not.toBeNull()
     expect(page.container.querySelector('.settings-empty')?.textContent).toContain('还没有动态')
 
-    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[1] as HTMLElement)
+    // 概览：三格计数 + 一张工单都没有时的空态（`overview.tsx:86-92`）。
+    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[0] as HTMLElement)
+    expect(page.container.querySelectorAll('.usage-card')).toHaveLength(3)
+    expect(
+      [...page.container.querySelectorAll('.usage-card-value')].map((node) => node.textContent),
+    ).toEqual(['0', '0', '0'])
     expect(page.container.querySelector('.empty-card-title')?.textContent).toContain('这里还没有工单')
 
+    // 发布：标题输入框回来了。
+    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[1] as HTMLElement)
+    expect(page.container.querySelector('input[aria-label="标题"]')).not.toBeNull()
+
+    // 工单：空态。
     fireEvent.click(page.container.querySelectorAll('[role="tab"]')[2] as HTMLElement)
+    expect(page.container.querySelector('.empty-card-title')?.textContent).toContain('这里还没有工单')
+
+    // 设置：宿主没登记分区时给一句人话。
+    fireEvent.click(page.container.querySelectorAll('[role="tab"]')[3] as HTMLElement)
     await waitFor(() =>
       expect(page.container.querySelector('.settings-empty')?.textContent).toContain('宿主还没有登记 superagent 设置分区'),
     )
@@ -578,33 +603,32 @@ describe('发布页', () => {
     expect(harness.calls.filter((call) => call.method === 'superagentPublish')).toHaveLength(0)
   })
 
-  test('提交成功：标题 / 正文去空白、起点分支有值才带；切到工单页并高亮新工单', async () => {
+  test('提交成功：标题 / 正文去空白、只交这两项；切到工单页并高亮新工单', async () => {
     const surface = surfaceOf({ tickets: [ticketOf('t1')] })
     const harness = harnessOf(snapshotOf(surface), (method) =>
       method === 'superagentPublish' ? 't1' : { ok: true },
     )
     const page = mountPublish(harness, surface)
+    // 合并后发布页去掉了「起点分支」（`publish.tsx` 现在只收标题与正文）。
+    expect(page.container.querySelector('input[aria-label="起点分支"]')).toBeNull()
     fireEvent.change(page.container.querySelector('input[aria-label="标题"]') as HTMLInputElement, {
       target: { value: '  标题  ' },
     })
     fireEvent.change(page.container.querySelector('textarea[aria-label="正文"]') as HTMLTextAreaElement, {
       target: { value: '  正文  ' },
     })
-    fireEvent.change(page.container.querySelector('input[aria-label="起点分支"]') as HTMLInputElement, {
-      target: { value: ' main ' },
-    })
     fireEvent.click(buttonByText(page.container, '发布工单'))
 
     await waitFor(() => expect(harness.calls.some((call) => call.method === 'superagentPublish')).toBe(true))
     expect(harness.calls.find((call) => call.method === 'superagentPublish')?.args).toEqual([
-      { title: '标题', body: '正文', base: 'main' },
+      { title: '标题', body: '正文' },
     ])
     await waitFor(() => expect(probeText()).toBe('tickets|-|t1'))
     expect((page.container.querySelector('input[aria-label="标题"]') as HTMLInputElement).value).toBe('')
     expect((page.container.querySelector('textarea[aria-label="正文"]') as HTMLTextAreaElement).value).toBe('')
   })
 
-  test('起点分支留空时不带 base 字段；正文留空也照发（宿主用标题当正文）', async () => {
+  test('正文留空也照发（宿主用标题当正文）；提交参数没有 base 字段', async () => {
     const harness = harnessOf(snapshotOf(surfaceOf()), (method) =>
       method === 'superagentPublish' ? 't2' : { ok: true },
     )

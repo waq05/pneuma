@@ -10,7 +10,7 @@
 2. **失败可观测**：失败要有稳定错误码或 stderr 签名，能被探针断言（先例：`win/backend.ts:40` 的 `RUNNER_FAILURE_SIGNATURE`）。
 3. **机器可判的验收**：每条能力至少一条 `node --test` 或 `scripts/*-test.mjs` 断言；跑不了真机的部分要写清为什么跑不了。
 4. **不许静默 fail-open**：安全相关（沙箱、写技能、回滚）一律 fail-closed 或显式降级 + 提示，不允许"出错就当没这回事"。
-5. **文档同批**：`docs/development.md` 写怎么改，`docs/development-log.md` 写为什么，包内 `README.md` 写用户可见变化，`docs/harness-benchmark-roadmap.md` 改差距状态。
+5. **文档同批**：`docs/development.md` 写怎么改，`docs/development-log.md` 写为什么，包内 `README.md` 写用户可见变化，`docs/archive/harness-benchmark-roadmap.md` 改差距状态。
 6. **分批提交**：一批一次提交，可独立验收，提交信息写清为什么。
 
 ## 1. 任务一：Windows 操作系统级沙箱

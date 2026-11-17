@@ -40,6 +40,8 @@ export interface SuperagentTicket {
   branch?: string
   changedFiles?: string[]
   summary?: string
+  /** 等人回答时的那个问题原话；回答框据此写清在问什么。 */
+  question?: string
 }
 
 /** 三组计数；字段缺失时由工单阶段现数，不拿 0 冒充。 */
@@ -49,19 +51,71 @@ export interface SuperagentCounts {
   done: number
 }
 
+/**
+ * 一个来源的轮询状态（契约 `SuperagentSourceView` 的形状检查版）。
+ *
+ * 契约里没有 `label`：快照面是宿主侧，不夹带人类语言。名称由界面按 `id` 取词
+ * （`overview.tsx` 的 `SOURCE_LABELS`），中英文界面各说各的；认不出的 id 原样显示，
+ * 将来加来源不必让宿主猜界面语言。
+ */
+export interface SuperagentSource {
+  /** 来源 id：`github` / `feishu`。 */
+  id: string
+  /** 设置里开着没有（关着的来源也列出来，界面画「未启用」）。 */
+  enabled: boolean
+  /**
+   * 上次轮询的时刻（ISO 8601）；还一轮都没跑过就没有这一项。
+   *
+   * 适配器在每轮开始时记这一笔，失败的那轮也会更新，所以界面文案写「上次轮询」而不是
+   * 「上次成功」——后者在有错误时会自相矛盾。
+   */
+  lastPollAt?: string
+  /** 上次失败的原文；成功之后清掉。 */
+  lastError?: string
+}
+
 /** 面板要的一份视图（契约 `SuperagentSurface` 的形状检查版）。 */
-export interface SuperagentView {
-  ready: boolean
+export interface SuperagentView {  ready: boolean
   problem: { code: string; detail: string } | null
   counts: SuperagentCounts
   tickets: readonly SuperagentTicket[]
   /** 最近动态，最旧在前（上限 20 由宿主截）。 */
   recent: readonly { at: string; text: string }[]
+  /**
+   * 外部来源的轮询状态（GitHub / 飞书各一条）。
+   *
+   * **可选**：旧快照没有这一格，`undefined` 时概览页整块不画。与空数组区分开——
+   * 「宿主没给这一格」和「给了但一条来源都没有」不是一回事，后者才该画一个空区块。
+   */
+  sources?: readonly SuperagentSource[]
+  /**
+   * 设置变更历史，新的在前（最多 30 条，宿主裁）。
+   *
+   * **可选**：旧宿主没有这一格时设置页整块不画。保存成功且值真的变了才记一条，
+   * 空数组 = 记起之后还没改过设置。
+   */
+  settingsHistory?: readonly SuperagentSettingsChange[]
 }
 
 /** 空清单常量：字段缺席时共用一份，相等判断与重渲染判据都靠它（照 `readGit` 的常量兜底）。 */
 const EMPTY_TICKETS: readonly SuperagentTicket[] = Object.freeze([])
 const EMPTY_RECENT: readonly { at: string; text: string }[] = Object.freeze([])
+const EMPTY_SOURCES: readonly SuperagentSource[] = Object.freeze([])
+const EMPTY_SETTINGS_HISTORY: readonly SuperagentSettingsChange[] = Object.freeze([])
+
+/** 一条设置变更给界面看的形状（字段名由 locale 的 `field.<key>.label` 拼进行文案）。 */
+export interface SuperagentSettingsChange {
+  /** 自增序号，新的在前。 */
+  version: number
+  /** 改动时间（ISO，显示时截到分钟）。 */
+  at: string
+  /** 设置键（设置分区字段键）。 */
+  key: string
+  /** 改前值的显示形态；`undefined` = 该键此前没有。 */
+  from?: string
+  /** 改后值的显示形态；`undefined` = 回到了缺省。 */
+  to?: string
+}
 
 /** 阶段能进哪一组：左侧栏徽标只认 `needsYou`，列表按这三组分。 */
 export type SuperagentTicketGroup = 'person' | 'working' | 'ended'
@@ -147,6 +201,7 @@ function ticketOf(value: unknown): SuperagentTicket | null {
   if (id === '') return null
   const branch = typeof record['branch'] === 'string' && record['branch'] !== '' ? record['branch'] : undefined
   const summary = typeof record['summary'] === 'string' && record['summary'] !== '' ? record['summary'] : undefined
+  const question = typeof record['question'] === 'string' && record['question'] !== '' ? record['question'] : undefined
   const rawFiles = record['changedFiles']
   const changedFiles = Array.isArray(rawFiles)
     ? rawFiles.filter((item): item is string => typeof item === 'string')
@@ -158,6 +213,7 @@ function ticketOf(value: unknown): SuperagentTicket | null {
     at: typeof record['at'] === 'string' ? record['at'] : '',
     ...(branch === undefined ? {} : { branch }),
     ...(summary === undefined ? {} : { summary }),
+    ...(question === undefined ? {} : { question }),
     ...(changedFiles === undefined ? {} : { changedFiles }),
   }
 }
@@ -186,8 +242,69 @@ function recentOf(value: unknown): readonly { at: string; text: string }[] {
 }
 
 /**
- * 从快照里取 Super Agent 那一格。
+ * 一条来源：`id` 读不到就不收（界面拿它当 key，也拿它取词）。
  *
+ * `enabled` 只认 `true`：宿主的设置读取已经保证是布尔，这里再判一次是防旧快照 /
+ * 手改的 JSON——`"true"` 这种字符串不该被当成打开。
+ */
+function sourceOf(value: unknown): SuperagentSource | null {
+  const record = recordOf(value)
+  if (record === null) return null
+  const id = typeof record['id'] === 'string' ? record['id'] : ''
+  if (id === '') return null
+  const lastPollAt = typeof record['lastPollAt'] === 'string' && record['lastPollAt'] !== '' ? record['lastPollAt'] : undefined
+  const lastError = typeof record['lastError'] === 'string' && record['lastError'] !== '' ? record['lastError'] : undefined
+  return {
+    id,
+    enabled: record['enabled'] === true,
+    ...(lastPollAt === undefined ? {} : { lastPollAt }),
+    ...(lastError === undefined ? {} : { lastError }),
+  }
+}
+
+/**
+ * 来源清单。
+ *
+ * **整格缺席返回 `undefined`**（旧快照，概览页整块不画），有但一条也没解析出来返回空数组
+ * （画一个空区块）——两种「空」在界面上是两件事，不要合并。
+ */
+function sourcesOf(value: unknown): readonly SuperagentSource[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: SuperagentSource[] = []
+  for (const item of value) {
+    const source = sourceOf(item)
+    if (source !== null) out.push(source)
+  }
+  return out.length === 0 ? EMPTY_SOURCES : out
+}
+
+/**
+ * 设置变更历史。整格缺席返回 `undefined`（旧宿主，设置页整块不画）；
+ * 有格但空返回空数组（画「还没有变更记录」）。
+ */
+function settingsHistoryOf(value: unknown): readonly SuperagentSettingsChange[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: SuperagentSettingsChange[] = []
+  for (const item of value) {
+    const record = item === null || typeof item !== 'object' ? {} : (item as Record<string, unknown>)
+    const version = Number(record['version'])
+    if (!Number.isFinite(version)) continue
+    const key = typeof record['key'] === 'string' ? record['key'] : ''
+    if (key === '') continue
+    const change: SuperagentSettingsChange = {
+      version,
+      at: typeof record['at'] === 'string' ? record['at'] : '',
+      key,
+      ...(typeof record['from'] === 'string' ? { from: record['from'] } : {}),
+      ...(typeof record['to'] === 'string' ? { to: record['to'] } : {}),
+    }
+    out.push(change)
+  }
+  return out.length === 0 ? EMPTY_SETTINGS_HISTORY : out
+}
+
+/**
+ * 从快照里取 Super Agent 那一格。 *
  * @param snapshot - `useHostSnapshot()` 的快照（可能还没来第一帧）
  * @returns 面板视图；`null` = 这一格整个缺席（宿主插件没开），界面按「未启动」画
  */
@@ -215,12 +332,17 @@ export function readSuperagent(snapshot: HostSnapshot | null): SuperagentView | 
   const rawProblem = recordOf(surface['problem'])
   const code = typeof rawProblem?.['code'] === 'string' ? rawProblem['code'] : ''
   const detail = typeof rawProblem?.['detail'] === 'string' ? rawProblem['detail'] : ''
+  const sources = sourcesOf(surface['sources'])
+  const settingsHistory = settingsHistoryOf(surface['settingsHistory'])
   return {
     ready: surface['ready'] === true,
     problem: code === '' && detail === '' ? null : { code, detail },
     counts,
     tickets,
     recent: recentOf(surface['recent']),
+    // 只有读到了才带上这一项：`undefined` 是「旧快照没有这一格」，概览页据此整块不画。
+    ...(sources === undefined ? {} : { sources }),
+    ...(settingsHistory === undefined ? {} : { settingsHistory }),
   }
 }
 
@@ -236,9 +358,34 @@ function sameTicket(left: SuperagentTicket, right: SuperagentTicket): boolean {
     left.at === right.at &&
     left.summary === right.summary &&
     left.branch === right.branch &&
+    left.question === right.question &&
     stageFingerprint(left.stage) === stageFingerprint(right.stage) &&
     (left.changedFiles?.join('|') ?? '') === (right.changedFiles?.join('|') ?? '')
   )
+}
+
+/**
+ * 来源清单的指纹：一条 `id / enabled / lastPollAt / lastError` 拼起来。
+ *
+ * 用字符串比而不是逐项比：清单最长两行、字段还可能随契约增，拼串只有一处要改；
+ * 也不会因为漏比某个字段而让界面停在旧的错误上——那正是 U5 要解决的「看不到」。
+ * 缺席（`undefined`）与空数组给不同前缀：两者在界面上是两件事。
+ */
+function sourcesFingerprint(sources: readonly SuperagentSource[] | undefined): string {
+  if (sources === undefined) return '\u0002absent'
+  return sources
+    .map((source) => `${source.id}\u0000${source.enabled ? '1' : '0'}\u0000${source.lastPollAt ?? ''}\u0000${source.lastError ?? ''}`)
+    .join('\u0001')
+}
+
+/**
+ * 设置变更历史的指纹：最新一条的 `version / key / to` 就够——历史只进不删，最新一条变了
+ * 就是有新变更。缺席与空数组给不同前缀（同一条理由）。
+ */
+function settingsHistoryFingerprint(history: readonly SuperagentSettingsChange[] | undefined): string {
+  if (history === undefined) return '\u0002absent'
+  const latest = history[0]
+  return latest === undefined ? '\u0002empty' : `${String(latest.version)}\u0000${latest.key}\u0000${latest.to ?? ''}`
 }
 
 /**
@@ -255,6 +402,10 @@ export function sameSuperagent(left: SuperagentView | null, right: SuperagentVie
   if (left.ready !== right.ready) return false
   if ((left.problem?.code ?? '') !== (right.problem?.code ?? '')) return false
   if ((left.problem?.detail ?? '') !== (right.problem?.detail ?? '')) return false
+  // 来源错误变了必须重画：工单一张没动时，这是页面上唯一会变的那一行。
+  if (sourcesFingerprint(left.sources) !== sourcesFingerprint(right.sources)) return false
+  // 设置历史进一条，设置页的「最近变更」多一行，同样要重画。
+  if (settingsHistoryFingerprint(left.settingsHistory) !== settingsHistoryFingerprint(right.settingsHistory)) return false
   if (
     left.counts.needsYou !== right.counts.needsYou ||
     left.counts.running !== right.counts.running ||
@@ -300,8 +451,8 @@ export function useNeedsYou(): number {
   return useHostSelector(readNeedsYou)
 }
 
-/** 页内三页。 */
-export type SuperagentTab = 'publish' | 'tickets' | 'settings'
+/** 页内四页。 */
+export type SuperagentTab = 'overview' | 'publish' | 'tickets' | 'settings'
 
 /** 当前页签：模块级，整页卸载后不跳回第一页。 */
 const tabSignal = createSignal<SuperagentTab>('publish')

@@ -7,7 +7,7 @@
  *    右侧读 `counts.needsYou` 画徽标，为 0 时不画；
  * 2. 往 `shell.page` 报一页（`order 30` = 排在 plugins 的 10、skills 的 20 之后），
  *    页里照插件中心那套外壳类名（`.plugins` / `.plugins-inner` / `.plugins-head`）排版；
- * 3. 页内三页签：发布 / 工单 / 设置（详情从工单页进）。页签状态在 `./state.ts` 的
+ * 3. 页内四页签：概览 / 发布 / 工单 / 设置（详情从工单页进）。页签状态在 `./state.ts` 的
  *    模块级信号里，整页卸载（`ui-layout/ui/app.tsx:477`）后不会跳回第一页。
  *
  * 快照面缺席（宿主插件默认关着）时画「未启动」的一面板话，不白屏、不假数字 0；
@@ -23,6 +23,7 @@ import { IconBolt, createT, defineUiPlugin, setShellPage, useShellPage } from '@
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
+import { OverviewPage } from './overview'
 import { PublishPage } from './publish'
 import { SettingsPage } from './settings'
 import { TicketsPage } from './tickets'
@@ -56,6 +57,18 @@ const BADGE_STYLE = {
   fontVariantNumeric: 'tabular-nums',
 } as const
 
+/**
+ * 「能用，但还有一步没配好」那条警告的样式（O1 首次使用引导）。
+ *
+ * 为什么不直接用 `settings-note error`：壳里只有 error 一档配色，而这条不是错误——
+ * 页面照常能用、工单照常列，只是发布前要先填仓库路径。画成红色会让人以为插件坏了，
+ * 所以借黄色警示 token 自绘一格（与上面徽标同一个理由：壳里没有现成的档）。
+ */
+const WARN_NOTE_STYLE = {
+  background: 'color-mix(in srgb, var(--dsc-yellow) 12%, transparent)',
+  color: 'var(--dsc-yellow)',
+} as const
+
 export default defineUiPlugin({
   name: t('superagent.plugin.name'),
   apply(ui) {
@@ -70,7 +83,7 @@ export default defineUiPlugin({
  * 侧栏那一行：点一下把主区切成 Super Agent 的「工单」页。
  *
  * 收起来的语义沿用壳里的开关（再点一次回对话页）——只在**已经停在工单列表**时才收：
- * 停在发布 / 设置 / 工单详情时先回工单列表，否则「点入口去工单」这件事会变成关页面。
+ * 停在概览 / 发布 / 设置 / 工单详情时先回工单列表，否则「点入口去工单」这件事会变成关页面。
  * 选中态用壳现成的 `.nav-item.on`，并把 `aria-pressed` 跟上（只靠颜色说话，读屏用户听不出）。
  */
 function EntryRow(): ReactNode {
@@ -139,6 +152,17 @@ function PageBody(): ReactNode {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === 'overview'}
+            className={tab === 'overview' ? 'on' : ''}
+            onClick={() => {
+              setSuperagentTab('overview')
+            }}
+          >
+            {t('superagent.tab.overview')}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === 'publish'}
             className={tab === 'publish' ? 'on' : ''}
             onClick={() => {
@@ -171,13 +195,22 @@ function PageBody(): ReactNode {
           </button>
         </div>
 
+        {/* O1 首次使用引导：快照面写着 ready 但带 problem（例如仓库路径空着）时画一条警告，
+            页面照常可用——真正的「不能用的原因」在上面 ready !== true 那条分支里画。 */}
+        {surface !== null && surface.ready === true && surface.problem !== null ? (
+          <div className="settings-note" style={WARN_NOTE_STYLE} role="status">
+            {t('superagent.state.guide', { detail: surface.problem.detail })}
+          </div>
+        ) : null}
+
         <div role="tabpanel">
           {surface === null ? (
             // 宿主插件默认关着：这一格整个缺席。给一句能操作的，别画成空白页。
             <div className="plugins-empty">{t('superagent.state.missing')}</div>
           ) : tab === 'settings' ? (
             // 设置分区在 `apply` 里就登记了，运行期没起来也能改（改仓库路径正是为了让它能起来）。
-            <SettingsPage />
+            // surface 传进去是为了「最近变更」块：历史数据在快照面，设置分区本身给不了它。
+            <SettingsPage surface={surface} />
           ) : surface.ready !== true ? (
             <div className="settings-note error">
               {surface.problem === null
@@ -189,6 +222,8 @@ function PageBody(): ReactNode {
             </div>
           ) : tab === 'publish' ? (
             <PublishPage surface={surface} />
+          ) : tab === 'overview' ? (
+            <OverviewPage surface={surface} />
           ) : (
             <TicketsPage surface={surface} />
           )}

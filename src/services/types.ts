@@ -573,6 +573,48 @@ export interface ToolService {
   visible(scope?: AgentScope): ToolEntry[]
 }
 
+// ── jobs ─────────────────────────────────────────────────────────────────────
+
+/** 作业的一行（{@link JobsService} 的视图，不带输出缓冲）。 */
+export interface JobView {
+  id: string
+  /** 发起会话 id；不知道归属的调用方（脚本、老探针）没有这一项。 */
+  owner?: string
+  status: 'running' | 'completed' | 'failed' | 'killed'
+  command: string
+  startedAt: number
+  finishedAt?: number
+  exitCode: number | null
+}
+
+/**
+ * 后台作业表（tools-default 插件提供；插件没开时不存在，读它要用 `ctx.get('jobs')`）。
+ *
+ * 为什么要有这个口：作业表原本只在 tools-default 内部用，作业的 `owner` 已经写的是
+ * 发起会话 id（`bash.ts` 的 `launch` 收 `ctx.sessionId`），但外面查不到「这个会话还有
+ * 几个作业在跑」。superagent 的执行器要在 worker 回合结束后等这些作业收尾（对齐上游
+ * `executor/background.ts` 的 `untilQuiet`），只能靠这个口。
+ *
+ * 只有查询与终止：作业的启动仍在 bash 工具上（`run_in_background`），这个服务不提供
+ * 第二套启动路径——「命令 → shell」的进程边界留在 `bash.ts` 收口。
+ */
+export interface JobsService {
+  /** 某个会话（owner）起的作业；不给 owner = 全部。 */
+  list(owner?: string): JobView[]
+  /** 某个会话还在跑的作业（`status === 'running'`）。 */
+  running(owner: string): JobView[]
+  /**
+   * 等一个作业结束（完成 / 失败 / 被终止）。
+   * @returns true = 已经不在跑；false = 超时或信号先中止。
+   */
+  wait(id: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean>
+  /**
+   * 终止一个作业（整树收尾，已收输出保留，还能用 `job_output` 读）。
+   * @returns true = 真的收了一个在跑的；false = 它已经不在跑，或没有这个作业。
+   */
+  kill(id: string): boolean
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 /** 斜杠命令元数据。 */
@@ -830,8 +872,25 @@ export interface AgentService {
   hasAgent(sessionId: string): boolean
   /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */
   sessionFor(filePath: string): Session | undefined
-  /** 按会话 id 找常驻会话实例（后台 agent 的权限/提示词按它取自己的会话）。 */
+  /** 按会话 id 找会话实例（常驻的，或 {@link attach} 登记过的；后台 agent 的权限/提示词按它取自己的会话）。 */
   sessionById(sessionId: string): Session | undefined
+  /**
+   * 登记一条**不经常驻注册表**的会话，只让它按 id 查得到。
+   *
+   * 为什么要这个口：superagent 的 worker 会话是执行器自己 `Session.create` 造的
+   * （`packages/superagent/adapters/executor.ts`），不是本插件开的常驻 agent。
+   * 于是 `sessionById(workerId)` 查不到，而两条路都靠它认归属：
+   *   - `subagent` 工具按 `runCtx.sessionId` 找父会话，查不到就回落
+   *     `ctx.session.current()`——那会派到用户**正在看**的会话名下；
+   *   - 后台作业的完成通知按 `owner` 投递，而 owner 就是 worker 会话 id。
+   *
+   * 只登记会话、不登记 MiniAgent：`hasAgent` / `followup` 仍按常驻注册表算，
+   * 所以这个口不会让「不在册」的会话被误当成常驻 agent 去唤醒。
+   * 生命周期由调用方管：会话关掉时自己 {@link detach}。
+   */
+  attach(session: Session): void
+  /** 摘掉 {@link attach} 的登记；执行器关会话时调。没有登记就是空操作。 */
+  detach(sessionId: string): void
   /** 那个会话的常驻 agent 正在跑回合吗（切回运行中会话时转录层补「回合中」状态）。 */
   isRunning(filePath: string): boolean
   /**
@@ -993,6 +1052,15 @@ export interface TeamService {
    * @returns 给用户看的一句话；名字不存在或还在干活，这句话就是明确的错误说明（不抛错）。
    */
   remove(name: string): Promise<string>
+  /**
+   * 收掉某个会话派出的**全部**队友。
+   *
+   * 为什么要有：superagent 的 worker 停了之后，它派出去的队友不该继续跑——那些
+   * 队友的父会话已经没人认领了。上游同一步是 `stopSubagents`
+   * （`executor/background.ts:141-153`），由执行器在工单结束时调。
+   * @returns 收掉的队友名；一个都没收就是空数组。单个收不掉不影响其它的。
+   */
+  stopBySession(sessionId: string): Promise<string[]>
 }
 
 /**
@@ -1589,6 +1657,8 @@ declare module '@deepseek-ai/cordis' {
     /** 会话目标与自动续跑。 */
     goal: GoalService
     tools: ToolService
+    /** 后台作业表（tools-default 插件提供；插件没开时不存在，读它要用 `ctx.get('jobs')`）。 */
+    jobs?: JobsService
     transcript: TranscriptService
     commands: CommandService
     compact: CompactService

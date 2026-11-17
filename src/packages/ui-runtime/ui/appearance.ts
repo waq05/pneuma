@@ -1,5 +1,13 @@
 /**
- * 外观偏好：主题模式、字号、密度三项怎么落到 DOM 上（浏览器侧）。
+ * 外观偏好：主题模式、字号、字体、密度怎么落到 DOM 上（浏览器侧）。
+ *
+ * 字号的真源是 px（`textSizePx`），`--dsc-font-scale` 是由它算出来的派生值：px ÷ 14
+ * （见 `contract/fonts.ts` 的 `fontScaleFromTextSizePx`）。以前这里存的是倍率、自己夹
+ * 0.85–1.35，于是基准从 13 改成 14 之后「设置里写 100%」和「正文 14px」就对不上了。
+ *
+ * 字体两项（正文 / 代码）走 CSS 变量 `--dsc-font-text` / `--dsc-font-code`。空串时必须
+ * `removeProperty`，**不能写空串**：`var(--x, 兜底)` 里的 `--x` 若是「存在但为空」，
+ * 整条 `font-family` 会因语法非法被浏览器丢弃、退回默认字体（不是退回兜底栈）。
  *
  * 与桌面渲染层 `desktop/src/renderer/appearance.ts` 同一套语义：真源在宿主的
  * `~/.dsc/settings.json`（走 `getUiPrefs`），这里另存一份 localStorage 镜像，
@@ -23,18 +31,16 @@
 // （`native.ts` / `css.ts`）里实现，`@dsc/ui` 只转出；本包对 `@dsc/ui` 的边因此清零
 // （探针 [5b] 已把这条边改成硬禁止，见 ui-layout/index.ts 的说明）。
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/ui-core'
+import {
+  FONT_SIZE_PX_DEFAULT,
+  fontScaleFromTextSizePx,
+  normalizeFontList,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '@dsc/ui-core'
 import { getHostNative, readCssColor } from '@dsc/ui-primitives'
 
 export type { ThemeMode, UiDensity, UiFontSize }
-
-/** 字号倍率的可调范围；与 `src/core/prefs.ts` 读档时的夹取范围一致，改这里要两边一起改。 */
-export const FONT_SCALE_MIN = 0.85
-export const FONT_SCALE_MAX = 1.35
-/** 基准倍率：正文 13px 原样。 */
-export const FONT_SCALE_DEFAULT = 1
-
-/** 旧存档里的三档字号（0.6 之前存的是字符串），迁移成倍率。 */
-const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
 
 /** 折叠时机（'completion' 跑完立刻收起 / 'next-input' 等下次发言再收起）。 */
 export type CollapseTiming = UiPrefsView['collapseTiming']
@@ -50,41 +56,33 @@ export type FoldedReplies = UiPrefsView['foldedReplies']
  */
 export interface Appearance {
   themeMode: ThemeMode
-  fontSize: UiFontSize
+  /** 正文 px（10–22，默认 14）：字号的唯一真源，`--dsc-font-scale` 由它算出。 */
+  textSizePx: number
+  /** 正文字体列表（已归一）；空串 = 用内置栈。 */
+  textFontFamily: string
+  /** 代码字体列表（已归一）；空串 = 用内置栈。 */
+  codeFontFamily: string
   density: UiDensity
   collapseTiming: CollapseTiming
   foldedReplies: FoldedReplies
 }
 
 /**
- * 出厂默认：claude（暖米白）、标准字号、标准密度。
+ * 出厂默认：claude（暖米白）、正文 14px、字体跟随内置栈、标准密度。
  *
  * 真源是 `core/prefs.ts` 的 readPrefs 默认值；这里跟着一起改，是为了宿主还没回读、
  * 或 localStorage 镜像为空的那一帧也落在同一个主题上（0.7.2 起默认由 dark 改成 claude）。
  */
 export const DEFAULT_APPEARANCE: Appearance = {
   themeMode: 'claude',
-  fontSize: FONT_SCALE_DEFAULT,
+  textSizePx: FONT_SIZE_PX_DEFAULT,
+  // 空串 = 不写 CSS 变量，界面用 tokens.css 里的内置栈。
+  textFontFamily: '',
+  codeFontFamily: '',
   density: 'standard',
   // 与 core/prefs.ts 同口径：时机默认跑完立刻收起，收起后默认保留全部回复。
   collapseTiming: 'completion',
   foldedReplies: 'final',
-}
-
-/**
- * 把外部来的字号值归一成能用的倍率。
- *
- * 数字夹到 0.85–1.35 并保留两位小数；旧的 'sm'/'md'/'lg' 按 0.92/1/1.12 迁移；
- * 其余（认不出的字符串、NaN、null）回落 1。宿主回读、localStorage 镜像都先过这里，
- * 所以旧存档最多是字号不对，不会把界面带崩。
- *
- * @param value 任意来源的字号值（数字或旧版三档字符串）
- * @returns 可以直接写进 `--dsc-font-scale` 的倍率
- */
-export function normalizeFontScale(value: unknown): number {
-  const legacy = typeof value === 'string' ? LEGACY_FONT_SCALES[value] : undefined
-  const scale = legacy ?? (typeof value === 'number' && Number.isFinite(value) ? value : FONT_SCALE_DEFAULT)
-  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(scale * 100) / 100))
 }
 
 /** 密度只有三档；认不出的值回落 standard。 */
@@ -123,12 +121,21 @@ function normalizeFoldedReplies(value: unknown): FoldedReplies {
 /**
  * 把宿主 `getUiPrefs` 的返回值（或 localStorage 镜像）归一成渲染层能直接用的外观。
  *
+ * 字号取 px 为准。老壳、老镜像、手机远程那份还没升级，只有倍率 `fontSize`——那就按
+ * `textSizePxFromLegacy` 换算一次（认不出的回落默认 14px），不让它们把界面带成 0px。
+ *
  * @param prefs 宿主原样返回的界面偏好，或解析出来的镜像
  */
 export function appearanceFromPrefs(prefs: Partial<UiPrefsView> | null | undefined): Appearance {
+  const textSizePx =
+    typeof prefs?.textSizePx === 'number'
+      ? normalizeTextSizePx(prefs.textSizePx)
+      : textSizePxFromLegacy(prefs?.fontSize) ?? FONT_SIZE_PX_DEFAULT
   return {
     themeMode: normalizeTheme(prefs?.themeMode),
-    fontSize: normalizeFontScale(prefs?.fontSize),
+    textSizePx,
+    textFontFamily: normalizeFontList(prefs?.textFontFamily),
+    codeFontFamily: normalizeFontList(prefs?.codeFontFamily),
     density: normalizeDensity(prefs?.density),
     // 这两项只做取值收窄、不参与上色：带出去是为了不让它们在中途被丢掉。
     collapseTiming: normalizeCollapseTiming(prefs?.collapseTiming),
@@ -163,7 +170,11 @@ export function applyAppearance(appearance: Appearance): void {
   // 免得样式表去猜系统偏好、和 JS 的判断各说一套。
   root.dataset.theme = mode
   root.dataset.density = appearance.density
-  root.style.setProperty('--dsc-font-scale', String(normalizeFontScale(appearance.fontSize)))
+  // 倍率是派生值：界面里那批 `calc(Npx * var(--dsc-font-scale))` 都读它。
+  root.style.setProperty('--dsc-font-scale', String(fontScaleFromTextSizePx(appearance.textSizePx)))
+  // 两个字体变量：空串删掉（不能写空串，见文件头与 applyFontVariable 的说明）。
+  applyFontVariable(root, '--dsc-font-text', appearance.textFontFamily)
+  applyFontVariable(root, '--dsc-font-code', appearance.codeFontFamily)
   // 注意这里**不再写** `--dsc-btn-scale`：按钮大小那条轴已退场（见文件头第 3 条）。
   // views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 由 styles.css 固定尺寸覆盖。
 
@@ -183,6 +194,23 @@ export function applyAppearance(appearance: Appearance): void {
     media.removeEventListener('change', systemWatcher)
     systemWatcher = undefined
   }
+}
+
+/**
+ * 把一条字体列表写进 CSS 自定义属性；空串就把属性删掉。
+ *
+ * 为什么空串必须删而不是写 `''`：`tokens.css` 里那两条的写法是
+ * `var(--dsc-font-text, 内置栈), 内置栈`。自定义属性「存在但值为空串」时，`var()` **不会**
+ * 走兜底（兜底只在变量未定义时生效），展开成 `font-family: , 'Segoe WPC', …`——整条声明
+ * 语法非法被浏览器丢掉，用户看到的是浏览器默认字体。删掉变量才真的是「没填 = 用内置栈」。
+ *
+ * @param root document 根元素
+ * @param name 变量名（`--dsc-font-text` / `--dsc-font-code`）
+ * @param value 已经过 `normalizeFontList` 的列表；空串表示用内置栈
+ */
+function applyFontVariable(root: HTMLElement, name: string, value: string): void {
+  if (value === '') root.style.removeProperty(name)
+  else root.style.setProperty(name, value)
 }
 
 /**

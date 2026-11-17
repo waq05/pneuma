@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<!--
+  Super Agent「空间」布局与交互 demo（静态、可点，不连宿主）。
+
+  目的：在动真代码前，把「侧栏两段按钮 + 主区换空间 + 工单看只读会话 + 发布任务浮层 + 设置并入设置面板」
+  这套形状摆出来给人看。配色与字号抄自 src/packages/ui-renderer/ui/styles/legacy/tokens.css 的 claude 主题，
+  尺寸抄自同一份文件的 --dsc-* 变量，所以它长得应该和真应用同一张脸。
+
+  这里没有 React、没有宿主：数据和渲染都由页面底部的脚本兜着，刷新即复原。
+  唯一的本地持久化是「上次停在哪个空间」（localStorage），用来演示「模式记得」。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Agent 空间 · 布局 demo</title>
+<style>
+/* ── 设计令牌（claude 主题，取自 tokens.css:497-584）──────────────────────── */
+:root {
+  --base: #141413;
+  --accent: #d97757;
+  --bg-page: #faf9f5;
+  --bg-side: #f0eee6;
+  --bg-card: #ffffff;
+  --bg-raised: #ffffff;
+  --composer-fill: #ffffff;
+
+  --fill-primary: color-mix(in srgb, var(--base) 10%, transparent);
+  --fill-secondary: color-mix(in srgb, var(--base) 7%, transparent);
+  --fill-tertiary: color-mix(in srgb, var(--base) 5%, transparent);
+  --fill-quaternary: color-mix(in srgb, var(--base) 4%, transparent);
+  --fill-quinary: color-mix(in srgb, var(--base) 3%, transparent);
+
+  --stroke-1: color-mix(in srgb, var(--base) 14%, transparent);
+  --stroke-2: color-mix(in srgb, var(--base) 10%, transparent);
+  --stroke-3: color-mix(in srgb, var(--base) 7%, transparent);
+  --stroke-4: color-mix(in srgb, var(--base) 4%, transparent);
+
+  --text-primary: color-mix(in srgb, var(--base) 94%, transparent);
+  --text-secondary: color-mix(in srgb, var(--base) 74%, transparent);
+  --text-tertiary: color-mix(in srgb, var(--base) 54%, transparent);
+  --text-quaternary: color-mix(in srgb, var(--base) 36%, transparent);
+  --text-on-accent: #141413;
+
+  --row-hover: color-mix(in srgb, var(--base) 3%, transparent);
+  --row-active: color-mix(in srgb, var(--base) 5%, transparent);
+
+  --red: #dc2626;
+  --orange: #c9683f;
+  --yellow: #c9a82d;
+  --green: #558a42;
+
+  --r-control: 2.5px;
+  --r-icon: 4px;
+  --r-block: 5px;
+  --r-row: 6px;
+  --r-overlay: 8px;
+  --r-card: 10px;
+  --r-composer: 8px;
+  --r-pill: 999px;
+
+  --fs-body: 13px;   --lh-body: 18px;
+  --fs-caption: 12px; --lh-caption: 16px;
+  --fs-ui: 12px;
+  --fs-label: 10.2px;
+  --fs-micro: 9.6px;
+  --fs-prose: 14px;  --lh-prose: 22px;
+  --fs-title: 16px;
+
+  --row-h: 26px;
+  --ctl: 24px;
+  --sidebar-w: 268px;
+  --sidebar-rail: 56px;
+  --titlebar-h: 36px;
+
+  --font-ui: 'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Microsoft YaHei', 'Hiragino Sans GB', system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', 'Sarasa Mono SC', Consolas, 'DejaVu Sans Mono', Menlo,
+    ui-monospace, monospace;
+
+  --shadow-xs: 0 1px 2px color-mix(in srgb, #000 5%, transparent);
+  --shadow-sm: 0 0 0 1px color-mix(in srgb, var(--base) 6%, transparent),
+    0 2px 8px color-mix(in srgb, #000 4%, transparent);
+  --shadow-md: 0 0 0 1px color-mix(in srgb, var(--base) 8%, transparent),
+    0 4px 16px color-mix(in srgb, #000 8%, transparent),
+    0 16px 32px -24px color-mix(in srgb, #000 18%, transparent);
+  --shadow-float: 0 2px 4px -2px color-mix(in srgb, #000 7%, transparent),
+    0 8px 12px -6px color-mix(in srgb, #000 6%, transparent),
+    0 20px 28px -14px color-mix(in srgb, #000 6%, transparent),
+    0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
+
+  --dur: 120ms;
+  --ease: cubic-bezier(.2, .7, .3, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--base) 14%, transparent); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--base) 22%, transparent); }
+::-webkit-scrollbar-track { background: transparent; }
+.icon { width: 15px; height: 15px; flex: none; display: block; }
+.mono { font-family: var(--font-mono); font-size: var(--fs-caption); }
+.fill { flex: 1; min-width: 0; }
+
+/* ── 骨架：.app → .sidebar + .main ─────────────────────────────────────── */
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+/* 侧栏 */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-side);
+  border-right: 1px solid var(--stroke-3);
+  transition: width var(--dur) var(--ease), min-width var(--dur) var(--ease);
+  overflow: hidden;
+}
+.app[data-collapsed='1'] .sidebar { width: var(--sidebar-rail); min-width: var(--sidebar-rail); }
+.app[data-collapsed='1'] .side-expanded,
+.app[data-collapsed='1'] .side-main { display: none; }
+.app[data-collapsed='1'] .brand { padding: 0; justify-content: center; }
+.app[data-collapsed='1'] .brand .icon-btn { display: none; }
+
+.brand { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 8px 0 12px; flex: none; }
+.brand-mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none;
+  background: var(--base); color: var(--bg-page); border: 0; padding: 0;
+  display: grid; place-items: center; cursor: pointer;
+}
+.brand-name { font-size: var(--fs-body); font-weight: 600; letter-spacing: .01em; }
+.brand .icon-btn { margin-left: auto; }
+.brand .icon-btn + .icon-btn { margin-left: 0; }
+.side-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.icon-btn {
+  display: inline-grid; place-items: center;
+  width: var(--ctl); height: var(--ctl); border-radius: var(--r-icon);
+  color: var(--text-tertiary); flex: none;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.icon-btn:hover { background: var(--fill-tertiary); color: var(--text-primary); }
+.icon-btn.on { background: var(--fill-secondary); color: var(--text-primary); }
+
+.btn-new {
+  display: flex; align-items: center; gap: 6px;
+  margin: 4px 8px 6px; min-height: var(--row-h); padding: 0 8px;
+  border-radius: var(--r-control); text-align: left; color: var(--text-primary);
+  transition: background var(--dur) var(--ease);
+}
+.btn-new:hover { background: var(--row-hover); }
+.btn-new .icon { color: var(--accent); }
+
+.side-nav { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 0; }
+.nav-item {
+  display: flex; align-items: center; gap: 6px;
+  min-height: var(--row-h); padding: 0 8px; border-radius: var(--r-control);
+  color: var(--text-secondary); text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.nav-item .icon { color: var(--text-tertiary); width: 14px; height: 14px; }
+.nav-item:hover { background: var(--row-hover); color: var(--text-primary); }
+.nav-item.on { background: var(--row-active); color: var(--text-primary); }
+
+.side-scroll { flex: 1; overflow-y: auto; padding: 10px 8px 10px; }
+
+/* 小节标签行：空间切换 + 动作 */
+.section-head { display: flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 4px 6px; }
+.seg {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border-radius: var(--r-pill); background: var(--fill-quinary);
+}
+.seg-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 21px; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: var(--fs-ui); color: var(--text-tertiary); white-space: nowrap;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.seg-btn:hover { color: var(--text-primary); }
+.seg-btn.on {
+  background: var(--bg-card); color: var(--text-primary); font-weight: 500;
+  box-shadow: var(--shadow-xs);
+}
+.seg-btn .badge {
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill);
+  background: var(--accent); color: var(--text-on-accent);
+  font-size: var(--fs-micro); line-height: 15px; text-align: center; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.head-actions .icon-btn { width: 22px; height: 22px; }
+.head-actions .icon { width: 14px; height: 14px; }
+
+/* 会话分组 */
+.group { margin-bottom: 2px; }
+.group-row {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  min-height: var(--row-h); padding: 0 6px; border-radius: var(--r-control);
+  color: var(--text-secondary); text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.group-row:hover { background: var(--row-hover); color: var(--text-primary); }
+.group-row .icon { width: 13px; height: 13px; color: var(--text-tertiary); }
+.group-row .chev { color: var(--text-quaternary); width: 11px; height: 11px; transition: transform var(--dur) var(--ease); }
+.group[data-open='0'] .chev { transform: rotate(-90deg); }
+.group[data-open='0'] .group-body { display: none; }
+.group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sess {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: calc(var(--row-h) - 2px); padding: 0 8px 0 24px;
+  border-radius: var(--r-control); color: var(--text-secondary); text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.sess:hover { background: var(--row-hover); color: var(--text-primary); }
+.sess.on { background: var(--row-active); color: var(--text-primary); }
+.sess .title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess .ago { margin-left: auto; color: var(--text-quaternary); font-size: var(--fs-caption); flex: none; }
+.sess .pin { width: 11px; height: 11px; color: var(--text-quaternary); flex: none; }
+
+/* 工单行：两行（标题 / 阶段·时间） */
+.group-label {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 6px 3px; color: var(--text-tertiary);
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: .08em;
+}
+.group-label .count { font-weight: 500; color: var(--text-quaternary); font-variant-numeric: tabular-nums; }
+.group-label .fill { flex: 1; }
+.group-label + .ticket { margin-top: 1px; }
+
+.ticket {
+  display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+  gap: 1px 6px; width: 100%; padding: 6px 8px; border-radius: var(--r-block);
+  text-align: left; position: relative; cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.ticket:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: -1px; }
+.ticket:hover { background: var(--row-hover); }
+.ticket.on { background: var(--row-active); }
+.ticket.flash { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ticket .t-title {
+  grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-primary); font-size: var(--fs-body);
+}
+.ticket .t-stage {
+  grid-column: 2; grid-row: 1; align-self: center;
+  font-size: var(--fs-caption); color: var(--text-tertiary); white-space: nowrap;
+}
+.ticket .t-stage.s-person { color: color-mix(in srgb, var(--accent) 80%, var(--base)); }
+.ticket .t-stage.s-working { color: var(--green); }
+.ticket .t-stage.s-ended { color: var(--text-quaternary); }
+.ticket .t-meta {
+  grid-column: 1; display: flex; align-items: center; gap: 5px;
+  color: var(--text-quaternary); font-size: var(--fs-caption);
+  overflow: hidden; white-space: nowrap;
+}
+.ticket .t-meta .sep { opacity: .6; }
+.ticket .t-archive {
+  grid-column: 2; grid-row: 1; justify-self: end; align-self: center;
+  display: none; width: 20px; height: 20px; border-radius: var(--r-icon);
+  color: var(--text-quaternary); place-items: center;
+}
+.ticket .t-archive:hover { background: var(--fill-secondary); color: var(--text-primary); }
+.ticket.has-archive:hover .t-stage { visibility: hidden; }
+.ticket.has-archive:hover .t-archive { display: grid; }
+/* 选中的那一行也把归档钮露出来：鼠标不一定停在它上面（键盘/点选用户同样要能看见）。 */
+.ticket.on.has-archive .t-stage { visibility: hidden; }
+.ticket.on.has-archive .t-archive { display: grid; }
+
+.dot { width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--text-quaternary); }
+.dot.person { background: var(--accent); }
+.dot.working { background: var(--green); animation: breathe 1.8s var(--ease) infinite; }
+.dot.ended { background: transparent; border: 1px solid var(--text-quaternary); }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.side-empty { padding: 18px 10px; color: var(--text-quaternary); font-size: var(--fs-caption); text-align: center; }
+
+/* 侧栏底部 */
+.side-foot { flex: none; padding: 6px 8px 8px; border-top: 1px solid var(--stroke-4); }
+.foot-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: var(--row-h); padding: 0 8px; border-radius: var(--r-control);
+  color: var(--text-secondary); text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.foot-row:hover { background: var(--row-hover); color: var(--text-primary); }
+.foot-row .icon { width: 14px; height: 14px; color: var(--text-quaternary); }
+.foot-row .right { margin-left: auto; color: var(--text-tertiary); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+
+/* 窄栏 */
+.rail { display: none; flex-direction: column; align-items: center; gap: 4px; padding: 40px 0 8px; }
+.app[data-collapsed='1'] .rail { display: flex; }
+.rail .icon-btn { width: 32px; height: 32px; border-radius: var(--r-block); }
+.rail .icon { width: 16px; height: 16px; }
+.rail .rail-badge { position: absolute; margin: -16px 0 0 16px; min-width: 14px; height: 14px; padding: 0 3px;
+  border-radius: 999px; background: var(--accent); color: var(--text-on-accent);
+  font-size: var(--fs-micro); line-height: 14px; text-align: center; font-weight: 600; }
+.rail .spacer { flex: 1; }
+
+/* 主区 */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg-page); }
+.topbar { flex: none; border-bottom: 1px solid var(--stroke-3); padding: 0 12px 0 18px; }
+.topbar-row { display: flex; align-items: center; gap: 10px; height: var(--titlebar-h); min-width: 0; }
+.topbar-row.sub { height: 34px; border-top: 1px solid var(--stroke-4); }
+.crumb { display: inline-flex; align-items: center; gap: 5px; color: var(--text-quaternary); font-size: var(--fs-caption); flex: none; }
+.crumb .icon { width: 12px; height: 12px; }
+.topbar .title { font-size: var(--fs-title); font-weight: 600; letter-spacing: -.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+  border: 1px solid var(--stroke-3); border-radius: var(--r-pill);
+  color: var(--text-secondary); font-size: var(--fs-caption); white-space: nowrap;
+}
+.pill .icon { width: 12px; height: 12px; color: var(--text-quaternary); }
+.pill.mono { font-family: var(--font-mono); font-size: var(--fs-ui); }
+
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 28px; padding: 0 12px; border-radius: var(--r-control);
+  background: var(--accent); color: var(--text-on-accent); font-size: var(--fs-body); font-weight: 500;
+  transition: filter var(--dur) var(--ease);
+}
+.btn-primary:hover { filter: brightness(.96); }
+.btn-primary:disabled { opacity: .5; cursor: default; }
+.btn-primary.sm { height: 26px; padding: 0 10px; font-size: var(--fs-ui); }
+.btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 26px; padding: 0 9px; border-radius: var(--r-control);
+  border: 1px solid var(--stroke-2); color: var(--text-secondary); font-size: var(--fs-ui);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.btn-ghost:hover { background: var(--fill-quaternary); color: var(--text-primary); border-color: var(--stroke-3); }
+.btn-ghost:disabled { opacity: .45; cursor: default; }
+.btn-ghost.danger:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+
+.tabs { display: inline-flex; align-items: center; gap: 2px; }
+.tabs button {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
+  border-radius: var(--r-control); color: var(--text-tertiary); font-size: var(--fs-ui);
+}
+.tabs button:hover { color: var(--text-primary); }
+.tabs button.on { background: var(--fill-tertiary); color: var(--text-primary); }
+
+.ticket-meta { display: flex; align-items: center; gap: 14px; min-width: 0; color: var(--text-tertiary); font-size: var(--fs-caption); }
+.ticket-meta .kv { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ticket-meta .kv .icon { width: 12px; height: 12px; color: var(--text-quaternary); }
+.meta-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+.chip-stage {
+  display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 8px;
+  border-radius: var(--r-pill); font-size: var(--fs-ui);
+  background: var(--fill-quinary); color: var(--text-secondary);
+}
+.chip-stage.person { background: color-mix(in srgb, var(--accent) 14%, transparent); color: color-mix(in srgb, var(--accent) 78%, var(--base)); }
+.chip-stage.working { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); }
+.chip-stage.ended { background: var(--fill-quinary); color: var(--text-tertiary); }
+
+/* 正文 */
+.thread-zone { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.thread { flex: 1; overflow-y: auto; overflow-anchor: none; scroll-behavior: smooth; }
+.thread-inner {
+  max-width: calc(96ch); margin: 0 auto; padding: 18px clamp(20px, 4vw, 56px) 26px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.thread-inner > * { min-width: 0; }
+
+/* 只读会话：需求气泡（右对齐软块，照 .entry-user）*/
+.bubble-user {
+  align-self: flex-end; max-width: 78%;
+  background: var(--fill-quaternary);
+  border-radius: var(--r-block) 0 var(--r-block) var(--r-block);
+  padding: 7px 12px; white-space: pre-wrap;
+  font-size: var(--fs-prose); line-height: var(--lh-prose); color: var(--text-primary);
+}
+.bubble-user .who {
+  display: block; margin-bottom: 2px; color: var(--text-quaternary);
+  font-size: var(--fs-micro); letter-spacing: .04em;
+}
+
+/* 过程行：小一号、灰一档，左侧一格图标 */
+.proc { display: flex; flex-direction: column; gap: 1px; }
+.proc-row {
+  display: flex; align-items: center; gap: 7px; min-height: 24px; padding: 0 6px;
+  border-radius: var(--r-control); color: var(--text-tertiary); font-size: var(--fs-caption);
+  transition: background var(--dur) var(--ease);
+}
+.proc-row:hover { background: var(--row-hover); }
+.proc-row .icon { width: 13px; height: 13px; color: var(--text-quaternary); }
+.proc-row .name { color: var(--text-secondary); }
+.proc-row .mono { color: var(--text-tertiary); font-size: var(--fs-ui); }
+.proc-row .result { margin-left: auto; color: var(--text-quaternary); font-size: var(--fs-caption); white-space: nowrap; }
+.proc-row .result.ok { color: var(--text-tertiary); }
+.proc-row .result.run { color: var(--green); display: inline-flex; align-items: center; gap: 5px; }
+.proc-row .spin { width: 5px; height: 5px; border-radius: 50%; background: var(--green); animation: breathe 1.6s var(--ease) infinite; }
+
+/* 正文段落 */
+.prose { font-size: var(--fs-prose); line-height: var(--lh-prose); color: var(--text-primary); }
+.prose p + p { margin-top: 8px; }
+.prose ul { margin: 6px 0 0; padding-left: 20px; }
+.prose li { margin: 2px 0; }
+.prose code {
+  font-family: var(--font-mono); font-size: .88em; padding: 1px 4px; border-radius: 3px;
+  background: var(--bg-side); color: #3d3d3a;
+}
+.prose strong { font-weight: 600; }
+
+/* 交付摘要卡 */
+.card {
+  border: 1px solid var(--stroke-3); border-radius: var(--r-card);
+  background: var(--bg-card); padding: 12px 14px;
+}
+.card-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.card-head .icon { width: 14px; height: 14px; color: var(--green); }
+.card-head h3 { font-size: var(--fs-body); font-weight: 600; }
+.card-head .tag {
+  margin-left: auto; font-size: var(--fs-caption); color: var(--text-quaternary);
+}
+.card .prose { font-size: var(--fs-body); line-height: 1.7; }
+
+/* 空态 */
+.empty-space {
+  margin: auto; max-width: 380px; text-align: center; padding: 40px 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.empty-space .glyph {
+  width: 44px; height: 44px; border-radius: var(--r-card); display: grid; place-items: center;
+  background: var(--fill-quaternary); color: var(--accent);
+}
+.empty-space h2 { font-size: var(--fs-title); font-weight: 600; }
+.empty-space p { color: var(--text-tertiary); font-size: var(--fs-caption); line-height: 1.7; }
+
+/* 输入区 / 只读条 */
+.composer-zone { flex: none; padding: 0 clamp(20px, 4vw, 56px) 6px; }
+.composer-wrap { max-width: 96ch; margin: 0 auto; }
+.composer {
+  background: var(--composer-fill); border: 1px solid var(--stroke-2);
+  border-radius: var(--r-composer); padding: 8px 10px 6px;
+  transition: border-color var(--dur) var(--ease);
+}
+.composer:focus-within { border-color: var(--stroke-1); }
+.composer textarea {
+  display: block; width: 100%; min-height: 40px; max-height: 150px; resize: none;
+  border: 0; outline: 0; background: none;
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-primary);
+}
+.composer textarea::placeholder { color: var(--text-quaternary); }
+.composer-foot { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.composer-foot .chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 21px; padding: 0 7px;
+  border-radius: var(--r-pill); background: var(--fill-quinary);
+  color: var(--text-tertiary); font-size: var(--fs-caption); white-space: nowrap;
+}
+.composer-foot .chip .icon { width: 11px; height: 11px; }
+.composer-foot .hint { color: var(--text-quaternary); font-size: var(--fs-caption); margin-left: auto; }
+.send {
+  width: 26px; height: 26px; border-radius: var(--r-block); display: grid; place-items: center;
+  background: var(--accent); color: var(--text-on-accent);
+}
+.send .icon { width: 14px; height: 14px; }
+.readonly-bar {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px dashed var(--stroke-2); border-radius: var(--r-composer);
+  padding: 10px 12px; color: var(--text-tertiary); font-size: var(--fs-caption);
+  background: color-mix(in srgb, var(--bg-side) 60%, transparent);
+}
+.readonly-bar .icon { width: 14px; height: 14px; color: var(--text-quaternary); }
+.readonly-bar b { color: var(--text-secondary); font-weight: 500; }
+
+.statusbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 4px 2px 2px; color: var(--text-quaternary); font-size: var(--fs-caption);
+}
+.statusbar .seg-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.statusbar .seg-item .icon { width: 11px; height: 11px; }
+.statusbar .right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.statusbar .demo-tag { color: color-mix(in srgb, var(--accent) 70%, var(--base)); font-size: var(--fs-micro); letter-spacing: .04em; }
+
+/* 浮层：发布 / 设置 */
+.overlay {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--base) 28%, transparent);
+  backdrop-filter: blur(1.5px);
+  animation: fade var(--dur) var(--ease);
+}
+.overlay[hidden] { display: none; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.sheet {
+  background: var(--bg-page); border-radius: var(--r-overlay);
+  box-shadow: var(--shadow-float); border: 1px solid var(--stroke-4);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: rise 160ms var(--ease);
+}
+@keyframes rise { from { transform: translateY(6px) scale(.995); opacity: .7; } to { transform: none; opacity: 1; } }
+
+.publish { width: 560px; }
+.publish-head { padding: 18px 20px 0; }
+.publish-head h2 { font-size: var(--fs-title); font-weight: 600; }
+.publish-head p { margin-top: 4px; color: var(--text-tertiary); font-size: var(--fs-caption); line-height: 1.65; }
+.publish-body { padding: 14px 20px 4px; display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field .label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-caption); color: var(--text-secondary); }
+.field .label .need { color: var(--accent); font-size: var(--fs-micro); }
+.field .help { color: var(--text-quaternary); font-size: var(--fs-caption); }
+.input {
+  height: 32px; padding: 0 9px; border-radius: var(--r-control);
+  border: 1px solid var(--stroke-2); background: var(--bg-card);
+  font-size: var(--fs-body); color: var(--text-primary); outline: 0; width: 100%;
+  transition: border-color var(--dur) var(--ease);
+}
+.input:focus { border-color: var(--accent); }
+textarea.input { height: auto; min-height: 92px; padding: 8px 9px; resize: vertical; line-height: 1.65; }
+.input::placeholder { color: var(--text-quaternary); }
+.publish-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 20px 18px; border-top: 1px solid var(--stroke-4); margin-top: 12px;
+}
+.publish-foot .note { color: var(--text-quaternary); font-size: var(--fs-caption); }
+.publish-foot .err { color: var(--red); font-size: var(--fs-caption); }
+
+.settings { width: 900px; height: 580px; flex-direction: row; }
+.settings-nav { width: 196px; flex: none; background: var(--bg-side); border-right: 1px solid var(--stroke-4); padding: 14px 8px; overflow-y: auto; }
+.settings-nav h2 { padding: 0 8px 10px; font-size: var(--fs-body); font-weight: 600; }
+.settings-nav button {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  min-height: 28px; padding: 0 8px; border-radius: var(--r-row);
+  color: var(--text-secondary); font-size: var(--fs-body); text-align: left;
+}
+.settings-nav button:hover { background: var(--row-hover); color: var(--text-primary); }
+.settings-nav button.on { background: var(--row-active); color: var(--text-primary); }
+.settings-nav .icon { width: 14px; height: 14px; color: var(--text-quaternary); }
+.settings-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-head { padding: 18px 24px 0; display: flex; align-items: flex-start; gap: 12px; }
+.settings-head h2 { font-size: var(--fs-title); font-weight: 600; }
+.settings-head p { margin-top: 4px; color: var(--text-tertiary); font-size: var(--fs-caption); }
+.settings-head .icon-btn { margin-left: auto; }
+.settings-body { flex: 1; overflow-y: auto; padding: 6px 24px 24px; }
+.setting-row { display: flex; align-items: flex-start; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--stroke-4); }
+.setting-row:last-child { border-bottom: 0; }
+.setting-text { flex: 1; min-width: 0; }
+.setting-label { color: var(--text-primary); font-size: var(--fs-body); }
+.setting-help { color: var(--text-tertiary); font-size: var(--fs-caption); line-height: 1.65; margin-top: 2px; }
+.setting-control { width: 220px; flex: none; display: flex; justify-content: flex-end; align-items: center; }
+.setting-control .input { height: 28px; font-size: var(--fs-caption); }
+.setting-control .input.mono { font-family: var(--font-mono); }
+.switch {
+  width: 34px; height: 20px; border-radius: 999px; background: var(--fill-primary);
+  position: relative; transition: background var(--dur) var(--ease); flex: none;
+}
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: var(--shadow-xs);
+  transition: transform var(--dur) var(--ease);
+}
+.switch[aria-checked='true'] { background: var(--accent); }
+.switch[aria-checked='true']::after { transform: translateX(14px); }
+.settings-note {
+  margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-control);
+  background: var(--fill-quinary); color: var(--text-tertiary); font-size: var(--fs-caption);
+}
+
+/* 菜单 */
+.pop {
+  position: fixed; z-index: 70; min-width: 196px; padding: 4px;
+  background: var(--bg-raised); border: 1px solid var(--stroke-3); border-radius: var(--r-overlay);
+  box-shadow: var(--shadow-md);
+}
+.pop[hidden] { display: none; }
+.pop button {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  min-height: 28px; padding: 0 8px; border-radius: var(--r-row);
+  color: var(--text-secondary); font-size: var(--fs-body); text-align: left;
+}
+.pop button:hover { background: var(--row-hover); color: var(--text-primary); }
+.pop button .icon { width: 13px; height: 13px; color: var(--text-tertiary); }
+.pop button .check { margin-left: auto; color: var(--accent); }
+.pop hr { border: 0; border-top: 1px solid var(--stroke-4); margin: 4px 2px; }
+
+/* toast */
+.toasts { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.toast {
+  background: var(--bg-raised); border: 1px solid var(--stroke-3); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-md); padding: 7px 14px; color: var(--text-secondary);
+  font-size: var(--fs-caption); animation: rise 160ms var(--ease);
+  display: flex; align-items: center; gap: 7px;
+}
+.toast .icon { width: 13px; height: 13px; color: var(--green); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-plus" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="3.2" width="11.6" height="9.6" rx="1.6" stroke="currentColor" stroke-width="1.4"/><path d="M6.4 3.2v9.6" stroke="currentColor" stroke-width="1.4"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M8.9 1.8 3.9 9.1h3.3l-1 5.1 5.2-7.6H8.1z" fill="currentColor"/></symbol>
+    <symbol id="i-puzzle" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.6" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.4"/><rect x="8.8" y="2.6" width="4.6" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.4"/><rect x="2.6" y="8.8" width="4.6" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.4"/><rect x="8.8" y="8.8" width="4.6" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.4"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 16 16" fill="none"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2.4 5.1c0-.6.5-1.1 1.1-1.1h2.2l1.2 1.4h4.7c.6 0 1.1.5 1.1 1.1v4.4c0 .6-.5 1.1-1.1 1.1H3.5c-.6 0-1.1-.5-1.1-1.1z" fill="currentColor"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="5.3" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.4v1.3M8 13.3v1.3M1.4 8h1.3M13.3 8h1.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8V8l2.3 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16" fill="none"><circle cx="4.4" cy="3.6" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="4.4" cy="12.4" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="11.6" cy="6" r="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M4.4 5.1v5.8M11.6 7.5c0 2-1.6 3-3.6 3.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="3.2" width="10.8" height="2.8" rx=".7" stroke="currentColor" stroke-width="1.3"/><path d="M3.8 6v5.6c0 .7.5 1.2 1.2 1.2h6c.7 0 1.2-.5 1.2-1.2V6" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 8.6h3.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 16 16" fill="none"><rect x="4.4" y="4.4" width="7.2" height="7.2" rx="1.4" stroke="currentColor" stroke-width="1.4"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 16 16" fill="none"><path d="M12.6 8a4.6 4.6 0 1 1-1.5-3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M12.7 2.6v3.1h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16" fill="none"><path d="M3.4 4.6h9.2M6.3 4.6V3.3h3.4v1.3M4.6 4.6l.5 7.4c0 .5.4.9.9.9h4c.5 0 .9-.4.9-.9l.5-7.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 16 16"><path d="M13.2 2.8 7.1 13.1 5.6 8.6 2.9 7z" fill="currentColor"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 16 16"><path d="M8 1.9l1.5 4.4 4.4 1.5-4.4 1.5L8 13.7 6.5 9.3 2.1 7.8l4.4-1.5z" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16" fill="none"><path d="m3.4 8.4 3 3 6.2-6.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16" fill="none"><path d="m4.2 4.2 7.6 7.6M11.8 4.2l-7.6 7.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12.4" cy="8" r="1.1" fill="currentColor"/></symbol>
+    <symbol id="i-deliver" viewBox="0 0 16 16" fill="none"><path d="M2.6 5.1 8 2.4l5.4 2.7v5.8L8 13.6l-5.4-2.7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M2.6 5.1 8 7.9l5.4-2.8M8 7.9v5.7" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-think" viewBox="0 0 16 16" fill="none"><path d="M8 2.2a4.2 4.2 0 0 1 2.6 7.5c-.4.3-.6.7-.6 1.2v.4H6v-.4c0-.5-.2-.9-.6-1.2A4.2 4.2 0 0 1 8 2.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6.5 13.4h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16" fill="none"><rect x="3.6" y="7" width="8.8" height="6.2" rx="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 16 16" fill="none"><path d="M9.6 3.6 5.2 8l4.4 4.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16" fill="none"><path d="M4 2.6h5l3 3v7.8H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 2.6v3.2h3" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app" data-collapsed="0">
+  <aside class="sidebar">
+    <div class="brand">
+      <button class="brand-mark" id="brand" aria-label="展开侧栏"><svg class="icon" style="width:13px;height:13px"><use href="#i-spark"/></svg></button>
+      <span class="brand-name side-expanded">Pneuma</span>
+      <button class="icon-btn side-expanded" aria-label="搜索"><svg class="icon"><use href="#i-search"/></svg></button>
+      <button class="icon-btn" id="collapse" aria-label="收起侧栏"><svg class="icon"><use href="#i-panel"/></svg></button>
+    </div>
+
+    <div class="rail">
+      <button class="icon-btn" title="搜索"><svg class="icon"><use href="#i-search"/></svg></button>
+      <button class="icon-btn" title="新会话"><svg class="icon"><use href="#i-plus"/></svg></button>
+      <button class="icon-btn" title="技能"><svg class="icon"><use href="#i-bolt"/></svg></button>
+      <button class="icon-btn" title="插件"><svg class="icon"><use href="#i-puzzle"/></svg></button>
+      <button class="icon-btn" id="rail-space" title="超级智能体">
+        <svg class="icon"><use href="#i-spark"/></svg>
+        <span class="rail-badge" id="rail-badge">2</span>
+      </button>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="rail-settings" title="设置"><svg class="icon"><use href="#i-gear"/></svg></button>
+    </div>
+
+    <div class="side-expanded side-main">
+      <button class="btn-new" id="new-session" type="button">
+        <svg class="icon" style="width:15px;height:15px"><use href="#i-plus"/></svg> 新会话
+      </button>
+
+      <nav class="side-nav">
+        <button class="nav-item" data-page="skills" type="button"><svg class="icon"><use href="#i-bolt"/></svg> 技能</button>
+        <button class="nav-item" data-page="plugins" type="button"><svg class="icon"><use href="#i-puzzle"/></svg> 插件</button>
+      </nav>
+
+      <div class="side-scroll">
+        <div class="section-head">
+          <div class="seg" role="tablist" aria-label="空间切换">
+            <button class="seg-btn on" role="tab" data-space="workspace" aria-selected="true">工作区</button>
+            <button class="seg-btn" role="tab" data-space="superagent" aria-selected="false" id="seg-sa">
+              超级智能体 <span class="badge" id="seg-badge">2</span>
+            </button>
+          </div>
+          <span class="head-actions">
+            <button class="icon-btn" id="btn-search" aria-label="搜索" title="搜索"><svg class="icon"><use href="#i-search"/></svg></button>
+            <button class="icon-btn" id="btn-more" aria-label="更多" title="更多"><svg class="icon"><use href="#i-more"/></svg></button>
+          </span>
+        </div>
+
+        <div id="list-workspace"></div>
+        <div id="list-superagent" hidden></div>
+      </div>
+
+      <div class="side-foot">
+        <div class="foot-row" style="cursor:default">
+          <svg class="icon"><use href="#i-clock"/></svg> 今日总用量
+          <span class="right">1.5K tok</span>
+        </div>
+        <button class="foot-row" id="open-settings" type="button">
+          <svg class="icon"><use href="#i-gear"/></svg> 设置
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-row" id="top-row"></div>
+      <div class="topbar-row sub" id="sub-row"></div>
+    </header>
+    <div class="thread-zone">
+      <div class="thread" id="thread"></div>
+      <div class="composer-zone" id="composer-zone"></div>
+    </div>
+  </main>
+</div>
+
+<!-- 发布任务 -->
+<div class="overlay" id="publish-overlay" hidden>
+  <div class="sheet publish" role="dialog" aria-modal="true" aria-labelledby="pub-title">
+    <div class="publish-head">
+      <h2 id="pub-title">发布任务</h2>
+      <p>一句话需求派给执行智能体：它在这个仓库里开一个独占工作树，改完把结果回到工单里。</p>
+    </div>
+    <div class="publish-body">
+      <div class="field">
+        <span class="label">标题 <span class="need">必填</span></span>
+        <input class="input" id="pub-title-input" placeholder="例如：把登录页的错误提示改成中文">
+      </div>
+      <div class="field">
+        <span class="label">起点分支</span>
+        <input class="input mono" id="pub-base-input" placeholder="留空 = 从当前 HEAD 建工作树">
+      </div>
+      <div class="field">
+        <span class="label">正文</span>
+        <textarea class="input" id="pub-body-input" placeholder="写清背景、要做什么、怎么算做完。留空就用标题当正文。"></textarea>
+      </div>
+    </div>
+    <div class="publish-foot">
+      <span class="err" id="pub-err"></span>
+      <span class="note" id="pub-note" style="margin-left:auto">⌘/Ctrl + ⏎ 也可以发布</span>
+      <button class="btn-ghost" id="pub-cancel">取消</button>
+      <button class="btn-primary" id="pub-submit">发布工单</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="overlay" id="settings-overlay" hidden>
+  <div class="sheet settings" role="dialog" aria-modal="true" aria-labelledby="set-title">
+    <div class="settings-nav">
+      <h2 id="set-title">设置</h2>
+      <button><svg class="icon"><use href="#i-gear"/></svg> 通用</button>
+      <button><svg class="icon"><use href="#i-file"/></svg> 外观</button>
+      <button><svg class="icon"><use href="#i-spark"/></svg> 模型</button>
+      <button><svg class="icon"><use href="#i-lock"/></svg> 权限</button>
+      <button><svg class="icon"><use href="#i-clock"/></svg> 定时任务</button>
+      <button><svg class="icon"><use href="#i-bolt"/></svg> 子代理</button>
+      <button class="on"><svg class="icon"><use href="#i-deliver"/></svg> Super Agent</button>
+      <button><svg class="icon"><use href="#i-branch"/></svg> 远程控制</button>
+    </div>
+    <div class="settings-main">
+      <div class="settings-head">
+        <div>
+          <h2>Super Agent</h2>
+          <p>把一句话需求派给独占工作区的智能体，结果回到工单里</p>
+        </div>
+        <button class="icon-btn" id="settings-close" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="settings-body">
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">默认仓库路径</div>
+            <div class="setting-help">执行器在这个仓库里建工作树。改完保存，下一张工单就用新路径。</div>
+          </div>
+          <div class="setting-control"><input class="input mono" value="D:\dsc"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">同时最多几个工单在跑</div>
+            <div class="setting-help">并发上限，1–16，默认 2。超出的工单排队等空位。</div>
+          </div>
+          <div class="setting-control"><input class="input" value="2" style="width:80px;text-align:right"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">单工单超时（秒）</div>
+            <div class="setting-help">从建单起超过这个秒数还没结束就停掉并标为失败；0 表示不限。</div>
+          </div>
+          <div class="setting-control"><input class="input" value="1800" style="width:80px;text-align:right"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">GitHub 仓库</div>
+            <div class="setting-help">写成 owner/name。填上之后，那个仓库里 @ 机器人一句就会变成一张工单；留空表示不接 GitHub。</div>
+          </div>
+          <div class="setting-control"><input class="input mono" placeholder="owner/name"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">机器人的 GitHub 登录名</div>
+            <div class="setting-help">用它跳过机器人自己发的评论。填错会把它自己的回复也当成新需求，反复派活。</div>
+          </div>
+          <div class="setting-control"><input class="input mono" placeholder="your-bot-login"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">令牌所在的环境变量</div>
+            <div class="setting-help">默认读 GITHUB_TOKEN。令牌不落盘、不写进配置文件。</div>
+          </div>
+          <div class="setting-control"><input class="input mono" value="GITHUB_TOKEN"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">飞书来源</div>
+            <div class="setting-help">打开后从飞书群和私聊收需求。默认关；关着时一个 lark-cli 子进程都不会起。</div>
+          </div>
+          <div class="setting-control"><button class="switch" role="switch" aria-checked="false" data-switch></button></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <div class="setting-label">要收的群</div>
+            <div class="setting-help">群的 chat_id（以 oc_ 开头），逗号分隔。留空就不收任何群。</div>
+          </div>
+          <div class="setting-control"><input class="input mono" placeholder="oc_…"></div>
+        </div>
+        <div class="setting-note">改完即时写入 <span class="mono">~/.dsc/settings.json</span>；这一格与插件中心里的那一份是同一个分区。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pop" id="pop" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ── 数据（静态示意）────────────────────────────────────────────────────── */
+const SESSIONS = [
+  { group: 'test-quiz-master', open: true, rows: [
+    { title: '添加api key管理界面', ago: '7天', on: true },
+    { title: '根据这两份文档，改进当前实现', ago: '11天', pin: true },
+  ]},
+  { group: 'dsc', open: true, rows: [
+    { title: '根据这两份文档，改进当前实现', ago: '14天' },
+    { title: '根据这两份文档，改进当前实现', ago: '14天' },
+  ]},
+  { group: 'waq', open: true, rows: [{ title: '整理一下记忆里的偏好', ago: '16天' }]},
+  { group: 'test', open: true, rows: [{ title: '跑一遍冒烟用例', ago: '20天' }]},
+  { group: 'deepseek-harness', open: true, rows: [{ title: '看一眼宿主日志', ago: '23天' }]},
+];
+
+const TICKETS = [
+  {
+    id: 'sa-3f21c9', title: '把设置并进设置面板', stage: 'person', action: 'review',
+    at: '11-13 14:02', ago: '1 小时前', branch: 'sa/3f21c9', files: 6, run: '6 分 12 秒',
+    body: '设置页签从 Super Agent 页里撤掉，改成宿主声明 inSettings，让它出现在设置面板里。页内的 settings.tsx 删掉，别留第二套渲染。',
+    report: '页签撤掉了，settings.tsx 一并删除；设置里多出「Super Agent」一格，字段与原来逐项一致。测试里那三条页签断言跟着改了。',
+    summary: '设置分区已挂进桌面设置面板，页内设置页签与 ui/settings.tsx 删除，测试同步。分支 sa/3f21c9 上 6 个文件待合。',
+    steps: [
+      { k: 'think', text: '先看设置分区怎么登记的：superagent/index.ts 调 registerSection 时没给第二参，所以投影出来的 builtin 是 false，而设置面板只列 builtin（ui-settings/ui/ui.tsx:213）。', secs: 11 },
+      { k: 'tool', name: 'pnpm run build', result: 'exit 0 · 18.2s' },
+      { k: 'text', text: '宿主那边只加了一个参数：`registerSection(createSettingsSection(passed), { inSettings: true })`。投影规则在 `src/packages/settings/index.ts:551`，声明之后设置里就地多一格「Super Agent」，字段由同一份 `fields()` 现算。' },
+      { k: 'tool', name: 'edit  src/packages/superagent/index.ts', result: '+1 −1' },
+      { k: 'tool', name: 'edit  src/packages/ui-superagent/ui/ui.tsx', result: '+2 −38' },
+      { k: 'text', text: '页内那个设置页组件整块删了，页签行只剩「发布 / 工单」——这两个下一步也要搬走，这一版先留着。' },
+    ],
+  },
+  {
+    id: 'sa-91be04', title: '加个 api key 管理界面', stage: 'person', action: 'answer',
+    at: '11-13 15:20', ago: '24 分钟前', branch: 'sa/91be04', files: 2, run: '2 分 40 秒',
+    body: '在设置里加一个 api key 管理界面，能增删改查，存到 ~/.dsc 下，别写进仓库。',
+    report: '先停在这里等你答。工作树在 .dsc/worktrees/sa-91be04，已经改到一半的两处提交在分支上。',
+    steps: [
+      { k: 'think', text: 'key 存哪、要不要加密，这两件事会影响依赖与迁移，先问清楚再动手。', secs: 8 },
+      { k: 'text', text: '这里有个歧义要你定：\n\n- **加密存本地**：要引一个依赖，启动时要解锁；\n- **明文存 `~/.dsc/secrets.json`**：零依赖，仓库里已有 settings.json 明文先例，但盘上可读。\n\n我倾向后者。你回一句我就按这个改。' },
+    ],
+  },
+  {
+    id: 'sa-55d7aa', title: '出站发送补上重试与退避', stage: 'working',
+    at: '11-13 15:41', ago: '3 分钟前', branch: 'sa/55d7aa', files: 3, run: '4 分 08 秒',
+    body: '出站消息失败后要重试，指数退避，最多 8 次，别把已经发出的重复发。',
+    report: '正在跑 dispatch 的用例：第 7 条断言（窗口上限 21）要对齐 StoreNotifier.remember，改完再跑一遍。',
+    steps: [
+      { k: 'think', text: '幂等键就用出站行自己的 id，重试时不变；退避 5s 起、翻倍、封顶 5 分钟。', secs: 13 },
+      { k: 'tool', name: 'edit  src/packages/superagent/adapters/dispatch.ts', result: '+42 −11' },
+      { k: 'tool', name: 'node --test tests/dispatch.test.mjs', running: true },
+    ],
+  },
+  {
+    id: 'sa-2c40e1', title: '飞书话题轮询接上了', stage: 'ended',
+    at: '11-12 18:40', ago: '昨天', branch: 'sa/2c40e1', files: 4, run: '9 分 51 秒',
+    body: '别每个话题都轮询：已结束的工单只看 14 天内的，属性写回时锚定到最新一条消息。',
+    report: 'worthPolling 先看工单还在不在、结束没结束；patchThread 只写认识的属性，重写整个话题，不认的键原样留着。',
+    summary: '话题轮询接上：只轮还活着的工单，属性写回话题，6 条用例全过。',
+    steps: [
+      { k: 'tool', name: 'node --test tests/feishu-threads.test.mjs', result: '6 pass · 0 fail' },
+      { k: 'text', text: '`worthPolling` 的判据收成两条：工单存在、且没结束。工单没了（换了仓库或清了库）就不轮，免得每 30 秒打一次空。' },
+    ],
+  },
+  {
+    id: 'sa-88f1b3', title: 'PR 接线用例补齐', stage: 'ended',
+    at: '11-11 09:12', ago: '2 天前', branch: 'sa/88f1b3', files: 1, run: '3 分 20 秒',
+    body: '给 PR 绑定补三条用例：开了 PR 的、没开的、开了又关的。',
+    report: '三条用例钉住了 bindAgentPulls 的三个分支；端到端那条仍然要真仓库，先留 TODO。',
+    summary: 'PR 接线三条用例补齐（bind.test.mjs 第 7–9 条）。',
+    steps: [
+      { k: 'tool', name: 'edit  tests/bind.test.mjs', result: '+58 −0' },
+      { k: 'tool', name: 'node --test tests/bind.test.mjs', result: '9 pass · 0 fail' },
+    ],
+  },
+  {
+    id: 'sa-10a0d4', title: 'P0 骨架与插件清单', stage: 'ended', archived: true,
+    at: '11-08 16:20', ago: '5 天前', branch: 'sa/10a0d4', files: 9, run: '12 分 04 秒',
+    body: '把插件包的骨架、清单与默认关闭的状态落下来。',
+    report: '骨架与清单落下来了，默认关。',
+    summary: 'P0 骨架、清单、默认关。',
+    steps: [{ k: 'tool', name: 'pnpm run check:plugin', result: 'exit 0' }],
+  },
+];
+
+const STAGE_LABEL = {
+  review: '等你验收', answer: '等你回答', delivery: '等你验收交付', blocked: '卡住了', failed: '失败',
+  working: '执行中', queued: '排队中', ended: '已结束',
+};
+
+const S = {
+  space: localStorage.getItem('sa-demo-space') === 'superagent' ? 'superagent' : 'workspace',
+  selected: null,
+  archivedOpen: false,
+  page: null,
+  collapsed: false,
+  tickets: TICKETS,
+};
+
+/* ── 小工具 ─────────────────────────────────────────────────────────────── */
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const alive = (t) => S.tickets.filter((x) => !x.archived);
+const stageGroup = (t) => (t.stage === 'person' ? 'person' : t.stage === 'working' ? 'working' : 'ended');
+const stageText = (t) => (t.stage === 'person' ? STAGE_LABEL[t.action] || '需要你处理' : STAGE_LABEL[t.stage] || '已结束');
+const dotClass = (t) => stageGroup(t);
+
+function toast(text) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = '<svg class="icon"><use href="#i-check"/></svg><span>' + esc(text) + '</span>';
+  $('#toasts').append(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 200ms'; setTimeout(() => el.remove(), 220); }, 2600);
+}
+
+/* ── 侧栏列表 ───────────────────────────────────────────────────────────── */
+function renderSessions() {
+  return SESSIONS.map((group) => `
+    <div class="group" data-open="${group.open ? '1' : '0'}">
+      <button class="group-row" type="button">
+        <svg class="icon chev"><use href="#i-chev-down"/></svg>
+        <svg class="icon"><use href="#i-folder"/></svg>
+        <span class="group-name">${esc(group.group)}</span>
+      </button>
+      <div class="group-body">
+        ${group.rows.map((row) => `
+          <button class="sess${row.on ? ' on' : ''}" type="button">
+            ${row.pin ? '<svg class="icon pin"><use href="#i-spark"/></svg>' : ''}
+            <span class="title-text">${esc(row.title)}</span>
+            <span class="ago">${esc(row.ago)}</span>
+          </button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function ticketRow(t) {
+  const g = stageGroup(t);
+  const canArchive = t.stage === 'ended';
+  return `
+    <div class="ticket${S.selected === t.id ? ' on' : ''}${canArchive ? ' has-archive' : ''}" data-ticket="${t.id}" role="button" tabindex="0" title="${esc(t.title)}">
+      <span class="t-title">${esc(t.title)}</span>
+      <span class="t-stage s-${g}">${esc(stageText(t))}</span>
+      <span class="t-meta">
+        <span class="dot ${g}"></span>
+        <span>${esc(t.ago)}</span>
+        <span class="sep">·</span>
+        <span class="mono" style="font-size:11px">${esc(t.branch)}</span>
+      </span>
+      ${canArchive ? `<button class="t-archive" data-archive="${t.id}" title="归档这张工单" aria-label="归档这张工单"><svg class="icon" style="width:13px;height:13px"><use href="#i-archive"/></svg></button>` : ''}
+    </div>`;
+}
+
+function renderTickets() {
+  const open = alive(S.tickets);
+  const groups = [
+    { id: 'person', label: '需要你处理', rows: open.filter((t) => stageGroup(t) === 'person') },
+    { id: 'working', label: '进行中', rows: open.filter((t) => stageGroup(t) === 'working') },
+    { id: 'ended', label: '已完成', rows: open.filter((t) => stageGroup(t) === 'ended') },
+  ];
+  const archived = S.tickets.filter((t) => t.archived);
+  let html = groups.map((g) => g.rows.length === 0 ? '' : `
+    <div class="group-label">${g.label} <span class="count">${g.rows.length}</span></div>
+    ${g.rows.map(ticketRow).join('')}`).join('');
+  if (archived.length > 0) {
+    html += `
+      <div class="group-label" style="margin-top:8px">
+        <button type="button" id="arch-toggle" style="display:inline-flex;align-items:center;gap:5px;color:inherit;font:inherit;letter-spacing:inherit">
+          <svg class="icon chev" style="width:10px;height:10px;transform:rotate(${S.archivedOpen ? 0 : -90}deg)"><use href="#i-chev-down"/></svg>
+          已归档 <span class="count">${archived.length}</span>
+        </button>
+      </div>
+      ${S.archivedOpen ? archived.map(ticketRow).join('') : ''}`;
+  }
+  if (open.length === 0 && archived.length === 0) {
+    html = '<div class="side-empty">还没有工单。右上角「发布任务」发一条试试。</div>';
+  }
+  return html;
+}
+
+/* ── 主区 ───────────────────────────────────────────────────────────────── */
+function currentTicket() {
+  return S.tickets.find((t) => t.id === S.selected) || null;
+}
+
+function renderTopRow() {
+  if (S.space === 'workspace') {
+    return `
+      <span class="title">添加api key管理界面</span>
+      <span class="pill mono"><svg class="icon"><use href="#i-branch"/></svg> feat/pluginization</span>
+      <div class="fill"></div>
+      <span class="pill">claude-sonnet-4.5</span>
+      <button class="icon-btn" title="右侧栏"><svg class="icon"><use href="#i-panel"/></svg></button>`;
+  }
+  const t = currentTicket();
+  const title = t ? t.title : '超级智能体';
+  return `
+    <span class="crumb"><svg class="icon"><use href="#i-spark"/></svg> 超级智能体 /</span>
+    <span class="title">${esc(title)}</span>
+    <div class="fill"></div>
+    <button class="btn-primary sm" id="open-publish"><svg class="icon" style="width:13px;height:13px"><use href="#i-plus"/></svg> 发布任务</button>
+    <button class="icon-btn" title="右侧栏"><svg class="icon"><use href="#i-panel"/></svg></button>`;
+}
+
+function renderSubRow() {
+  if (S.space === 'workspace') {
+    return `
+      <div class="tabs" role="tablist">
+        <button class="on" role="tab" aria-selected="true">对话</button>
+        <button role="tab" aria-selected="false">轨迹</button>
+      </div>
+      <div class="fill"></div>
+      <span class="pill"><svg class="icon"><use href="#i-branch"/></svg> 2 个文件改动</span>`;
+  }
+  const t = currentTicket();
+  if (!t) {
+    const open = alive(S.tickets);
+    return `<div class="ticket-meta"><span class="kv">${open.length} 张工单</span><span class="kv">${open.filter((x) => x.stage === 'person').length} 张需要你处理</span></div>`;
+  }
+  const g = stageGroup(t);
+  const ended = t.stage === 'ended';
+  const working = t.stage === 'working';
+  return `
+    <div class="ticket-meta">
+      <span class="chip-stage ${g}"><span class="dot ${g}"></span>${esc(stageText(t))}</span>
+      <span class="kv"><svg class="icon"><use href="#i-branch"/></svg><span class="mono" style="font-size:var(--fs-caption)">${esc(t.branch)}</span></span>
+      <span class="kv"><svg class="icon"><use href="#i-clock"/></svg>${working ? '已跑 ' : '耗时 '}${esc(t.run)}</span>
+      <span class="kv"><svg class="icon"><use href="#i-file"/></svg>${t.files} 个文件改动</span>
+    </div>
+    <div class="meta-actions">
+      <button class="btn-ghost" ${ended ? 'disabled' : ''} data-act="stop"><svg class="icon" style="width:12px;height:12px"><use href="#i-stop"/></svg>停止</button>
+      <button class="btn-ghost" ${working ? 'disabled' : ''} data-act="retry"><svg class="icon" style="width:12px;height:12px"><use href="#i-retry"/></svg>重试</button>
+      ${ended ? '<button class="btn-ghost" data-act="archive"><svg class="icon" style="width:12px;height:12px"><use href="#i-archive"/></svg>归档</button>' : ''}
+      <button class="btn-ghost danger" ${ended ? '' : 'disabled'} data-act="clean"><svg class="icon" style="width:12px;height:12px"><use href="#i-trash"/></svg>清理工作树</button>
+    </div>`;
+}
+
+function renderTranscript(t) {
+  const rows = [];
+  rows.push(`<div class="bubble-user"><span class="who">你的需求 · ${esc(t.at)}</span>${esc(t.body)}</div>`);
+
+  const proc = [];
+  for (const step of t.steps) {
+    if (step.k === 'think') {
+      proc.push(`<div class="proc-row"><svg class="icon"><use href="#i-think"/></svg><span>思考 ${step.secs} 秒</span><svg class="icon" style="width:11px;height:11px;margin-left:auto;color:var(--text-quaternary)"><use href="#i-chev-down"/></svg></div>`);
+      continue;
+    }
+    if (step.k === 'tool') {
+      const edited = step.name.startsWith('edit ');
+      const icon = edited ? '#i-file' : '#i-bolt';
+      const name = edited ? '修改了 ' + step.name.slice(5) : '运行了 ' + step.name;
+      const right = step.running
+        ? '<span class="result run"><span class="spin"></span> 运行中</span>'
+        : `<span class="result ok">${esc(step.result)}</span>`;
+      proc.push(`<div class="proc-row"><svg class="icon"><use href="${icon}"/></svg><span class="name">${esc(name)}</span>${right}</div>`);
+      continue;
+    }
+    if (step.k === 'text') {
+      const html = esc(step.text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n- /g, '\n<li>');
+      proc.push(`<div class="prose" style="padding:2px 6px"><p>${html}</p></div>`);
+    }
+  }
+  rows.push(`<div class="proc">${proc.join('')}</div>`);
+
+  if (t.summary) {
+    rows.push(`
+      <div class="card">
+        <div class="card-head">
+          <svg class="icon"><use href="#i-check"/></svg>
+          <h3>交付摘要</h3>
+          <span class="tag">${esc(t.branch)}</span>
+        </div>
+        <div class="prose">${esc(t.summary)}</div>
+      </div>`);
+  }
+  return `<div class="thread-inner">${rows.join('')}</div>`;
+}
+
+function renderWorkspaceThread() {
+  return `
+    <div class="thread-inner">
+      <div class="bubble-user"><span class="who">你 · 09:41</span>侧栏那行「工作区」挪到设置里？还是留着？</div>
+      <div class="prose">
+        <p>留着。它是侧栏的<b>位置标签</b>，不是设置项：用户在这里切「看哪个工作区」，切完才去设置里改具体参数。</p>
+        <p>要动的是它旁边的空间切换——把「工作区」和「超级智能体」摆成同一行两段按钮，下面列表跟着换。</p>
+      </div>
+      <div class="proc">
+        <div class="proc-row"><svg class="icon"><use href="#i-bolt"/></svg><span class="name">运行了 pnpm run build</span><span class="result ok">exit 0 · 12.4s</span></div>
+        <div class="proc-row"><svg class="icon"><use href="#i-think"/></svg><span>思考 6 秒</span><svg class="icon" style="width:11px;height:11px;margin-left:auto;color:var(--text-quaternary)"><use href="#i-chev-down"/></svg></div>
+      </div>
+      <div class="prose"><p>构建过了，改动落在 <code>src/packages/ui-sessions/ui/ui.tsx</code> 一处。</p></div>
+    </div>`;
+}
+
+function renderEmptySpace() {
+  return `
+    <div class="empty-space">
+      <span class="glyph"><svg class="icon" style="width:20px;height:20px"><use href="#i-spark"/></svg></span>
+      <h2>这个空间里还没有工单</h2>
+      <p>点右上角「发布任务」，把一句话需求派给执行智能体。它会在仓库里开一个独占工作树，改完把结果回到这里。</p>
+      <button class="btn-primary" id="open-publish-2"><svg class="icon" style="width:13px;height:13px"><use href="#i-plus"/></svg> 发布任务</button>
+    </div>`;
+}
+
+function renderComposer() {
+  if (S.space === 'workspace') {
+    return `
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea rows="1" placeholder="问点什么，或者说清要改哪…"></textarea>
+          <div class="composer-foot">
+            <span class="chip">claude-sonnet-4.5</span>
+            <span class="chip">工作区可写</span>
+            <span class="fill"></span>
+            <span class="hint">⏎ 发送 · ⇧⏎ 换行</span>
+            <button class="send" title="发送"><svg class="icon"><use href="#i-send"/></svg></button>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="seg-item"><svg class="icon"><use href="#i-branch"/></svg> feat/pluginization</span>
+          <span class="seg-item">2 个文件改动</span>
+          <span class="right">
+            <span class="seg-item">上下文 18%</span>
+            <span class="seg-item">1.5K tok</span>
+            <span class="demo-tag">布局示意 · 静态 demo</span>
+          </span>
+        </div>
+      </div>`;
+  }
+  const t = currentTicket();
+  return `
+    <div class="composer-wrap">
+      <div class="readonly-bar">
+        <svg class="icon"><use href="#i-lock"/></svg>
+        <span>正在查看执行智能体的会话（<b>只读</b>）：${t ? '这张工单' : '这个空间'}的输出不会发进你自己的工作区对话。</span>
+        <span class="fill"></span>
+        <button class="btn-ghost" id="back-to-workspace"><svg class="icon" style="width:12px;height:12px"><use href="#i-arrow-left"/></svg>回到我的会话</button>
+      </div>
+      <div class="statusbar">
+        <span class="seg-item"><svg class="icon"><use href="#i-branch"/></svg> ${t ? esc(t.branch) : '—'}</span>
+        <span class="seg-item">只读重放</span>
+        <span class="right">
+          <span class="seg-item">${t ? t.files + ' 个文件改动' : '—'}</span>
+          <span class="demo-tag">布局示意 · 静态 demo</span>
+        </span>
+      </div>
+    </div>`;
+}
+
+/* ── 渲染总入口 ─────────────────────────────────────────────────────────── */
+function render() {
+  const app = $('#app');
+  app.dataset.collapsed = S.collapsed ? '1' : '0';
+
+  document.querySelectorAll('[data-space]').forEach((btn) => {
+    const on = btn.dataset.space === S.space;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.nav-item').forEach((btn) => btn.classList.toggle('on', btn.dataset.page === S.page));
+
+  const needs = alive(S.tickets).filter((t) => t.stage === 'person').length;
+  const badge = $('#seg-badge');
+  badge.textContent = String(needs);
+  badge.style.display = needs > 0 ? '' : 'none';
+  const railBadge = $('#rail-badge');
+  if (railBadge) {
+    railBadge.textContent = String(needs);
+    railBadge.style.display = needs > 0 ? '' : 'none';
+  }
+  const railSpace = $('#rail-space');
+  if (railSpace) railSpace.classList.toggle('on', S.space === 'superagent');
+
+  $('#list-workspace').hidden = S.space !== 'workspace';
+  $('#list-superagent').hidden = S.space !== 'superagent';
+  $('#list-workspace').innerHTML = renderSessions();
+  $('#list-superagent').innerHTML = renderTickets();
+
+  $('#top-row').innerHTML = renderTopRow();
+  $('#sub-row').innerHTML = renderSubRow();
+  $('#thread').innerHTML = S.space === 'workspace' ? renderWorkspaceThread() : (currentTicket() ? renderTranscript(currentTicket()) : renderEmptySpace());
+  $('#composer-zone').innerHTML = renderComposer();
+
+  // 侧栏进度：工单列表滚到选中行
+  const active = document.querySelector('.ticket.on');
+  if (active && S.space === 'superagent') active.scrollIntoView({ block: 'nearest' });
+}
+
+function pickRecent() {
+  const open = alive(S.tickets);
+  return (open.find((t) => t.stage === 'person') || open.find((t) => t.stage === 'working') || open[0] || S.tickets[0] || null);
+}
+
+function enterSpace(space) {
+  S.space = space;
+  localStorage.setItem('sa-demo-space', space);
+  if (space === 'superagent' && !S.selected) S.selected = (pickRecent() || {}).id || null;
+  render();
+}
+
+/* ── 交互 ───────────────────────────────────────────────────────────────── */
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('button, [data-ticket], [data-archive], [data-act], [data-switch]');
+  if (target === null) return;
+
+  // 空间切换
+  if (target.dataset.space) { enterSpace(target.dataset.space); closePop(); return; }
+  if (target.id === 'rail-space') { enterSpace(S.space === 'superagent' ? 'workspace' : 'superagent'); return; }
+
+  // 工单选择
+  const archiveId = target.dataset.archive;
+  if (archiveId) {
+    event.stopPropagation();
+    const t = S.tickets.find((x) => x.id === archiveId);
+    if (t) {
+      t.archived = true;
+      if (S.selected === t.id) S.selected = (pickRecent() || {}).id || null;
+      render();
+      toast('已归档「' + t.title + '」');
+    }
+    return;
+  }
+  const ticketEl = target.closest('[data-ticket]');
+  if (ticketEl) { S.selected = ticketEl.dataset.ticket; render(); return; }
+
+  // 已归档折叠
+  if (target.id === 'arch-toggle') { S.archivedOpen = !S.archivedOpen; render(); return; }
+
+  // 发布
+  if (target.id === 'open-publish' || target.id === 'open-publish-2') { openPublish(); return; }
+  if (target.id === 'pub-submit') { submitPublish(); return; }
+  if (target.id === 'pub-cancel') { closePublish(); return; }
+
+  // 设置
+  if (target.id === 'open-settings' || target.id === 'rail-settings') { $('#settings-overlay').hidden = false; return; }
+  if (target.id === 'settings-close' || target.id === 'settings-overlay') { closeSettings(); return; }
+
+  // 只读条回工作区
+  if (target.id === 'back-to-workspace') { enterSpace('workspace'); return; }
+
+  // 工单动作
+  const act = target.dataset.act;
+  if (act === 'archive') {
+    const t = currentTicket();
+    if (t) { t.archived = true; S.selected = (pickRecent() || {}).id || null; render(); toast('已归档「' + t.title + '」'); }
+    return;
+  }
+  if (act === 'stop') { toast('已发送停止请求（demo 不发真请求）'); return; }
+  if (act === 'retry') { toast('已发送重试请求（demo 不发真请求）'); return; }
+  if (act === 'clean') { toast('清理会删工作树（demo 只提示）'); return; }
+
+  // 开关
+  if (target.dataset.switch !== undefined) {
+    const on = target.getAttribute('aria-checked') === 'true';
+    target.setAttribute('aria-checked', on ? 'false' : 'true');
+    return;
+  }
+
+  // 技能 / 插件整页
+  const page = target.dataset.page;
+  if (page) {
+    S.page = S.page === page ? null : page;
+    render();
+    toast(S.page === null ? '回到对话' : (page === 'skills' ? '技能中心（demo 未画）' : '插件中心（demo 未画）'));
+    return;
+  }
+
+  // 更多菜单
+  if (target.id === 'btn-more') { togglePop(target); return; }
+  if (target.closest('#pop')) { closePop(); return; }
+
+  if (target.id === 'collapse') { S.collapsed = true; render(); return; }
+  if (target.id === 'brand') { S.collapsed = false; render(); return; }
+  if (target.id === 'new-session') {
+    if (S.space !== 'workspace') { enterSpace('workspace'); }
+    toast('新会话（demo 不真的建）');
+    return;
+  }
+  if (target.id === 'btn-search') { toast('搜索（demo 未接）'); return; }
+
+  // 会话组折叠
+  const groupRow = target.closest('.group-row');
+  if (groupRow) {
+    const group = groupRow.parentElement;
+    group.dataset.open = group.dataset.open === '1' ? '0' : '1';
+    return;
+  }
+});
+
+/* 更多菜单 */
+function togglePop(button) {
+  const pop = $('#pop');
+  if (!pop.hidden) { closePop(); return; }
+  const items = S.space === 'workspace'
+    ? [
+        { icon: 'i-folder', label: '按工作区分组', check: true },
+        { icon: 'i-file', label: '平铺成单列表' },
+        { icon: 'i-clock', label: '按创建时间排序' },
+        { sep: true },
+        { icon: 'i-plus', label: '添加工作区…' },
+      ]
+    : [
+        { icon: 'i-clock', label: '按时间排序', check: true },
+        { icon: 'i-file', label: '按阶段分组', check: true },
+        { sep: true },
+        { icon: 'i-archive', label: '显示已归档工单', check: S.archivedOpen, act: 'toggle-archive' },
+      ];
+  pop.innerHTML = items.map((item) => item.sep
+    ? '<hr>'
+    : `<button type="button"${item.act ? ` data-popact="${item.act}"` : ''}>
+         <svg class="icon"><use href="#${item.icon}"/></svg>${item.label}
+         ${item.check ? '<svg class="icon check" style="width:12px;height:12px"><use href="#i-check"/></svg>' : ''}
+       </button>`).join('');
+  const rect = button.getBoundingClientRect();
+  pop.hidden = false;
+  pop.style.top = rect.bottom + 4 + 'px';
+  pop.style.left = Math.max(8, rect.right - pop.offsetWidth) + 'px';
+  pop.querySelectorAll('[data-popact]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (el.dataset.popact === 'toggle-archive') S.archivedOpen = !S.archivedOpen;
+      closePop();
+      render();
+    });
+  });
+}
+function closePop() { $('#pop').hidden = true; }
+
+/* 发布浮层 */
+function openPublish() {
+  $('#publish-overlay').hidden = false;
+  $('#pub-err').textContent = '';
+  const input = $('#pub-title-input');
+  input.value = '';
+  $('#pub-base-input').value = '';
+  $('#pub-body-input').value = '';
+  setTimeout(() => input.focus(), 30);
+}
+function closePublish() { $('#publish-overlay').hidden = true; }
+function submitPublish() {
+  const title = $('#pub-title-input').value.trim();
+  if (title === '') { $('#pub-err').textContent = '先写一个标题。'; $('#pub-title-input').focus(); return; }
+  const body = $('#pub-body-input').value.trim() || title;
+  const base = $('#pub-base-input').value.trim();
+  const id = 'sa-' + Math.random().toString(16).slice(2, 8);
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const at = `${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const ticket = {
+    id, title, stage: 'working', at, ago: '刚刚', branch: 'sa/' + id.slice(3), files: 0, run: '0 分 02 秒',
+    body: base ? body + '\n\n（起点分支：' + base + '）' : body,
+    report: '工作树已开：.dsc/worktrees/' + id + '。正在读仓库、准备第一次提交。',
+    steps: [
+      { k: 'think', text: '先把需求拆成可以验证的几步，再看这个仓库的构建与门禁怎么跑。', secs: 3 },
+      { k: 'text', text: '已接管这张工单，工作树开在 `.dsc/worktrees/' + id + '`。接下来先跑一遍构建确认基线是绿的。' },
+      { k: 'tool', name: 'pnpm run build', running: true },
+    ],
+  };
+  S.tickets.unshift(ticket);
+  S.selected = id;
+  closePublish();
+  if (S.space !== 'superagent') enterSpace('superagent'); else render();
+  toast('已派工：' + title);
+  const row = document.querySelector('.ticket.on');
+  if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 2400); }
+  const thread = $('#thread');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* 设置浮层 */
+function closeSettings() { $('#settings-overlay').hidden = true; }
+
+/* 键盘 */
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (!$('#publish-overlay').hidden) { closePublish(); return; }
+    if (!$('#settings-overlay').hidden) { closeSettings(); return; }
+    closePop();
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !$('#publish-overlay').hidden) {
+    submitPublish();
+  }
+  const focused = document.activeElement;
+  if ((event.key === 'Enter' || event.key === ' ') && focused && focused.classList && focused.classList.contains('ticket')) {
+    event.preventDefault();
+    S.selected = focused.dataset.ticket;
+    render();
+  }
+});
+$('#settings-overlay').addEventListener('click', (event) => {
+  if (event.target.id === 'settings-overlay') closeSettings();
+});
+$('#publish-overlay').addEventListener('click', (event) => {
+  if (event.target.id === 'publish-overlay') closePublish();
+});
+
+/* 起手 */
+if (S.space === 'superagent') S.selected = (pickRecent() || {}).id || null;
+render();
+setTimeout(() => toast('侧栏顶部可切换空间；点工单看只读会话；右上角发布任务'), 400);
+</script>
+</body>
+</html>

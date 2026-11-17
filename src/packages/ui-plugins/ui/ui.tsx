@@ -1010,6 +1010,39 @@ function PluginDetail({
   )
 }
 
+/** `rows` 字段的一行：列 key → 单元格文本（契约里的 `SettingsRowValue`，`@dsc/ui` 没转出，按结构取）。 */
+type RowRecord = Record<string, string>
+
+/**
+ * `rows` 的值表：契约给的是 `RowRecord[]`，但旧宿主 / 插件可能给字符串、null，
+ * 或数组里混进非对象。非数组按空表，元素不是对象就丢掉——界面永远不崩。
+ */
+function rowValuesOf(value: SettingsValue | undefined): RowRecord[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is RowRecord => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+}
+
+/** `fact` 的展示文本：只读值只认标量；宿主塞了对象 / 数组就给空串（别画成 `[object Object]`）。 */
+function factTextOf(value: SettingsValue | undefined): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+/** 改表里某一格：返回新数组，React 状态才认得出变化。 */
+function withCellValue(rows: RowRecord[], rowIndex: number, column: string, value: string): RowRecord[] {
+  return rows.map((record, index) => (index === rowIndex ? { ...record, [column]: value } : record))
+}
+
+/** 校验列的 `pattern`（字符串）：正则写坏了按通过处理（最终校验仍在宿主 save()）。 */
+function matchesPattern(pattern: string, value: string): boolean {
+  try {
+    return new RegExp(pattern).test(value)
+  } catch {
+    return true
+  }
+}
+
 /**
  * 声明式配置表单：设置面板 `GenericFields` 的同构移植（同一套 class 与提交时机：
  * 下拉/开关**选了就写**，文本框**失焦或回车才写**——避免边打字边写盘）。
@@ -1050,13 +1083,19 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       .catch(() => undefined)
   }
 
-  const commit = (key: string, value: SettingsValue): void => {
+  /**
+   * 写一个值。`optimistic` 只有记录表用：表格要跟手，先把新表放进界面再问宿主，
+   * 失败或回读之后以宿主那份为准（`reload` 会把乐观值收回去）。标量控件保持原样。
+   */
+  const commit = (key: string, value: SettingsValue, optimistic = false): void => {
     setNote(null)
+    if (optimistic) setValues((current) => ({ ...current, [key]: value }))
     void channel
       .invoke<SettingsMutation>('setSettingValue', [section.id, key, value])
       .then((result) => {
         if (!result.ok) {
           setNote({ tone: 'error', text: t('plugins.err.save', { message: humanErrorText(result.error).text }) })
+          if (optimistic) reload()
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
@@ -1064,6 +1103,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       })
       .catch((error: unknown) => {
         setNote({ tone: 'error', text: t('plugins.err.save', { message: humanErrorText(error).text }) })
+        if (optimistic) reload()
       })
   }
 
@@ -1157,6 +1197,158 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
           >
             {field.label}
           </button>
+        </div>
+      )
+    }
+    if (field.type === 'fact') {
+      // 只读事实行：值就在 values 里，缺了给占位。宿主不收它的写入，这里也不画输入框。
+      const shown = factTextOf(values[field.key])
+      return (
+        <div className="setting-row info" key={field.key}>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+          </div>
+          <div className="setting-info">
+            <span>{shown === '' ? t('plugins.config.fact.empty') : shown}</span>
+          </div>
+        </div>
+      )
+    }
+    if (field.type === 'rows') {
+      const list = rowValuesOf(values[field.key])
+      /** 草稿键前缀：按「行号 + 列 key」存；增删行时整组清掉，免得行号错位后串格。 */
+      const draftPrefix = `${field.key}#`
+      const clearDrafts = (): void => {
+        setDraft((current) => {
+          const next: Record<string, string> = {}
+          for (const [key, value] of Object.entries(current)) {
+            if (!key.startsWith(draftPrefix)) next[key] = value
+          }
+          return next
+        })
+      }
+      return (
+        <div className="setting-row" key={field.key} style={{ alignItems: 'flex-start' }}>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+          </div>
+          <div
+            className="setting-control"
+            style={{ alignItems: 'stretch', flex: '1 1 auto', gap: 8, maxWidth: '68%', minWidth: 0 }}
+          >
+            {list.length === 0 ? <div className="setting-help">{t('plugins.config.rows.empty')}</div> : null}
+            {list.map((record, rowIndex) => (
+              <div
+                key={`row-${String(rowIndex)}`}
+                style={{ alignItems: 'center', display: 'flex', gap: 6, minWidth: 0 }}
+              >
+                {field.columns.map((column) => {
+                  const cellAria = t('plugins.config.rows.cellAria', { row: String(rowIndex + 1), column: column.label })
+                  if (column.type === 'select') {
+                    const current = record[column.key] ?? ''
+                    // 宿主给了选项外的值也要看得见（与单行下拉同一条口径）。
+                    const options =
+                      current === '' || column.options.some((option) => option.value === current)
+                        ? column.options
+                        : [...column.options, { value: current, label: t('plugins.config.unrecognized', { value: current }) }]
+                    return (
+                      <select
+                        key={column.key}
+                        className="setting-input"
+                        aria-label={cellAria}
+                        style={{ flex: '0 0 auto', minWidth: 0, width: 'auto' }}
+                        value={current}
+                        onChange={(event) => {
+                          clearDrafts()
+                          commit(field.key, withCellValue(list, rowIndex, column.key, event.target.value), true)
+                        }}
+                      >
+                        {current === '' ? <option value="">{t('plugins.config.rows.pick')}</option> : null}
+                        {options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )
+                  }
+                  const draftKey = `${draftPrefix}${String(rowIndex)}#${column.key}`
+                  const stored = record[column.key] ?? ''
+                  return (
+                    <input
+                      key={column.key}
+                      className="setting-input"
+                      style={{ flex: '1 1 0', minWidth: 0 }}
+                      aria-label={cellAria}
+                      value={draft[draftKey] ?? stored}
+                      placeholder={column.placeholder}
+                      onChange={(event) => {
+                        const next = event.target.value
+                        setDraft((current) => ({ ...current, [draftKey]: next }))
+                      }}
+                      onBlur={() => {
+                        const typed = draft[draftKey] ?? stored
+                        const dropDraft = (): void => {
+                          setDraft((current) => {
+                            const next = { ...current }
+                            delete next[draftKey]
+                            return next
+                          })
+                        }
+                        if (typed === stored) {
+                          if (draft[draftKey] !== undefined) dropDraft()
+                          return
+                        }
+                        // 正则只在非空时提示性检查；最终校验在宿主 save()。
+                        if (typed !== '' && column.pattern !== undefined && !matchesPattern(column.pattern, typed)) {
+                          dropDraft()
+                          setNote({
+                            tone: 'error',
+                            text: t('plugins.config.rows.invalid', { column: column.label, value: typed }),
+                          })
+                          return
+                        }
+                        commit(field.key, withCellValue(list, rowIndex, column.key, typed), true)
+                        dropDraft()
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                      }}
+                    />
+                  )
+                })}
+                <button
+                  type="button"
+                  className="text-btn"
+                  aria-label={t('plugins.config.rows.removeTip')}
+                  data-tip={t('plugins.config.rows.removeTip')}
+                  onClick={() => {
+                    clearDrafts()
+                    commit(
+                      field.key,
+                      list.filter((_, index) => index !== rowIndex),
+                      true,
+                    )
+                  }}
+                >
+                  {t('plugins.config.rows.remove')}
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="text-btn"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => {
+                clearDrafts()
+                commit(field.key, [...list, {}], true)
+              }}
+            >
+              {t('plugins.config.rows.add')}
+            </button>
+          </div>
         </div>
       )
     }

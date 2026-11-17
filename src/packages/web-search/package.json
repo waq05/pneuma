@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/web-search",
   "version": "0.9.1",
-  "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
+  "description": "让模型上网查资料并附来源链接；默认用 DeepSeek 原生搜索，也可换 Tavily / 博查 / Serper",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -28,7 +28,7 @@
     "order": 3630,
     "resolution": "overridable",
     "title": "联网搜索",
-    "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
+    "description": "让模型上网查资料并附来源链接；默认用 DeepSeek 原生搜索，也可换 Tavily / 博查 / Serper",
     "settingsSection": "web-search",
     "toggleable": true
   },

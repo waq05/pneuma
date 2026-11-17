@@ -8,7 +8,7 @@
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 const HOME = mkdtempSync(join(tmpdir(), 'dsc-win-helpers-'))
@@ -110,13 +110,28 @@ describe('账本路径与读取', () => {
 
 describe('writeRootsFor', () => {
   test('工作区 root + 私有临时目录 temp；附加根去重且大小写不敏感', () => {
-    const roots = backend.writeRootsFor('/work/repo/', ['/work/repo', '/extra/'])
-    const rootPaths = roots.filter((item) => item.side === 'root').map((item) => item.path)
+    // 2026-11-17 起可写根先过 canonicalWriteCwd / canonicalizePath（dev 的 BUG-0004 修复：
+    // cwd 与附加根必须同一个函数、同一个 cwd 展开）。拿 `/work/repo` 这种假路径断言字面串
+    // 不再成立——规范化会把盘符相对路径折成本盘的 `D:\work\repo`。改用真目录按真实拼法比，
+    // 顺便把「尾巴多一个分隔符算同一个目录」也钉住。
+    const work = mkdtempSync(join(tmpdir(), 'dsc-writeroot-work-'))
+    const extra = mkdtempSync(join(tmpdir(), 'dsc-writeroot-extra-'))
+    const roots = backend.writeRootsFor(work + sep, [work, extra + sep])
+    const lower = (path: string): string => path.toLowerCase()
+    const rootPaths = roots.filter((item) => item.side === 'root').map((item) => lower(item.path))
     const tempPaths = roots.filter((item) => item.side === 'temp').map((item) => item.path)
-    expect(rootPaths).toEqual(['/work/repo', '/extra'])
+    // 工作区与附加根各一条：`work + sep` 与 `work` 规范化后是同一个目录，只留一条。
+    expect(rootPaths).toEqual([lower(work), lower(extra)])
     expect(tempPaths).toHaveLength(1)
     expect(tempPaths[0]).toContain('sandbox')
-    expect(new Set(roots.map((item) => item.path.toLowerCase())).size).toBe(roots.length)
+    expect(new Set(roots.map((item) => lower(item.path))).size).toBe(roots.length)
+  })
+
+  test('附加根里的相对路径按 cwd 展开，不落到宿主进程的 cwd', () => {
+    const work = mkdtempSync(join(tmpdir(), 'dsc-writeroot-rel-'))
+    const roots = backend.writeRootsFor(work, ['sub/dir'])
+    const rootPaths = roots.filter((item) => item.side === 'root').map((item) => item.path.toLowerCase())
+    expect(rootPaths).toContain(join(work, 'sub', 'dir').toLowerCase())
   })
 
   test('空附加根被忽略；每个根都有 SID 且互不相同', () => {

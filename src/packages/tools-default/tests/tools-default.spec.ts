@@ -1,7 +1,8 @@
 /**
- * @pneuma/tools-default 的包级测试：钉 6 条不变量。
+ * @pneuma/tools-default 的包级测试：钉 7 条不变量。
  * 为什么只钉这些：工具真跑要子进程与磁盘，留在集成探针里；能便宜钉住的是装配面、包形态、
- * 入口、文档，以及两个纯函数（glob 花括号展开、bash 输出截断）。
+ * 入口、文档、两个纯函数（glob 花括号展开、bash 输出截断），以及作业表的对外查询口
+ * （`ctx.jobs`，superagent 执行器靠它等 worker 回合结束后的作业）。
  * 导入面是源码入口（`../index.js` 等），不是 `lib/` 产物。
  * @module @pneuma/tools-default/tests
  */
@@ -9,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
 import { toolsDefaultPlugin } from '../index.js'
 import { expandBraces } from '../search-tools.js'
-import { truncateBashOutput } from '../bash.js'
+import { JobTable, createJobsService, truncateBashOutput } from '../bash.js'
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const pkg = JSON.parse(read('../package.json'))
@@ -65,3 +66,36 @@ test('bash 输出截断：头 60% + 尾 40%，短输出不动', () => {
   expect(out).toContain('中间省略 90 字符')
   expect(truncateBashOutput('短输出', 10)).toBe('短输出')
 })
+
+// 作业表对外查询口（backlog G3）：superagent 的执行器靠它等 worker 回合结束后的作业。
+// 钉四件事：owner 过滤、running 只列在跑的、wait 真等到结束、kill 只收在跑的。
+test(
+  'jobs 服务：owner 过滤、running、wait 等到结束、kill 幂等',
+  async () => {
+    const table = new JobTable({ notify: () => undefined })
+    const jobs = createJobsService(table)
+    const cwd = process.cwd()
+    // 两个作业分属两个会话：过滤要按 owner 分得开。命令睡 600ms，保证断言那一刻它还在跑。
+    // 用 `node -e` 而不是临时脚本：不拼路径，Windows 的 PowerShell 与 POSIX 的 sh 都能原样执行。
+    const mine = table.launch('node -e "setTimeout(()=>{},600)"', cwd, 'session-a')
+    const other = table.launch('node -e "setTimeout(()=>{},600)"', cwd, 'session-b')
+    expect(jobs.list('session-a').length, 'list 要按 owner 过滤').toBe(1)
+    expect(jobs.list('session-a')[0].id).toBe(mine)
+    expect(jobs.list('session-b')[0].id).toBe(other)
+    expect(jobs.running('session-a').length, '刚起的作业应当在 running 里').toBe(1)
+    expect(jobs.running('session-a')[0].owner, 'running 要带上 owner').toBe('session-a')
+    // kill 一个在跑的：返回 true，之后它不再出现在 running 里。
+    expect(jobs.kill(mine), '在跑的作业 kill 要返回 true').toBe(true)
+    expect(jobs.running('session-a').length, '被终止的作业不该还在 running 里').toBe(0)
+    // 再 kill 一次同一个：已经不在跑，返回 false（幂等）。
+    expect(jobs.kill(mine), 'kill 要幂等').toBe(false)
+    // wait 真等到另一个作业结束。
+    expect(await jobs.wait(other, 10_000), 'wait 应当等到作业结束').toBe(true)
+    expect(jobs.list('session-b')[0].status).toBe('completed')
+    // 没有这个作业：wait 立刻 true（没有东西可等），kill 返回 false。
+    expect(await jobs.wait('job-does-not-exist', 1000)).toBe(true)
+    expect(jobs.kill('job-does-not-exist')).toBe(false)
+  },
+  // 真起两个子进程（各自要拉起 shell），默认 5s 不够稳，与 bash-jobs.spec.ts 同一档给 30s。
+  30_000,
+)

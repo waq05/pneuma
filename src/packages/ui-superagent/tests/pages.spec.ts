@@ -18,6 +18,10 @@
  *     那要动 `ui/**` 源码（本批禁改），留作后续。
  *   换成能真验的：清单（order / ./client / toggleable）与界面半文件存在性。
  *
+ * 补记（2026-11-17 合并移植）：dev 在旧 `pages.test.mjs` 上新增了「概览页来源区块」，并把
+ * 页签用例从三页改到四页；这两条随合并丢了（页签那条原先整条被上面的迁移删掉）。按
+ * 「合并不丢断言」补回，页签那条照 dev 版保留全部断言，读源码文本只钉接线与落点。
+ *
  * @module @pneuma/ui-superagent/tests
  */
 import { existsSync, readFileSync } from 'node:fs'
@@ -76,4 +80,49 @@ test('界面半的六个文件都在', () => {
 test('可单独停用：toggleable 为真（停用它只影响这个界面单元）', () => {
   expect(pkg.pneuma.toggleable, '界面单元要能在插件中心单独停用').toBe(true)
   expect(pkg.name).toBe('@pneuma/ui-superagent')
+})
+
+test('来源：概览页底部读 surface.sources，名称按 id 取词，旧快照整块不画', () => {
+  const overview = read('../ui/overview.tsx')
+  // 数据从快照面读，不在前端再聚合一遍（与计数、最近动态同一条规矩）。
+  expect(overview, '概览页没有从 surface.sources 读来源').toMatch(/const sources = surface\.sources/)
+  // 旧快照没有这一格：整块不画，不能拿空数组冒充「有但为空」。
+  expect(overview, '旧快照缺少 sources 时仍然画了来源区块').toMatch(/sources === undefined \? null : <SourcesBlock/)
+  // 宿主只给稳定 id（契约里没有 label），显示名必须落在界面字典里。
+  for (const id of ['github', 'feishu']) {
+    expect(overview.includes(`t('superagent.overview.sources.${id}')`), `来源名称没有按 id 取词：${id}`).toBe(true)
+  }
+  // 四种状态都要画得出来：未启用 / 从未成功 / 上次轮询 / 错误原文（红色）。
+  expect(overview, '没有画「未启用」').toContain('superagent.overview.sources.disabled')
+  expect(overview, '没有画「从未成功」').toContain('superagent.overview.sources.never')
+  expect(overview, '没有画「上次轮询」').toContain('superagent.overview.sources.lastPoll')
+  expect(overview, '错误原文没有画出来').toContain('source.lastError')
+  expect(overview, '错误原文没有用红色').toContain('--dsc-red')
+
+  const state = read('../ui/state.ts')
+  // 视图层必须真把 sources 解析出来：`SuperagentView` 是逐字段挑着返回的，漏了这一步
+  // 概览页永远读到 undefined。
+  expect(state).toMatch(/sources\?: readonly SuperagentSource\[\]/)
+  expect(state).toMatch(/const sources = sourcesOf\(surface\['sources'\]\)/)
+  // 来源状态要进相等判断：工单一张没动时，错误变了页面也得重画。
+  expect(state, '来源状态没进相等判断，错误变了页面不会重画').toMatch(/sourcesFingerprint\(left\.sources\)/)
+})
+
+test('页签：四页状态是 state.ts 的模块级信号，ui.tsx 挂上四个页面组件', () => {
+  const state = read('../ui/state.ts')
+  // 页签必须活过整页卸载（app.tsx:477），所以不能是 useState。
+  expect(state).toMatch(/export type SuperagentTab =[^\n]*'overview'/)
+  expect(state).toMatch(/createSignal<SuperagentTab>\('publish'\)/)
+  expect(state).toMatch(/const selectedSignal = createSignal<string \| null>\(null\)/)
+  expect(state).toMatch(/const highlightSignal = createSignal<string \| null>\(null\)/)
+  expect(state).toMatch(/useSyncExternalStore\(tabSignal\.subscribe/)
+  // 页内位置不能落进组件 state：这里只查 import（注释里出现 useState 是在讲这条规矩）。
+  expect(/import\s*\{[^}]*\buseState\b[^}]*\}\s*from\s*'react'/.test(state), 'state.ts 不该 import useState').toBe(false)
+
+  const source = read('../ui/ui.tsx')
+  for (const name of ['OverviewPage', 'PublishPage', 'TicketsPage', 'SettingsPage']) {
+    expect(source.includes(name), `ui.tsx 没有挂 ${name}`).toBe(true)
+  }
+  // 页签按钮与上面四个组件一一对应，少一个就是有页面进不去。
+  expect((source.match(/role="tab"/g) ?? []).length, 'ui.tsx 应有四个页签按钮').toBe(4)
 })

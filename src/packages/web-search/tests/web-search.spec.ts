@@ -10,6 +10,10 @@
  * 断言它的 name / risk / parameters。
  *
  * 环境隔离：`DSC_HOME` 指到 `mkdtempSync` 的临时目录，插件配置只落在临时目录。
+ * **凭据库没有隔离**：`resolveKey` 会顺着环境变量 → `~/.dsc/credentials.yaml` →
+ * `~/.dsh/.credentials.yaml` 取 key（dev 2026-11-17 的改法）。所以「没有 key」的用例不许
+ * 靠删配置来造，必须显式把 `apiKeyEnv` 指向一个不存在的环境变量——否则默认提供方
+ * deepseek 会读到本机真实 key，用例会真的打一次外网 API。
  *
  * @module @pneuma/web-search/tests
  */
@@ -85,11 +89,6 @@ function writeConfig(config: Record<string, unknown>): void {
   )
 }
 
-/** 删掉配置：回到「没配 key」的状态。 */
-function clearConfig(): void {
-  rmSync(pluginsJson, { force: true })
-}
-
 /** 假 ctx：apply 只用这几个面；effect 真跑回调，否则工具注册根本不会发生。 */
 function applyPlugin(): Captured {
   const captured: Captured = { tools: [], prompts: [], sections: [], notices: [] }
@@ -149,17 +148,24 @@ test('插件对象：名字与它依赖的三个服务', () => {
   expect(typeof webSearchPlugin.apply).toBe('function')
 })
 
-// 第 2 条：没配 key 时工具与提示词都不在场，并给用户一条去哪儿配的提示。
-test('没配 key：不注册 web_search，提示词为空，发一条配置提示', () => {
-  clearConfig()
+// 第 2 条：没配 key 时工具**照样在场**（2026-11-17 改的口径：模型看不见的工具等于不存在，
+// 它会退回去拿 curl 抓网页，沙箱里那条路是 SEC_E_NO_CREDENTIALS，用户看到的是网络错误），
+// 提示词也照常交代怎么用；同时发一条「还没取到 key、去哪配」的提示。
+//
+// 为什么写 `apiKeyEnv: 'DSC_SPEC_MISSING_KEY'` 而不是 clearConfig()：合并 dev 后 `resolveKey`
+// 会顺着环境变量 → `~/.dsc/credentials.yaml` → `~/.dsh/.credentials.yaml` 取 key，unit 层
+// 没隔离凭据库，clearConfig() 会落到默认提供方 deepseek、读到本机真实 key 去打真 API
+// （这条用例真跑出过一次网络请求）。显式指向一个不存在的环境变量，才是「没有 key」的可复现写法。
+test('没配 key：工具与提示词仍在场，发一条去哪配的提示', () => {
+  writeConfig({ provider: 'tavily', apiKeyEnv: 'DSC_SPEC_MISSING_KEY' })
   const captured = applyPlugin()
-  expect(captured.tools).toStrictEqual([])
+  expect(captured.tools.map((tool) => tool.name)).toStrictEqual(['web_search'])
   expect(captured.notices).toHaveLength(1)
-  expect(String(captured.notices[0])).toContain('还没配搜索服务的 key')
+  expect(String(captured.notices[0])).toContain('联网搜索已启用，但还没取到 key')
   const prompt = captured.prompts.find((entry) => entry.id === 'web-search')
   expect(prompt, '提示段应当注册').toBeDefined()
-  // 没有 key 时提示词返回空串：不往系统提示里塞一段用不上的说明。
-  expect(prompt?.render()).toBe('')
+  // 提示词不再随「有没有 key」清空：工具常驻，用法说明就一直在。
+  expect(prompt?.render()).toContain('web_search')
 })
 
 // 第 3 条：配了 key 就注册工具，名字/风险/必填项与三个入参都由注册对象给出。
@@ -270,23 +276,26 @@ test('响应解析：归一成文本与来源清单，顶到上限标 truncated'
   expect(card.truncated).toBe(true)
 })
 
-// 第 8 条：调用时配置被删（用户在设置里清空了 key）→ 报错文案要指路，而不是空指针。
+// 第 8 条：调用时取不到 key（用户在设置里清空 / 环境变量没配）→ 报错文案要指路，而不是空指针。
+// 同样显式指向不存在的环境变量，理由见第 2 条：默认提供方是 deepseek，会去读本机凭据库。
 test('调用时没有 key：报错指向设置页', async () => {
-  writeConfig({ provider: 'tavily', apiKey: 'test-key' })
+  writeConfig({ provider: 'tavily', apiKeyEnv: 'DSC_SPEC_MISSING_KEY' })
+  const calls = stubFetch({ results: [] })
   const tool = webSearchTool(applyPlugin())
-  clearConfig()
-  await expect(tool.run({ query: 'pneuma' }, scope)).rejects.toThrow(/还没配 API key/)
+  await expect(tool.run({ query: 'pneuma' }, scope)).rejects.toThrow(/插件中心 → 联网搜索/)
+  // 没 key 不许出门：一次请求都不发，别把 key 缺失变成空请求。
+  expect(calls).toHaveLength(0)
 })
 
-// 第 9 条：设置分区——id/order、提供方三档、份数上下限。
-test('设置分区：id=web-search、order=46，提供方三档齐全', () => {
+// 第 9 条：设置分区——id/order、提供方四档（DeepSeek 是默认档）、份数上下限。
+test('设置分区：id=web-search、order=46，提供方四档齐全', () => {
   const captured = applyPlugin()
   const section = captured.sections[0]
   expect(section?.id).toBe('web-search')
   expect(section?.order).toBe(46)
   const fields = section?.fields() ?? []
   const provider = fields.find((field) => field.key === 'provider')
-  expect(provider?.options?.map((option) => option.value)).toStrictEqual(['tavily', 'bocha', 'serper'])
+  expect(provider?.options?.map((option) => option.value)).toStrictEqual(['deepseek', 'tavily', 'bocha', 'serper'])
   // 份数上限写死在 20：搜索 API 本身也不回更多，界面上不该让人填出无效值。
   expect(fields.map((field) => field.key)).toContain('maxResults')
 })

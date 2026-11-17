@@ -2,12 +2,12 @@
 # 稳定：端点与模型全部来自种子 config.yaml；密钥状态只看环境变量在不在（本次不设）；配置路径里的隔离 HOME 归一成 `<TMP>`，版本号归一成 `<version>`。当前会话的 git 现场也来自种子仓库（固定分支 + 固定两条未提交改动），侧栏「更改」胶囊恒出现。
 # hash：（空）
 # 计数：
-#   dom.buttons = 56
-#   dom.elements = 480
+#   dom.buttons = 57
+#   dom.elements = 485
 #   dom.inputs = 1
 #   models.page = 1
 #   models.rail = 2
-#   settings.nav = 9
+#   settings.nav = 10
 
 Pneuma
 新会话
@@ -32,6 +32,7 @@ Super Agent
 终端界面
 远程控制
 工作区
+运行日志
 关于
 设置
 模型

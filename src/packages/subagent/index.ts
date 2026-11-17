@@ -1021,6 +1021,23 @@ ${body}
       // 只是署名换成 user（队友信箱里看得出这句话是人说的）；
       // 名字不存在时返回的那句话本身就是给用户看的错误说明。
       stop: async (name: string): Promise<string> => stopTeammate(name, 'stop'),
+      // 会话级的收摊（superagent 的执行器在工单结束时调）：它派出去的队友不该继续跑，
+      // 那些队友的父会话已经没人认领了。上游同一步是 `stopSubagents`
+      //（`executor/background.ts:141-153`）。单个收不掉不影响其它的——一个失败的队友
+      // 不该把整张工单的收尾拖垮。
+      stopBySession: async (sessionId: string): Promise<string[]> => {
+        const mine = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === sessionId)
+        const names: string[] = []
+        for (const entry of mine) {
+          try {
+            stopTeammate(entry.name, 'stop')
+            names.push(entry.name)
+          } catch {
+            // 见上：一个收不掉不拦其它的。
+          }
+        }
+        return names
+      },
       message: async (name: string, text: string): Promise<string> => messageTeammate(name, text, 'user'),
       remove: async (name: string): Promise<string> => {
         // 还在干活的先停止（文件正被流式写入，删了也会被重建）；收工的才许移除
@@ -1357,13 +1374,27 @@ ${body}
       },
       risk: 'read',
       // 归属会话按这次调用算：回合可能在后台跑，`ctx.session.current()` 那时未必是它。
-      run: (args, runCtx) =>
-        runSubagent(
+      run: (args, runCtx) => {
+        // 父会话按调用方的 `sessionId` 查，查不到就报错——**绝不回落** `ctx.session.current()`。
+        //
+        // 为什么：superagent 的 worker 是执行器自己造的会话（不经常驻 agent 名册），
+        // 它调这个工具时用户可能正看着别的会话；回落等于把队友派到别人名下，
+        // 名册、额度、任务板全落到错的那条会话上（2026-11-13 查账）。查不到是配置问题，
+        // 说清楚比派错好——内核的 `ctx.agent.attach` 就是给这种会话登记用的。
+        const parent = ctx.agent.sessionById(runCtx.sessionId)
+        if (parent === undefined) {
+          throw new Error(
+            `这个会话（${runCtx.sessionId}）不在内核的会话表里，派不了队友：` +
+              '把会话登记进 ctx.agent（attach）之后再用这个工具',
+          )
+        }
+        return runSubagent(
           args,
           runCtx,
           { name: LEAD, depth: 0, background: false, sessionId: runCtx.sessionId },
-          ctx.agent.sessionById(runCtx.sessionId) ?? ctx.session.current(),
-        ),
+          parent,
+        )
+      },
     })
 
     // ── 共享任务板（原「智能体团队」插件，2026-11-06 并入本包）───────────────

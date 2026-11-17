@@ -268,6 +268,55 @@ export interface SuperagentTicketView {
   changedFiles?: string[]
   /** 最近一份 worker 报告的摘要（它说干了什么）；一次都没报过时没有这一项。 */
   summary?: string
+  /**
+   * 工单等人回答的那个问题原话（`stage.action === 'answer'` 时有）。
+   *
+   * 界面据此在回话输入框上面写清「它在问什么」；没有问题的档位不带这一项，
+   * 与「有但为空」区分开（前者整块不画）。
+   */
+  question?: string
+}
+
+/**
+ * 一个来源的轮询状态（GitHub / 飞书各一条）。
+ *
+ * **为什么没有 `label`**：快照面属于宿主侧，宿主不夹带人类语言——同一份快照要同时喂给
+ * 中文与英文界面。名称由界面按 {@link SuperagentSourceView.id} 取词（`github` / `feishu`），
+ * 认不出的 id 原样显示；将来加来源不必改契约，也不必让宿主猜界面语言。留一个没人用的
+ * `label` 字段比没有更糟：两处文案一旦不一致，谁也不知道该信哪一份。
+ */
+export interface SuperagentSourceView {
+  /** 来源 id：`github` / `feishu`。界面按它取词与排序，宿主不认识任何显示名。 */
+  id: string
+  /** 设置里开着没有（关着的来源也列出来，界面画成「未启用」）。 */
+  enabled: boolean
+  /**
+   * 上次轮询的时刻（ISO 8601）；还一轮都没跑过就没有这一项。
+   *
+   * 注意：两个适配器都在**每轮开始时**记这一笔（`github/source.ts:495`、
+   * `feishu/loops.ts:502`），失败的那一轮也会更新它。所以它不是「上次成功」，界面文案
+   * 按「上次轮询」写；要真正的「上次成功」得改适配器，或在接线层另记一笔。
+   */
+  lastPollAt?: string
+  /** 上次失败的原文；成功之后清掉。 */
+  lastError?: string
+}
+
+/**
+ * 一条设置变更（设置页「最近变更」块的一行）。对应上游管理面板的设置修订历史
+ * （`app/settings-history.ts`），按 DSC 逐字段的保存方式裁成一行一字段。
+ */
+export interface SuperagentSettingsChangeView {
+  /** 自增序号，新的在前。 */
+  version: number
+  /** 改动时间（ISO）。 */
+  at: string
+  /** 设置键（与设置分区的字段键同名；界面按 locale 的 `field.<key>.label` 显示）。 */
+  key: string
+  /** 改前值的显示形态（数组已拼成逗号分隔；缺省 = 该键此前没有）。 */
+  from?: string
+  /** 改后值的显示形态；缺省 = 回到了缺省（键被删）。 */
+  to?: string
 }
 
 /**
@@ -288,6 +337,22 @@ export interface SuperagentSurface {
   tickets: SuperagentTicketView[]
   /** 面板「最近动态」：工单结束那类通知，最旧在前（上限 20 条，由适配层截）。 */
   recent: { at: string; text: string }[]
+  /**
+   * 两个外部来源的轮询状态（GitHub / 飞书各一条，顺序固定）。
+   *
+   * **可选**：旧快照（或旧宿主）没有这一格，界面读到 `undefined` 时整块不画——
+   * 「没有这一格」与「有但为空」是两件事，不要拿空数组冒充。
+   * 关着的来源也列出来（`enabled: false`）：否则用户分不清「没配这个来源」与
+   * 「配了但令牌过期 / CLI 挂了」，而这两种情况要做的操作完全不同。
+   */
+  sources?: SuperagentSourceView[]
+  /**
+   * 设置变更历史，新的在前（最多 30 条，写入侧裁剪）。
+   *
+   * **可选**：旧快照没有这一格时界面整块不画。设置页保存成功且值真的变了才记一条，
+   * 所以空数组 = 「记起之后还没改过设置」，不是「功能没做」。
+   */
+  settingsHistory?: SuperagentSettingsChangeView[]
 }
 
 /** 发布一张工单的入参（`superagentPublish` 的唯一实参）。 */
@@ -296,8 +361,19 @@ export interface SuperagentPublishInput {
   title: string
   /** 正文 = 派给 worker 的需求原文。 */
   body: string
-  /** 工作树起点 ref；省略 = HEAD。 */
-  base?: string
+}
+
+/**
+ * 面板上回一句工单当前问题的入参（`superagentAnswer` 的唯一实参）。
+ *
+ * 为什么是「一张工单 + 一段话」而不是「线程 + 一段话」：界面上人看见的是工单，
+ * 线程是工单内部的挂接关系（哪条 issue / 哪个群），不该让界面知道。
+ */
+export interface SuperagentAnswerInput {
+  /** 要回答的工单 id。 */
+  ticketId: string
+  /** 回答正文；原样作为一条人的消息走 `Engine.receive`，与 GitHub 评论进来同一条路。 */
+  text: string
 }
 
 /** 按工单 id 操作（停 / 重试 / 清理 / 看执行会话）的入参。 */
@@ -308,7 +384,7 @@ export interface SuperagentTicketRef {
 /**
  * superagent 插件提供的服务（`ctx.superagent`）。
  *
- * 为什么这五个动作要有服务：内核的 runtime 包不能 import 插件的类，界面通道只能经
+ * 为什么这些动作要有服务：内核的 runtime 包不能 import 插件的类，界面通道只能经
  * `ctx.get('superagent')` 转发。契约声明在这里（而不是 `services/types.ts`），是因为
  * `DscRuntime` 的签名与快照面同属这一个域文件，界面侧只认这一个来源。
  */
@@ -319,6 +395,14 @@ export interface SuperagentService {
   stop(id: string): Promise<void>
   /** 重试一张失败 / 卡住的工单。 */
   retry(id: string): Promise<void>
+  /**
+   * 回答工单当前的那个问题（它停在「等你回答」时用）。
+   *
+   * 走的是与 GitHub 评论 / 飞书消息**同一条**路：造一条人的 Trigger，挂到这张工单的
+   * 线程上，交给 `Engine.receive`。所以「面板上回的话」与「来源里回的话」在核心里
+   * 没有第二条分支。
+   */
+  answer(input: SuperagentAnswerInput): Promise<void>
   /** 清理一张**已结束**工单的工作树。 */
   clean(id: string): Promise<void>
   /** 只读读一张工单的执行会话转录（不落盘、不拿写租约）。 */
@@ -377,12 +461,12 @@ export interface RuntimeSurfaces {
 }
 
 /**
- * `DscRuntime` 上的 Super Agent 通道（五个可调方法）。
+ * `DscRuntime` 上的 Super Agent 通道。
  *
  * 为什么写在这里而不是 `snapshot.ts`：`DscRuntime` 的本体在 `snapshot.ts:115`，而这份
  * 契约的改动面按分工只开 `runtime.ts`。模块增强（`declare module './snapshot.js'`）
  * 与写在原文件里对类型系统等价——`INVOKABLE_METHODS` / `bridge` 那些按 `keyof DscRuntime`
- * 推导的清单照样看得到这五条，漏一条编译就红。
+ * 推导的清单照样看得到这些方法，漏一条编译就红。
  *
  * 参数为什么是对象而不是裸字符串：界面通道的实参规格用 `json`（个数 1 / 可序列化 /
  * 长度上限），对象与裸字符串都能过校验；实现层两种形状都收（见 `packages/runtime`），
@@ -396,6 +480,12 @@ declare module './snapshot.js' {
     superagentStopTicket(input: SuperagentTicketRef | string): Promise<void>
     /** 重试一张失败 / 卡住的工单。 */
     superagentRetryTicket(input: SuperagentTicketRef | string): Promise<void>
+    /**
+     * 回答工单当前的那个问题（它停在「等你回答」时用）。
+     *
+     * 只收 `{ ticketId, text }`：不认裸字符串——「回答」是两个字段，不是一个 id。
+     */
+    superagentAnswer(input: SuperagentAnswerInput): Promise<void>
     /** 清理一张已结束工单的工作树。 */
     superagentCleanWorktree(input: SuperagentTicketRef | string): Promise<void>
     /** 只读读一张工单的执行会话转录。 */

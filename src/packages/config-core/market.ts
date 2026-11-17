@@ -46,6 +46,20 @@ const ENRICH_TIMEOUT_MS = 4_000
 const MAX_EXTRA_FILES = 40
 const MAX_FILE_BYTES = 1_500_000
 const BROWSE_CONCURRENCY = 6
+/**
+ * 浏览一个源的**总时间预算**（从发起联网算到返回，不按阶段分）。
+ *
+ * 为什么要有：GitHub 源最坏是 trees 请求等满 15 秒（FETCH_TIMEOUT_MS）再加「补描述」
+ * 的 6 秒预算（ENRICH_BUDGET_MS）≈ 21 秒，再叠上宿主序列化与界面往返，会顶到界面
+ * 30 秒的默认 invoke 超时（`src/packages/ui-runtime/ui/host-channel.ts:42`），用户看到的
+ * 就是「The operation was aborted due to timeout」红条。
+ *
+ * 做法：入口算一个截止时间，各阶段只许用剩下的时间——单个请求的超时按剩余预算收紧，
+ * GitHub 补描述到点就停。超预算时把**已经拿到的条目**交出去（目录条目带着占位描述），
+ * 不抛错：目录清单已经够用户点进去，描述在安装后本地解析。真正一条都没拿到（比如 trees
+ * 自己就超时）才走失败回退，由 browseMarketSource 决定交旧缓存还是报错。
+ */
+const BROWSE_BUDGET_MS = 15_000
 
 /** 安装所需的内部条目（UI 只看 MarketSkillView）。 */
 export interface MarketEntry {
@@ -120,6 +134,17 @@ async function fetchText(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<str
   return new TextDecoder().decode(await fetchBytes(url, {}, timeoutMs))
 }
 
+/**
+ * 这次请求还能等多久：总预算减已经花掉的时间，并且不超过单个请求的上限。
+ *
+ * 为什么要有：预算只活在 browseMarketSource 那一个截止时间上，各阶段必须自己按剩余时间
+ * 收紧超时，否则「trees 等 15 秒 + 补描述 6 秒」这种叠加还是会发生。返回 0 表示没预算了，
+ * AbortSignal.timeout(0) 会立刻中止这次请求（失败会落到旧缓存回退那一层）。
+ */
+function budgetedTimeout(deadlineAt: number): number {
+  return Math.min(FETCH_TIMEOUT_MS, Math.max(0, deadlineAt - Date.now()))
+}
+
 /** 一个条目的某个文件该从哪儿取。 */
 function fileUrl(entry: MarketEntry, relative: string): string {
   const base =
@@ -166,7 +191,7 @@ function githubHeaders(): Record<string, string> {
 }
 
 /** GitHub 源：一次递归 trees 列目录，再并发取各 SKILL.md 的 frontmatter。 */
-async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
+async function browseGitHub(source: MarketSource, deadlineAt: number): Promise<MarketEntry[]> {
   const ref = parseGitHubTree(source.url)
   if (ref === null) {
     throw new Error('源地址既不是 GitHub 目录链接，也不是 .json 索引（形如 https://github.com/owner/repo/tree/main/skills）')
@@ -174,7 +199,8 @@ async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
   const api = `https://api.github.com/repos/${ref.owner}/${ref.repo}/git/trees/${encodeURIComponent(ref.ref)}?recursive=1`
   const response = await fetch(api, {
     headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsc-skill-market', ...githubHeaders() },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    // trees 也要吃总预算：它是这条路上最长的一跳，不能按 15 秒满额等
+    signal: AbortSignal.timeout(budgetedTimeout(deadlineAt)),
   })
   if (!response.ok) {
     if (response.status === 403 || response.status === 422) {
@@ -212,8 +238,11 @@ async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
   /**
    * 补描述：拿 frontmatter 里的一句话说明。**有总预算**——到点就保留占位描述返回，
    * 不让一个挂掉的文件域名把整次浏览拖到界面超时（见 ENRICH_BUDGET_MS）。
+   *
+   * 这里再和浏览总预算取小：trees 一跳可能已经把 BROWSE_BUDGET_MS 花掉大半，
+   * 补描述只能用剩下的时间，绝不能自己再单独领 6 秒。
    */
-  const enrichDeadline = Date.now() + ENRICH_BUDGET_MS
+  const enrichDeadline = Math.min(Date.now() + ENRICH_BUDGET_MS, deadlineAt)
   const enrich = async (entry: MarketEntry, relative: string): Promise<void> => {
     const remaining = enrichDeadline - Date.now()
     if (remaining <= 0) return
@@ -260,8 +289,9 @@ async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
 }
 
 /** 索引 JSON 源。 */
-async function browseIndex(source: MarketSource): Promise<MarketEntry[]> {
-  const doc = JSON.parse(await fetchText(source.url)) as unknown
+async function browseIndex(source: MarketSource, deadlineAt: number): Promise<MarketEntry[]> {
+  // 单请求源：把总预算的剩余时间接进这次 fetch，别按满额 15 秒等
+  const doc = JSON.parse(await fetchText(source.url, budgetedTimeout(deadlineAt))) as unknown
   const list = Array.isArray(doc) ? doc : ((doc as { skills?: unknown }).skills ?? (doc as { items?: unknown }).items)
   if (!Array.isArray(list)) throw new Error('索引里找不到 skills 数组')
   const dirUrl = source.url.replace(/[^/]*$/, '')
@@ -306,8 +336,8 @@ function readText(value: unknown): string {
  * 列表已经带齐了展示要用的东西（描述、版本、下载/安装/星标），不必逐条再拉；
  * 安装时才去 `/skills/<slug>/install` 换一个 zip 的下载地址。
  */
-async function browseClawHub(source: MarketSource): Promise<MarketEntry[]> {
-  const payload = JSON.parse(await fetchText(clawHubListUrl(source.url))) as { items?: unknown }
+async function browseClawHub(source: MarketSource, deadlineAt: number): Promise<MarketEntry[]> {
+  const payload = JSON.parse(await fetchText(clawHubListUrl(source.url), budgetedTimeout(deadlineAt))) as { items?: unknown }
   const list = Array.isArray(payload.items) ? payload.items : []
   const entries: MarketEntry[] = []
   for (const raw of list) {
@@ -349,12 +379,14 @@ async function browseClawHub(source: MarketSource): Promise<MarketEntry[]> {
  * 所以没有关键词就直说，不拿空结果冒充「这个源没东西」。搜索结果只给仓库与技能名，
  * 安装时才去 GitHub 仓库里定位 `<技能名>/SKILL.md` 所在目录。
  */
-async function browseSkillsSh(source: MarketSource, query: string): Promise<MarketEntry[]> {
+async function browseSkillsSh(source: MarketSource, query: string, deadlineAt: number): Promise<MarketEntry[]> {
   const needle = query.trim()
   if (needle.length < 2) {
     throw new Error('skills.sh 只提供搜索：在上面的搜索框输入至少 2 个字符再查（它没有榜单接口）')
   }
-  const payload = JSON.parse(await fetchText(skillsShSearchUrl(source.url, needle))) as { skills?: unknown }
+  const payload = JSON.parse(
+    await fetchText(skillsShSearchUrl(source.url, needle), budgetedTimeout(deadlineAt)),
+  ) as { skills?: unknown }
   const list = Array.isArray(payload.skills) ? payload.skills : []
   const entries: MarketEntry[] = []
   for (const raw of list) {
@@ -394,39 +426,117 @@ function cachePath(key: string): string {
   return join(CACHE_DIR, `market-${createHash('sha1').update(key.trim()).digest('hex').slice(0, 16)}.json`)
 }
 
+/** 磁盘缓存的形状：写入时间 + 条目。 */
+interface MarketCacheDoc {
+  at: number
+  entries: MarketEntry[]
+}
+
+/**
+ * 读某源的磁盘缓存（**不看新鲜度**，坏文件当没有）。
+ *
+ * 为什么不在这里判 1 小时：同一份缓存有两个用途——新鲜度由调用方判（1 小时内直接返回），
+ * 联网失败时则**不限时间**拿它兜底。把「读出来」和「算不算新鲜」分开，兜底那条路
+ * 才不会再被 TTL 卡一次。
+ */
+function readMarketCache(file: string): MarketCacheDoc | null {
+  if (!existsSync(file)) return null
+  try {
+    const doc = JSON.parse(readFileSync(file, 'utf8')) as { at?: unknown; entries?: unknown }
+    if (!Array.isArray(doc.entries)) return null
+    return { at: typeof doc.at === 'number' ? doc.at : 0, entries: doc.entries as MarketEntry[] }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 写某源的磁盘缓存；写失败不影响本次浏览结果（下次重新联网而已）。
+ *
+ * 取舍（复审 P2-5）：GitHub 源的补描述被总预算截断时，条目会带着占位描述
+ * 「未提供描述，安装后本地解析」一起写进这份 1 小时缓存，**下次联网成功才补上描述**。
+ * 反过来做（条目里有占位就不写缓存）会让接下来一小时继续联网重拉，违背「缓存就是
+ * 为了不联网」的初衷；占位描述不影响安装（安装后本地解析），只在展示上少一句话。
+ */
+function writeMarketCache(file: string, entries: MarketEntry[]): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify({ at: Date.now(), entries }), 'utf8')
+  } catch {
+    // 缓存只是加速层：盘满/只读目录时不能把一次成功的浏览变成失败
+  }
+}
+
+/**
+ * `browseMarketSource` 的可选项。
+ */
+export interface BrowseMarketOptions {
+  /** true = 跳过新鲜缓存、强制联网（界面上的「刷新」）。 */
+  refresh?: boolean
+  /** 搜索型源（skills.sh）的关键词；其它源忽略。 */
+  query?: string
+  /** 覆盖总预算，只给自检/测试用；不传取 {@link BROWSE_BUDGET_MS}。 */
+  budgetMs?: number
+  /**
+   * 联网失败、回退旧磁盘缓存时回调一次原因（就是那次失败的人话说明）。
+   *
+   * 为什么要这个回调：契约 `MarketBrowseResult` 冻结、没有 stale 字段，可界面又要让人
+   * 知道「这份列表是上次缓存」。由调用方（skills 插件）把原因写进现成的 `error` 字段
+   * 做软提示；市场包自己只管联网与缓存，不产出界面文案。
+   */
+  onFallback?: (reason: string) => void
+}
+
 /**
  * 浏览一个源（1 小时内命中缓存不联网）。
  *
  * `query` 只对 skills.sh 这类**搜索型源**有意义：它的条目取决于关键词，所以缓存键
  * 要带上关键词，否则换个词查到的还是上一个词的结果。
+ *
+ * 两条兜底规则（用户 2026-11-17 报「点市场要转很久」的直接修法）：
+ *   1. 总预算 {@link BROWSE_BUDGET_MS}：从联网开始算，到点就把已经拿到的条目交出去；
+ *   2. 联网失败（超时 / HTTP 错 / 解析失败）且盘上有**该源的旧缓存**时，返回旧条目
+ *      而不是抛错——TTL 只决定「要不要再联网」，不决定「失败了还能不能用」。
+ *      搜索型源按「源 + 关键词」找缓存，换个词不会串用上一次的结果。
+ *
+ * 盘上**完全没有**缓存时才抛错：市场本来就没内容，不能让界面拿到一个空数组冒充成功。
+ *
+ * @param options.refresh - true 强制联网（界面刷新）；false/省略时 1 小时内直接用缓存
+ * @param options.query - 搜索型源的关键词
+ * @param options.budgetMs - 覆盖总预算，只给自检/测试用；不传取 BROWSE_BUDGET_MS
+ * @param options.onFallback - 回退旧缓存时回调失败原因（供界面做「显示的是上次缓存」提示）
  */
 export async function browseMarketSource(
   source: MarketSource,
-  options: { refresh?: boolean; query?: string } = {},
+  options: BrowseMarketOptions = {},
 ): Promise<MarketEntry[]> {
   const needle = (options.query ?? '').trim()
   const searchDriven = isSkillsShSource(source.url)
   const file = cachePath(searchDriven ? `${source.url}\u0000${needle}` : source.url)
-  if (options.refresh !== true && existsSync(file)) {
-    try {
-      const doc = JSON.parse(readFileSync(file, 'utf8')) as { at?: number; entries?: MarketEntry[] }
-      if (typeof doc.at === 'number' && Date.now() - doc.at < CACHE_TTL_MS && Array.isArray(doc.entries)) {
-        return doc.entries
-      }
-    } catch {
-      // 缓存坏了就重新拉
-    }
+  const cached = readMarketCache(file)
+  if (options.refresh !== true && cached !== null && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.entries
   }
-  const entries = isClawHubSource(source.url)
-    ? await browseClawHub(source)
-    : searchDriven
-      ? await browseSkillsSh(source, needle)
-      : /\.json(\?|$)/i.test(source.url.trim())
-        ? await browseIndex(source)
-        : await browseGitHub(source)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify({ at: Date.now(), entries }), 'utf8')
-  return entries
+  const deadlineAt = Date.now() + (options.budgetMs ?? BROWSE_BUDGET_MS)
+  try {
+    const entries = isClawHubSource(source.url)
+      ? await browseClawHub(source, deadlineAt)
+      : searchDriven
+        ? await browseSkillsSh(source, needle, deadlineAt)
+        : /\.json(\?|$)/i.test(source.url.trim())
+          ? await browseIndex(source, deadlineAt)
+          : await browseGitHub(source, deadlineAt)
+    writeMarketCache(file, entries)
+    return entries
+  } catch (error) {
+    // 联网失败 ≠ 市场没内容：盘上有旧清单就交旧清单，让用户先能看能装
+    if (cached !== null) {
+      // 把这次失败的人话说明交给调用方：界面用它提示「显示的是上次缓存」，而不是假装成功
+      options.onFallback?.(errText(error))
+      return cached.entries
+    }
+    throw error
+  }
 }
 
 /** zip 里一个条目解出来的文件（相对路径 + 内容）。 */

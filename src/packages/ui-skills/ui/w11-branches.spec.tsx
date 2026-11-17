@@ -3,19 +3,38 @@
  *
  * 既有 `ui.spec.tsx` 覆盖列表分组 / 筛选 / 启停 / 正文 / 市场主流程。这一份补：
  * 页条目不在前台、?skillstab=market / ?skillinstall= 两个自检钩子、市场刷新回执与失败面板、
- * 搜索型源的防抖查询、启停 / 读取 / 导入 / 安装 / 保存市场源各条失败路径、统计缺项与版本号。
+ * 搜索型源的防抖查询、离开再回来读缓存、启停 / 读取 / 导入 / 安装 / 保存市场源各条失败路径、
+ * 统计缺项与版本号。
+ *
+ * 为什么每条用例都重新求值一份 ui 模块：市场清单缓存、上次页签、预取标记都是**模块级**
+ * state（`ui.tsx` 第 133~168 行、第 151~160 行——产品里表示「一次界面会话」，离开技能页
+ * 再回来要留着）。同一个文件里共用一份模块，后一条用例就会看见前一条留下的市场缓存与
+ * 「上次停在市场」而红，红的不是产品行为。所以 beforeEach 里 `vi.resetModules()` 后
+ * 按生产壳装载插件那条路重新收下 `shell.page`；「离开再回来」那条用例故意复用同一份
+ * 模块实例，验证的正是缓存还原。
  *
  * @module dsc-ui-skills/ui/w11-branches.spec
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentType } from 'react'
-import { RuntimeProvider, setShellPage, type HostChannel } from '@dsc/ui-runtime'
 import type { UiPluginApi } from '@dsc/ui'
+import type { HostChannel } from '@dsc/ui-runtime'
 import zh from '../locale/ui.zh.json'
-import plugin from './ui.js'
 
-function skillsPage(): ComponentType {
+/** 一份新求值的界面运行时/产品或模块（`@dsc/*` 在测试里解析到 `src/**`，同样会被重载）。 */
+type RuntimeModule = typeof import('@dsc/ui-runtime')
+
+interface Session {
+  runtime: RuntimeModule
+  Page: ComponentType
+}
+
+/** 重载模块并照壳装载插件那条路收下 `shell.page` 登记的技能页。 */
+async function loadSession(): Promise<Session> {
+  vi.resetModules()
+  const runtime = await import('@dsc/ui-runtime')
+  const plugin = (await import('./ui.js')).default
   const registered: Array<{ slot: string; component: unknown }> = []
   const fakeUi = {
     slots: {
@@ -31,10 +50,11 @@ function skillsPage(): ComponentType {
   plugin.apply(fakeUi)
   const found = registered.find((item) => item.slot === 'shell.page')
   if (found === undefined) throw new Error('skills 插件没有把页面登记进 shell.page')
-  return found.component as ComponentType
+  return { runtime, Page: found.component as ComponentType }
 }
 
-const SkillsPage = skillsPage()
+/** 当前用例的模块实例（页面组件与运行时 provider 必须来自同一份，否则上下文对不上）。 */
+let session = null as unknown as Session
 
 interface SkillRow {
   name: string
@@ -138,12 +158,15 @@ function harnessOf(overrides: Record<string, unknown> = {}, nativeReply: unknown
   return { channel, calls, nativeCalls, replies }
 }
 
-const mount = (harness: Harness): ReturnType<typeof render> =>
-  render(
+const mount = (harness: Harness): ReturnType<typeof render> => {
+  const { RuntimeProvider } = session.runtime
+  const Page = session.Page
+  return render(
     <RuntimeProvider channel={harness.channel}>
-      <SkillsPage />
+      <Page />
     </RuntimeProvider>,
   )
+}
 
 const flush = (): Promise<void> =>
   act(async () => {
@@ -165,14 +188,15 @@ const MARKET = {
   ],
 }
 
-beforeEach(() => {
-  setShellPage('skills')
+beforeEach(async () => {
+  session = await loadSession()
+  session.runtime.setShellPage('skills')
   document.querySelector('.dsc-toasts')?.remove()
 })
 
 afterEach(() => {
   cleanup()
-  setShellPage(null)
+  session.runtime.setShellPage(null)
   delete (globalThis as { dscNative?: unknown }).dscNative
   vi.useRealTimers()
   window.history.replaceState({}, '', '/')
@@ -180,7 +204,7 @@ afterEach(() => {
 
 describe('页条目与自检钩子', () => {
   test('不在技能页时整页不渲染', () => {
-    setShellPage(null)
+    session.runtime.setShellPage(null)
     const { container } = mount(harnessOf())
     expect(container.textContent).toBe('')
   })
@@ -190,7 +214,10 @@ describe('页条目与自检钩子', () => {
     const harness = harnessOf({ browseMarket: MARKET })
     const { container } = mount(harness)
     await flush()
-    expect(harness.calls).toContainEqual({ method: 'browseMarket', args: ['', undefined] })
+    // 首个源只问一次：预取与「切到市场」共用同一条在途请求（同一缓存键去重），
+    // 第二个实参是搜索词（非搜索型源恒为空串，不是 undefined）。
+    const firstLoads = harness.calls.filter((call) => call.method === 'browseMarket' && call.args[0] === '')
+    expect(firstLoads).toEqual([{ method: 'browseMarket', args: ['', ''] }])
     expect(textOf(query(container, '.market-row'))).toContain('m1')
     expect(container.querySelector('.skills-scope')).toBeNull()
   })
@@ -201,6 +228,22 @@ describe('页条目与自检钩子', () => {
     mount(harness)
     await flush()
     expect(harness.nativeCalls).toContainEqual({ op: 'installMarketSkill', args: ['ClawHub', 'm1'] })
+  })
+
+  test('离开技能页再回来：上次的市场清单直接从缓存还原，首个源不再联网', async () => {
+    const harness = harnessOf({ browseMarket: MARKET })
+    const first = mount(harness)
+    await flush()
+    fireEvent.click(first.container.querySelectorAll('.skills-tabs button')[1] as HTMLElement)
+    await flush()
+    expect(harness.calls.filter((call) => call.method === 'browseMarket' && call.args[0] === '')).toHaveLength(1)
+    cleanup()
+
+    // 离开技能页 = 整页卸载；点回来 = 同一个模块实例再挂一次，市场 state 从模块级缓存还原。
+    const second = mount(harness)
+    await flush()
+    expect(textOf(query(second.container, '.market-row'))).toContain('m1')
+    expect(harness.calls.filter((call) => call.method === 'browseMarket' && call.args[0] === '')).toHaveLength(1)
   })
 })
 
@@ -220,6 +263,10 @@ describe('市场：刷新、失败与筛选', () => {
     fireEvent.click(retry)
     await flush()
     expect(harness.calls.filter((call) => call.method === 'browseMarket').length).toBeGreaterThan(before)
+    // 手动刷新才在 Toast 里回执（首次自动抓取不上 Toast，只留常驻面板）。
+    expect(textOf(document.querySelector('.dsc-toasts'))).toContain(
+      zh['toast.fetchFailed'].replace('{error}', '源超时'),
+    )
   })
 
   test('切市场时请求 reject：常驻错误面板，重试按钮带当前源', async () => {
@@ -264,7 +311,7 @@ describe('市场：刷新、失败与筛选', () => {
     expect(harness.calls.at(-1)).toMatchObject({ method: 'browseMarket', args: ['skills.sh', 'ab'] })
   })
 
-  test('市场条目：版本号与只给一项统计时只画那一项；筛不到与空市场各有文案', async () => {
+  test('市场条目：版本号与只给一项统计时只画那一项；本地筛不到给文案', async () => {
     const harness = harnessOf({ browseMarket: MARKET })
     const { container } = mount(harness)
     await flush()
@@ -279,14 +326,15 @@ describe('市场：刷新、失败与筛选', () => {
     const input = container.querySelector('.skills-search input') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'zzz' } })
     expect(textOf(query(container, '.plugins-empty'))).toBe(zh['market.noMatch'].replace('{query}', 'zzz'))
+  })
 
-    cleanup()
-    const empty = harnessOf({ browseMarket: { sources: [], source: '', items: [] } })
-    const emptyView = mount(empty)
+  test('空市场给「没解析出技能」的文案', async () => {
+    const harness = harnessOf({ browseMarket: { sources: [], source: '', items: [] } })
+    const { container } = mount(harness)
     await flush()
-    fireEvent.click(emptyView.container.querySelectorAll('.skills-tabs button')[1] as HTMLElement)
+    fireEvent.click(container.querySelectorAll('.skills-tabs button')[1] as HTMLElement)
     await flush()
-    expect(textOf(query(emptyView.container, '.plugins-empty'))).toBe(zh['market.empty'])
+    expect(textOf(query(container, '.plugins-empty'))).toBe(zh['market.empty'])
   })
 
   test('市场源展开后再点收起；保存空清单 / 浏览器无桥都给人话', async () => {
@@ -427,13 +475,18 @@ describe('启停 / 正文 / 目录与导入的失败路径', () => {
     expect(textOf(document.querySelector('.dsc-toasts'))).toContain('picker broke')
   })
 
-  test('市场安装：无桥、回执失败、成功无 notice、请求 reject', async () => {
+  test('市场安装：回执失败、成功、请求 reject 各有回执', async () => {
     const cases: Array<{ nativeReply: unknown; text: string }> = [
       { nativeReply: { ok: false }, text: zh['common.unknownReason'] },
       { nativeReply: { ok: true }, text: zh['toast.installed'].replace('{name}', 'm1') },
       { nativeReply: new Error('download broke'), text: 'download broke' },
     ]
     for (const item of cases) {
+      // 每条分支换一份新模块：上一条装成功后会把条目标成「已安装」并写回缓存，
+      // 同一份实例里下一条点按钮会被当成已装而不发请求。
+      session = await loadSession()
+      session.runtime.setShellPage('skills')
+      document.querySelector('.dsc-toasts')?.remove()
       const harness = harnessOf({ browseMarket: MARKET }, item.nativeReply)
       const { container } = mount(harness)
       await flush()
@@ -445,10 +498,11 @@ describe('启停 / 正文 / 目录与导入的失败路径', () => {
       expect(textOf(document.querySelector('.dsc-toasts'))).toContain(item.text)
       cleanup()
     }
+  })
 
-    // 浏览器无桥：安装按钮点了只报「只桌面版能做」。
-    const fallback = harnessOf({ browseMarket: MARKET })
-    const view = mount(fallback)
+  test('市场安装：浏览器无桥只报「只桌面版能做」', async () => {
+    const harness = harnessOf({ browseMarket: MARKET })
+    const view = mount(harness)
     await flush()
     fireEvent.click(view.container.querySelectorAll('.skills-tabs button')[1] as HTMLElement)
     await flush()

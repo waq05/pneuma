@@ -28,7 +28,6 @@ import { quoteForCmd } from './shell-quote.js'
 import { redact } from './redact.js'
 import { splitSegments } from './command-policy.js'
 import { isInsideCwd } from './path-policy.js'
-import { slugOf } from '../packages/superagent/adapters/worktree.js'
 
 describe('属性：clampInt 的上下界与幂等', () => {
   test('有限数 → 落在 [min, max] 内的整数，再夹一次不变', () => {
@@ -174,32 +173,6 @@ describe('属性：isInsideCwd 的包含关系', () => {
       fc.property(segments, (parts) => {
         const root = resolve('/dsc-property-root')
         expect(isInsideCwd(root, join(root, `..${parts[0]}`))).toBe(true)
-      }),
-    )
-  })
-})
-
-describe('属性：slugOf 的字符集与幂等', () => {
-  test('输出的字符集只含 [A-Za-z0-9._-]，非空，且能当文件名用', () => {
-    fc.assert(
-      fc.property(fc.string(), (value) => {
-        const slug = slugOf(value)
-        expect(slug).toMatch(/^[A-Za-z0-9._-]+$/)
-        // 头尾不许是 `.`/`-`：Windows 会吞尾点，git 不许 ref 以点结尾。
-        expect(slug.startsWith('.')).toBe(false)
-        expect(slug.startsWith('-')).toBe(false)
-        expect(slug.endsWith('.')).toBe(false)
-        expect(slug.endsWith('-')).toBe(false)
-        expect(slug.length).toBeLessThanOrEqual(60)
-      }),
-    )
-  })
-
-  test('幂等：slug 再过一遍不变（拿 slug 当 name 再调一次是安全的）', () => {
-    fc.assert(
-      fc.property(fc.string(), (value) => {
-        const once = slugOf(value)
-        expect(slugOf(once)).toBe(once)
       }),
     )
   })
