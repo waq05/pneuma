@@ -17348,3 +17348,19 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
 
 **留下的一句**：junction 会话规范化之后，旧的原串哈希 temp 目录没人再派生得出来，能力 ACE
 等于惰性残留，由清扫按 24 小时龄回收；每个 junction 会话多一个空目录，可以接受。
+
+
+### 2026-11-17 复核第四轮：连「临时目录显示口径」一起收口（BUG-0005）
+
+**复核说了什么**：`--temp` 与授权那条 temp 根已经同源、`revokeWrite` 回收的也是同一条，可以合并；
+只剩一个老账——策略层（`sandbox/index.ts:224`）按**会话 id** 算私有临时目录，界面上显示的、
+策略层放行的都是那个目录，而子进程真正的 `TMP/TEMP` 是规范化 cwd 的哈希目录。
+
+**为什么顺手并掉**：这跟 BUG-0004 是同一类病（两层各算一遍路径），只是这次错在显示与放行那一侧，
+不影响强制，所以记 P3。一行改动、加一条判据就能收口，留着只会让后来人再查一遍。
+
+**改法**：插件层改用后端导出的 `canonicalWriteCwd`（[index.ts:224](src/packages/sandbox/index.ts#L224)），
+`currentSessionId` 这个帮手随之删掉。现在「策略层放行 / 界面显示 / 后端授权 / 子进程 TMP」四者同一个路径。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据
+「插件层算的私有临时目录 = 后端授权的那条 temp 根」。

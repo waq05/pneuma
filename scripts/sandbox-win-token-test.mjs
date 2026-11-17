@@ -810,6 +810,16 @@ async function runRelativeExtraRootCase(backend) {
     `围栏可写根=${policy.roots.join('、')}`,
   )
 
+  // 插件层（sandbox/index.ts）算的私有临时目录必须与后端授的那条是同一条，
+  // 否则策略层放行一个目录、ACL 授的是另一个，设置里显示的也是那个没人写的目录（BUG-0005）。
+  const pluginTemp = policyMod.sandboxTmpDir(join(sandboxRoot, '.dsc'), backend.canonicalWriteCwd(workspace))
+  const tokenTemp = roots.find((root) => root.side === 'temp')
+  check(
+    '插件层算的私有临时目录 = 后端授权的那条 temp 根',
+    tokenTemp !== undefined && pluginTemp.toLowerCase() === tokenTemp.path.toLowerCase(),
+    `插件层=${pluginTemp}；后端=${tokenTemp === undefined ? '(无)' : tokenTemp.path}`,
+  )
+
   // 规范化不通过的那类（8.3 短名、盘符不存在）与策略层同口径：不加这条根。
   // 否则策略层已经把这条记进 problems 并拒绝写，后端却还去授权，失败一次就把整条后端降级。
   const badRoots = backend.writeRootsFor(workspace, ['PROGRA~1'])

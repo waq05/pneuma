@@ -190,8 +190,11 @@ export interface SandboxWriteRoot {
  *
  * 契约上 `cwd` 是绝对路径；万一给了相对路径（调用方 bug），**不规范化**、原样返回——
  * 别拿它同时当 raw 与 base 拼出 `work\work` 这种二次拼接。
+ *
+ * 导出给插件层（`sandbox/index.ts` 算私有临时目录）用：策略层显示与放行的临时目录，
+ * 必须和这里授权的、以及 `--temp` 交给子进程的是同一条。
  */
-function canonicalWriteCwd(cwd: string): string {
+export function canonicalWriteCwd(cwd: string): string {
   const trim = (path: string): string => path.replace(/[\\/]+$/, '')
   const raw = trim(cwd)
   if (!isAbsolute(raw)) return raw
