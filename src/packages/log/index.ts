@@ -343,7 +343,10 @@ export const logPlugin: Plugin.Object = {
       },
     }
 
-    const offSection = ctx.settings.registerSection(section)
+    // inSettings：桌面端设置页只列「内置分区 + 显式声明进来的插件分区」。不声明的分区
+    // 只活在终端里，而 `.dsc` 里那份 README 说的是「设置 → 运行日志」——不声明就等于
+    // 文档里写了、界面上点不到（2026-11-17 修 BUG-0003）。
+    const offSection = ctx.settings.registerSection(section, { inSettings: true })
 
     // ── 6. 卸载 ───────────────────────────────────────────────────────────────
 
