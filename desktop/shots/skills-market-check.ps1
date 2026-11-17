@@ -1,7 +1,8 @@
 # 技能页「市场」专项自检（2026-11-17）：用户报的三个问题的界面侧硬验收。
 #
-# 用**本地慢源**（scripts/_market-local-slow.mjs：/index.json 故意晚 800ms 才回、每命中一次
-# 计数 +1、/hits 回读数）跑真桌面壳，验的是「不联网」这件事在时序上真的成立，而不是读源码猜：
+# 用**本地慢源**（scripts/_market-local-slow.mjs：/index.json 故意晚 800ms 才回，每次命中
+# 往命中日志追加一行毫秒时间戳）跑真桌面壳，验的是「不联网」这件事在时序上真的成立，
+# 而不是读源码猜（页面有 CSP，渲染进程读不到慢源的 /hits，所以读数走服务端日志 + PS 侧时间窗）：
 #   ① 首次点「市场」tab 出条目（≤8s，本地源延迟 800ms），并停在市场列表截图；
 #   ② 离开技能页再回来：点「市场」tab 到首条 .market-row 出现的耗时 ≤300ms，且 /index.json
 #      命中次数前后一致（N2 === N1）——证明是客户端模块缓存命中，不是又一次网络；
@@ -37,6 +38,9 @@ $swLogDir = Join-Path $swHome 'logs'
 $swOutDir = Join-Path $swShots 'out'
 $swShot1 = Join-Path $swOutDir 'skills-market-list.png'
 $swShot2 = Join-Path $swOutDir 'skills-market-skillssh.png'
+# 慢源的命中日志：每打一次 /index.json 追加一行带毫秒时间戳。页面里有 CSP，渲染进程 fetch
+# 不到这个回环端口（第一轮实测 hits 全是 null），所以命中次数改由 PS 侧读日志、按时间窗判。
+$swHitsLog = Join-Path $swLogDir 'market-hits.jsonl'
 $swMarketPort = 17461
 # 真实用户的 ~/.dsc：必须在覆盖 USERPROFILE 之前取。
 $swRealDsc = Join-Path $env:USERPROFILE '.dsc'
@@ -68,12 +72,42 @@ function Get-DirFingerprint([string]$Path) {
   return [pscustomobject]@{ Count = $files.Count; ContentDigest = $contentDigest; Locked = $locked; Lines = $lines }
 }
 
+# ── 命中日志读数：慢源每打一次 /index.json 追加一行 { at, path } ────────────────
+# 为什么不用页面里 fetch('/hits')：界面页有 CSP，渲染进程连不到这个回环端口（第一轮实测
+# hits 全是 null）；服务端写日志、PS 侧按 eval 记下的毫秒时间窗数，才拿得到确定读数。
+function Read-HitTimes([string]$Path) {
+  $times = New-Object System.Collections.Generic.List[double]
+  if (-not (Test-Path -LiteralPath $Path)) { return $times }
+  foreach ($line in Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue) {
+    if ($line.Trim() -eq '') { continue }
+    try {
+      $doc = $line | ConvertFrom-Json
+      if ($null -ne $doc.at) { [void]$times.Add([double]$doc.at) }
+    } catch {
+      # 半行/坏行不算读数：宁可少算一次，也不让解析错误变成「命中为 0」
+    }
+  }
+  return $times
+}
+
+# 时间戳 ≤ 某时刻的命中次数（「到这一刻为止一共联网几次」）。
+function Count-HitsUpTo($Times, [double]$To) {
+  return @($Times | Where-Object { $_ -le $To }).Count
+}
+
+# 时间窗内的命中次数（「这段操作里有没有联网」）。
+function Count-HitsBetween($Times, [double]$From, [double]$To) {
+  return @($Times | Where-Object { $_ -ge $From -and $_ -le $To }).Count
+}
+
 # ── 种子：隔离 home 里一个工作目录 + 一条会话 + desktop.json + 两条市场源 ────────
 Remove-Item -Recurse -Force -LiteralPath $swHome -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $swDsc | Out-Null
 New-Item -ItemType Directory -Force -Path $swWork, $swLogDir, $swOutDir | Out-Null
 # 旧图先删：否则「截图存在且非空」会被上一轮留下的文件骗过（本轮就踩过这个坑）。
 Remove-Item -LiteralPath $swShot1, $swShot2 -ErrorAction SilentlyContinue
+# 命中日志也先删：N1/N2 必须是这次运行的读数。
+Remove-Item -LiteralPath $swHitsLog -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path (Join-Path $swHome 'AppData\Roaming') | Out-Null
 
 # 会话目录名 = cwd 的 `[\\/:]+` → '-'（core/session.ts）。
@@ -116,8 +150,6 @@ $swEval1 = @'
     return null;
   };
   const out = {};
-  const hitsUrl = 'http://127.0.0.1:__PORT__/hits';
-  const readHits = () => fetch(hitsUrl).then((res) => res.json()).then((doc) => doc.hits).catch(() => null);
   try {
     await waitFor(() => { const root = document.querySelector('#root'); return root !== null && root.children.length > 0; }, 25000);
     await wait(2200);
@@ -170,9 +202,9 @@ $swEval1 = @'
     if (marketTab !== null) marketTab.click();
     const firstRow = await waitFor(() => document.querySelector('.market-row'), 12000);
     out.firstOpenMs = Math.round(performance.now() - firstStart);
+    out.t = { firstRowAt: Date.now() };
     out.firstRows = document.querySelectorAll('.market-row').length;
     out.firstRowText = firstRow === null ? null : (firstRow.textContent ?? '').trim();
-    out.hitsAfterFirst = await readHits();
 
     // ② 离开技能页（再点一次「技能」回对话页）再回来：缓存命中应秒开且不再打源
     clickNav('技能');
@@ -182,13 +214,14 @@ $swEval1 = @'
     await waitFor(() => document.querySelector('.skills') !== null, 10000);
     await wait(400);
     const secondStart = performance.now();
+    out.t.secondOpenStart = Date.now();
     const marketTabAgain = tabByText('市场');
     if (marketTabAgain !== null) marketTabAgain.click();
     const secondRow = await waitFor(() => document.querySelector('.market-row'), 5000);
     out.secondOpenMs = secondRow === null ? null : Math.round(performance.now() - secondStart);
+    out.t.secondRowAt = Date.now();
     out.secondRows = document.querySelectorAll('.market-row').length;
     out.secondRowText = secondRow === null ? null : (secondRow.textContent ?? '').trim();
-    out.hitsAfterSecond = await readHits();
     // 收尾就停在市场列表：Run 1 的截图拍这个态
     out.endPhase = 'market-list';
   } catch (error) {
@@ -209,8 +242,6 @@ $swEval2 = @'
     return null;
   };
   const out = {};
-  const hitsUrl = 'http://127.0.0.1:__PORT__/hits';
-  const readHits = () => fetch(hitsUrl).then((res) => res.json()).then((doc) => doc.hits).catch(() => null);
   try {
     await waitFor(() => { const root = document.querySelector('#root'); return root !== null && root.children.length > 0; }, 25000);
     await wait(2200);
@@ -238,13 +269,14 @@ $swEval2 = @'
     const firstRow = await waitFor(() => document.querySelector('.market-row'), 12000);
     out.marketReady = firstRow !== null;
     out.marketRows = document.querySelectorAll('.market-row').length;
-    out.hitsBefore = await readHits();
+    out.t = { marketLoadedAt: Date.now() };
 
     // ④ 点 skills.sh chip：不该发请求，只出中性提示、把光标放进搜索框
     const chips = [...document.querySelectorAll('.market-sources .source-chip')];
     const chip = chips.find((button) => (button.textContent ?? '').trim() === 'skills.sh');
     out.chipLabels = chips.map((button) => (button.textContent ?? '').trim());
     out.chipFound = chip !== undefined;
+    out.t.chipClickAt = Date.now();
     if (chip !== undefined) chip.click();
     await wait(600);
     const hint = document.querySelector('.market-hint');
@@ -263,10 +295,25 @@ $swEval2 = @'
       activeInSearch: input !== null && document.activeElement === input,
       placeholder: input === null ? null : input.getAttribute('placeholder'),
       rows: document.querySelectorAll('.market-row').length,
-      hitsBefore: out.hitsBefore,
-      hitsAfter: await readHits(),
     };
+    out.t.chipDoneAt = Date.now();
     out.endPhase = 'skillssh';
+
+    // 截图前的稳定性采样：从点完 chip 到截图之间（约 20 秒）每 500ms 记一次「还停在 skills.sh 态吗」。
+    // 为什么要有：本轮实测出现过「eval 里 .market-hint 明明在、截图却是对话页」——要么页面被谁
+    // 切回对话页、要么 capturePage 拿到了旧帧。采样把这两种情况分开，读数留在 JSON 里。
+    out.stability = [];
+    for (let i = 0; i < 44; i += 1) {
+      out.stability.push({
+        at: Date.now(),
+        skills: document.querySelector('.skills') !== null,
+        hint: document.querySelector('.market-hint') !== null,
+        rows: document.querySelectorAll('.market-row').length,
+      });
+      await wait(500);
+    }
+    out.finalState = out.stability[out.stability.length - 1];
+    out.stabilityOk = out.stability.every((sample) => sample.skills && sample.hint);
   } catch (error) {
     out.error = (error && error.message) || String(error);
   }
@@ -301,7 +348,11 @@ function Invoke-ShotRun {
   Remove-Item -LiteralPath $outLog, $errLog -ErrorAction SilentlyContinue
   Write-Host ("── 启动 {0}：截图 {1}（eval 提前 {2}ms，截图延迟 {3}ms）" -f $Name, (Split-Path -Leaf $Shot), $Lead, $Delay)
 
-  $proc = Start-Process -FilePath $swElectron -ArgumentList $swEntry -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  # 关掉 GPU 合成再开壳：这台机器的 GPU 合成不稳（本轮与上一轮都见过
+  # `GPU state invalid after WaitForGetOffsetInRange` 与 `Current display surface not available
+  #  for capture`），表现为 capturePage 偶尔拿到旧帧（DOM 已是市场列表、图还是对话页）。
+  # 自检截图要的是「确定性的一帧」，软件合成足够，也免得把 GPU 抖动记成界面缺陷。
+  $proc = Start-Process -FilePath $swElectron -ArgumentList @($swEntry, '--disable-gpu') -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
   $deadline = (Get-Date).AddSeconds([Math]::Ceiling($Delay / 1000) + 90)
   while ((Get-Date) -lt $deadline) {
     if ($proc.HasExited) { break }
@@ -364,8 +415,12 @@ try {
   Write-Output '=== 真实 ~/.dsc 跑前指纹 ==='
   $swBefore = Get-DirFingerprint $swRealDsc
   Write-Output ("文件数 {0}（锁定 {1}）· 内容聚合 {2}" -f $swBefore.Count, $swBefore.Locked, $swBefore.ContentDigest)
+  # 本次运行到底有没有往真实 home 写东西，另留三条「表征」证据（不依赖全量指纹，
+  # 因为并行会话会写 audit/usage/checkpoints，全量指纹在不同步的环境里判不了）。
+  $swRealDesktopPath = Join-Path $swRealDsc 'desktop.json'
+  $swRealDesktopBefore = if (Test-Path -LiteralPath $swRealDesktopPath) { Get-Content -LiteralPath $swRealDesktopPath -Raw } else { $null }
 
-  $swServerProc = Start-Process -FilePath 'node' -ArgumentList "$swServerScript $swMarketPort" -PassThru -RedirectStandardOutput $swServerLog -RedirectStandardError $swServerErr
+  $swServerProc = Start-Process -FilePath 'node' -ArgumentList "$swServerScript $swMarketPort $swHitsLog" -PassThru -RedirectStandardOutput $swServerLog -RedirectStandardError $swServerErr
   $swServerReady = $false
   for ($i = 0; $i -lt 40; $i += 1) {
     try {
@@ -382,8 +437,10 @@ try {
   # Run 1：eval 在截图前 30s 开始跑、截图在 did-finish-load 后 55s —— eval 正常 ~8s，
   # 打不开技能页会 fail-fast（≤7s），所以 25s 余量足够，也不会把对话页拍进去。
   $swR1 = Invoke-ShotRunWithRetry -Eval $swEval1 -Shot $swShot1 -Name 'run1-market' -Lead 30000 -Delay 55000
-  # Run 2：只走一次市场 + 点一个 chip；截图停在 skills.sh 搜索态。
-  $swR2 = Invoke-ShotRunWithRetry -Eval $swEval2 -Shot $swShot2 -Name 'run2-skillssh' -Lead 20000 -Delay 42000
+  $swHits1 = @(Read-HitTimes $swHitsLog)
+  # Run 2：点完 skills.sh chip 后在页面里采样 ~22s 直到截图前，确认截图拍的就是 skills.sh 态。
+  $swR2 = Invoke-ShotRunWithRetry -Eval $swEval2 -Shot $swShot2 -Name 'run2-skillssh' -Lead 30000 -Delay 62000
+  $swHits2 = @(Read-HitTimes $swHitsLog)
 } finally {
   Remove-Item Env:DSC_DESKTOP_SHOT, Env:DSC_DESKTOP_SHOT_DELAY, Env:DSC_DESKTOP_SHOT_EVAL_LEAD,
     Env:DSC_DESKTOP_SHOT_EVAL, Env:DSC_DESKTOP_SHOT_TOPMOST, Env:DSC_DESKTOP_USER_DATA,
@@ -412,10 +469,16 @@ if ($null -ne $swR1) {
   Check '已安装 tab 按钮里仍有 .count（只删了市场那个）' ($null -ne $swR1.tabCounts -and $swR1.tabCounts.installed -ge 1) (("tabTexts=" + ($swR1.tabTexts -join '|') + ' / ' + ($swR1.tabCounts | ConvertTo-Json -Compress)))
   Check '首次点市场 tab 出条目（≤8000ms，本地源延迟 800ms）' ($null -ne $swR1.firstOpenMs -and $swR1.firstOpenMs -le 8000 -and $swR1.firstRows -ge 1) ("firstOpenMs=$($swR1.firstOpenMs) rows=$($swR1.firstRows)")
   Check '首条逻辑上是本地慢源的技能' ($null -ne $swR1.firstRowText -and ([string]$swR1.firstRowText).Contains('slow-skill')) ([string]$swR1.firstRowText)
-  Check '首次加载确实打过源（命中 ≥1，后面的「不再联网」才有意义）' ($null -ne $swR1.hitsAfterFirst -and $swR1.hitsAfterFirst -ge 1) ("hits=$($swR1.hitsAfterFirst)")
+  # 命中次数从慢源日志按 eval 记下的毫秒时间戳数：N1 = 首条出现前联网几次；N2 = 二次打开后
+  # 累计几次；二次窗口内必须是 0。这样「缓存命中、没走网络」有服务端证据，不靠界面自述。
+  $swT = if ($null -ne $swR1) { $swR1.t } else { $null }
+  $swN1 = if ($null -ne $swT) { Count-HitsUpTo $swHits1 ([double]$swT.firstRowAt) } else { 0 }
+  $swN2 = if ($null -ne $swT) { Count-HitsUpTo $swHits1 ([double]$swT.secondRowAt) } else { 0 }
+  $swSecondWindow = if ($null -ne $swT) { Count-HitsBetween $swHits1 ([double]$swT.secondOpenStart - 20) ([double]$swT.secondRowAt + 20) } else { -1 }
+  Check '首次加载确实打过源（N1 ≥ 1，后面的「不再联网」才有意义）' ($null -ne $swT -and $swN1 -ge 1) ("N1=$swN1 本次总命中=$($swHits1.Count) t=$($swT | ConvertTo-Json -Compress)")
   Check '离开技能页再回来：市场条目 ≤300ms 出现（客户端缓存命中）' ($null -ne $swR1.secondOpenMs -and $swR1.secondOpenMs -le 300) ("secondOpenMs=$($swR1.secondOpenMs) rows=$($swR1.secondRows)")
-  Check '二次打开时 /index.json 命中次数没有增加（真的没走网络）' ($null -ne $swR1.hitsAfterFirst -and $null -ne $swR1.hitsAfterSecond -and $swR1.hitsAfterSecond -eq $swR1.hitsAfterFirst) ("N1=$($swR1.hitsAfterFirst) N2=$($swR1.hitsAfterSecond)")
-  Write-Output ("  读数：首次 {0}ms / 二次 {1}ms / 命中 {2} → {3}" -f $swR1.firstOpenMs, $swR1.secondOpenMs, $swR1.hitsAfterFirst, $swR1.hitsAfterSecond)
+  Check '二次打开期间 /index.json 命中 0 次（N2 = N1，真的没走网络）' ($null -ne $swT -and $swN2 -eq $swN1 -and $swSecondWindow -eq 0) ("N1=$swN1 N2=$swN2 二次窗口内=$swSecondWindow")
+  Write-Output ("  读数：首次 {0}ms / 二次 {1}ms / 命中 N1={2} N2={3}（二次窗口内 {4} 次）/ 本次总命中 {5}" -f $swR1.firstOpenMs, $swR1.secondOpenMs, $swN1, $swN2, $swSecondWindow, $swHits1.Count)
 }
 $swShot1Info = if (Test-Path -LiteralPath $swShot1) { Get-Item -LiteralPath $swShot1 } else { $null }
 Check '截图 1（市场列表）存在且非空' ($null -ne $swShot1Info -and $swShot1Info.Length -gt 10000) ("$swShot1 -> $(if ($null -eq $swShot1Info) { '缺失' } else { $swShot1Info.Length.ToString() + ' 字节' })")
@@ -430,8 +493,13 @@ if ($null -ne $swR2) {
   Check '红条 .settings-note.error 不出现' ($null -ne $swR2.skillssh -and $swR2.skillssh.errorBarShown -eq $false) ([string]$swR2.skillssh.errorText)
   Check '搜索输入框可见（skills.sh 的取词入口保留）' ($null -ne $swR2.skillssh -and $swR2.skillssh.inputVisible -eq $true) ([string]$swR2.skillssh.placeholder)
   Check '点 skills.sh 后列表不再显示其它源的条目（点源没发请求、也没残留旧列表）' ($null -ne $swR2.skillssh -and $swR2.skillssh.rows -eq 0) ("rows=$($swR2.skillssh.rows)")
-  Check '点 skills.sh chip 没有触发 /index.json（命中次数前后一致）' ($null -ne $swR2.skillssh -and $null -ne $swR2.skillssh.hitsBefore -and $null -ne $swR2.skillssh.hitsAfter -and $swR2.skillssh.hitsAfter -eq $swR2.skillssh.hitsBefore) ("before=$($swR2.skillssh.hitsBefore) after=$($swR2.skillssh.hitsAfter)")
-  Write-Output ("  读数：提示「{0}」/ 焦点在搜索框={1} / 命中 {2} → {3}" -f $swR2.skillssh.hintText, $swR2.skillssh.activeInSearch, $swR2.skillssh.hitsBefore, $swR2.skillssh.hitsAfter)
+  $swT2 = if ($null -ne $swR2) { $swR2.t } else { $null }
+  $swChipBefore = if ($null -ne $swT2) { Count-HitsUpTo $swHits2 ([double]$swT2.chipClickAt) } else { 0 }
+  $swChipAfter = if ($null -ne $swT2) { Count-HitsUpTo $swHits2 ([double]$swT2.chipDoneAt) } else { -1 }
+  $swChipWindow = if ($null -ne $swT2) { Count-HitsBetween $swHits2 ([double]$swT2.chipClickAt - 20) ([double]$swT2.chipDoneAt + 20) } else { -1 }
+  Check '点 skills.sh chip 没有触发 /index.json（窗口内 0 次、前后读数一致）' ($null -ne $swT2 -and $swChipWindow -eq 0 -and $swChipAfter -eq $swChipBefore) ("before=$swChipBefore after=$swChipAfter 窗口内=$swChipWindow")
+  Write-Output ("  读数：提示「{0}」/ 焦点在搜索框={1} / 命中 before={2} after={3}（点 chip 窗口内 {4} 次）" -f $swR2.skillssh.hintText, $swR2.skillssh.activeInSearch, $swChipBefore, $swChipAfter, $swChipWindow)
+  Check 'Run 2 从点完 chip 到截图前一直停在 skills.sh 态（采样覆盖，页面没被切回对话页）' ($swR2.stabilityOk -eq $true -and $null -ne $swR2.finalState -and $swR2.finalState.skills -eq $true -and $swR2.finalState.hint -eq $true) ("samples=$(if ($null -eq $swR2.stability) { 0 } else { @($swR2.stability).Count }) final=$(if ($null -eq $swR2.finalState) { 'null' } else { $swR2.finalState | ConvertTo-Json -Compress })")
 }
 $swShot2Info = if (Test-Path -LiteralPath $swShot2) { Get-Item -LiteralPath $swShot2 } else { $null }
 Check '截图 2（skills.sh 搜索态）存在且非空' ($null -ne $swShot2Info -and $swShot2Info.Length -gt 10000) ("$swShot2 -> $(if ($null -eq $swShot2Info) { '缺失' } else { $swShot2Info.Length.ToString() + ' 字节' })")
@@ -446,6 +514,17 @@ else { Write-Output ("差异行：{0} 条" -f @($swDiff).Count); $swDiff | Selec
 Check '真实 ~/.dsc 零污染（文件数 + 内容聚合一致）' ($swBefore.Count -eq $swAfter.Count -and $swBefore.ContentDigest -eq $swAfter.ContentDigest)
 $swRealExists = Test-Path -LiteralPath $swRealDsc
 Check '真实 ~/.dsc 存在时确实扫到了文件（指纹不是空转）' ((-not $swRealExists) -or $swBefore.Count -ge 1) ("exists=$swRealExists count=$($swBefore.Count)")
+
+# 全量指纹在「别的会话正在写真实 home」时判不了（audit.jsonl / usage / checkpoints 都会被写），
+# 所以另钉三条「本次自检痕迹」：desktop.json 内容没变、真实 home 里没有隔离工作区的会话、
+# 没有指向本地慢源（17461）的市场缓存。这三条过了，能证明本次运行没往真实 home 落东西。
+$swRealDesktopAfter = if (Test-Path -LiteralPath $swRealDesktopPath) { Get-Content -LiteralPath $swRealDesktopPath -Raw } else { $null }
+Check '真实 ~/.dsc/desktop.json 内容没被本次自检改动' ([string]$swRealDesktopBefore -eq [string]$swRealDesktopAfter) ("before=$(if ($null -eq $swRealDesktopBefore) { '缺失' } else { $swRealDesktopBefore.Length.ToString() + ' 字节' }) after=$(if ($null -eq $swRealDesktopAfter) { '缺失' } else { $swRealDesktopAfter.Length.ToString() + ' 字节' })")
+$swTraceFiles = @(Get-ChildItem -LiteralPath $swRealDsc -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like '*skills-market-home*' })
+Check '真实 ~/.dsc 里没有隔离工作区（skills-market-home）的会话痕迹' ($swTraceFiles.Count -eq 0) (($swTraceFiles | Select-Object -First 3 -ExpandProperty FullName) -join ' | ')
+$swRealCacheDir = Join-Path $swRealDsc 'cache'
+$swRealMarket = @(Get-ChildItem -LiteralPath $swRealCacheDir -File -Filter 'market-*.json' -ErrorAction SilentlyContinue | Where-Object { $null -ne (Select-String -LiteralPath $_.FullName -Pattern '127.0.0.1:17461' -SimpleMatch -ErrorAction SilentlyContinue) })
+Check '真实 ~/.dsc/cache 里没有指向本地慢源（17461）的市场缓存' ($swRealMarket.Count -eq 0) (($swRealMarket | Select-Object -First 3 -ExpandProperty FullName) -join ' | ')
 
 Write-Output ("截图输出目录：{0}" -f $swOutDir)
 if ($swFail -eq 0) { Write-Output ("skills-market-check 完成：{0} 条断言全部通过" -f $swTotal) }

@@ -168,7 +168,17 @@ let marketPrefetched = false
 let marketEpoch = 0
 
 /**
- * 读一条缓存；命中与否由调用方判新鲜期。
+ * 纯读一条缓存：不动 Map 顺序。
+ *
+ * 给渲染期的还原路径用——渲染函数必须是纯的，挪队尾这种副作用只能发生在事件 / effect 里
+ * （React 严格模式下渲染会跑两遍，渲染期改模块级 Map 等于两遍顺序不一样）。
+ */
+function peekMarketCache(key: string): MarketCacheEntry | undefined {
+  return marketCache.get(key)
+}
+
+/**
+ * 读一条缓存（事件 / effect 路径用）；命中与否由调用方判新鲜期。
  *
  * 命中就把这条挪到 Map 队尾：24 条上限按「最近使用」淘汰，而不是按写入先后——
  * 只按写入顺序的话，一直回来的那个源反而会被反复点开时的旧条目挤掉。
@@ -226,8 +236,10 @@ function requestMarket(
   const running = force ? undefined : marketInflight.get(key)
   if (running !== undefined) return running
   const epoch = marketEpoch
+  // 第三参只在手动刷新时传：老宿主的方法规格只收 2 个实参，多传会被当成非法调用拒掉
+  const args: unknown[] = force ? [source, needle, true] : [source, needle]
   const task = channel
-    .invoke<MarketBrowseResult>('browseMarket', [source, needle, force])
+    .invoke<MarketBrowseResult>('browseMarket', args)
     .then((result) => {
       // 改源之后才回来的旧结果：不写缓存，交给调用方当次用完就算
       if (epoch !== marketEpoch) return result
@@ -320,7 +332,7 @@ function SkillsView(): ReactNode {
     restored.current = null
     const view = lastMarketView
     if (view !== null) {
-      const entry = readMarketCache(marketCacheKey(view.source, view.needle))
+      const entry = peekMarketCache(marketCacheKey(view.source, view.needle))
       if (entry !== undefined) {
         restored.current = {
           result: entry.result,
@@ -349,6 +361,13 @@ function SkillsView(): ReactNode {
   const [scopeTab, setScopeTab] = useState<'all' | 'global' | 'project'>('all')
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [market, setMarket] = useState<MarketBrowseResult | null>(() => restoredView?.result ?? null)
+  /**
+   * 最近一次渲染的 `market`：异步回调（安装回包）里要拿「回包那一刻的列表」。
+   *
+   * 不能用回调闭包里那份——用户可能已经换了源，旧闭包会把旧源的列表写回去。
+   */
+  const marketRef = useRef<MarketBrowseResult | null>(market)
+  marketRef.current = market
   const [marketSource, setMarketSource] = useState(() => restoredView?.source ?? '')
   /** 源清单单独存：点 skills.sh 时不发请求、列表是空的，但源 chip 仍要画得出来。 */
   const [sources, setSources] = useState<MarketSourceView[]>(() => lastMarketSources)
@@ -501,7 +520,12 @@ function SkillsView(): ReactNode {
       // 新鲜命中：不联网、不闪加载骨架。`source === ''` 的结果里带着真源名，键要归到它名下。
       applyMarket(cached.result, marketCacheKey(cached.result.source !== '' ? cached.result.source : requested, needle), needle)
       setMarketError('')
-      setMarketNotice('')
+      // 缓存里如果躺着一份「宿主回退旧缓存」的结果（error + 非空列表），命中时也把软提示补回来，
+      // 否则重进市场看起来像是刚刚抓成功。
+      const staleReason = cached.result.error
+      if (staleReason !== undefined && cached.result.items.length > 0) {
+        setMarketNotice(t('market.softFailed', { error: staleReason }))
+      } else setMarketNotice('')
       setMarketLoading(false)
       maybeAutoInstall()
       return
@@ -528,11 +552,17 @@ function SkillsView(): ReactNode {
         const shownKey = marketCacheKey(result.source !== '' ? result.source : requested, needle)
         if (result.error !== undefined) {
           applySources(result.sources)
-          // 首个源就是搜索型：这不是失败，是「这个源要关键词」，切过去等输入。
+          // 本次失败的目标就是搜索型源、且关键词还不够长：这不是失败，是「这个源要关键词」，
+          // 切过去等输入。放宽到「目标源」而不是「首个源」，保存源后按新首源名 browse 也走这里；
+          // 关键词够长却真失败时仍走下面的红条。
           // 认的是宿主这次真正抓的那个源（`result.source`）——它失败时会被标成 ok:false，
           // 不能用「第一个 ok 的源」代替。
           const failedTarget = result.sources.find((item) => item.name === result.source)
-          if (requested === '' && failedTarget !== undefined && isSkillsShUrl(failedTarget.url)) {
+          if (
+            failedTarget !== undefined &&
+            isSkillsShUrl(failedTarget.url) &&
+            needle.length < MIN_SEARCH_CHARS
+          ) {
             // 空查询被拒是这个源的正常要求，别让它长得像坏源（chip 不标红）
             applySources(
               result.sources.map((item) =>
@@ -624,7 +654,9 @@ function SkillsView(): ReactNode {
     if (marketSource !== '' && isSearchSource(marketSource)) {
       // 搜索型源：进来不自动请求，只把光标放进搜索框。
       // 同时作废在途的旧源请求——否则它的回包会把视图改回旧源、把提示无声撤销。
+      // 还要把 loading 落下来：被作废的那次请求不会再走自己的 finally，否则按钮永远「抓取中…」。
       browseToken.current += 1
+      setMarketLoading(false)
       searchRef.current?.focus()
       return
     }
@@ -817,6 +849,8 @@ function SkillsView(): ReactNode {
       toastErr(t('toast.installDesktopOnly'))
       return
     }
+    // 点击这一刻的缓存键：回包时拿它确认「列表还是这一份」，中途换过源就不许写缓存
+    const clickedKey = marketKeyRef.current
     setInstalling(`${item.source}/${item.name}`)
     void native
       .invoke<{ ok: boolean; notice?: string; error?: string }>('installMarketSkill', [item.source, item.name])
@@ -827,18 +861,20 @@ function SkillsView(): ReactNode {
         }
         toastOk(result.notice ?? t('toast.installed', { name: item.name }))
         reloadSkills()
-        // 缓存同步放在 updater 外面：updater 里做副作用（写模块级 Map）在严格模式下会跑两遍，
-        // 而且 React 要求 updater 是纯函数。先用当前视图算出 next，再 set + 写缓存。
-        if (market !== null) {
+        // 回包时用「最新一帧」的 market（marketRef），不是点击那一刻的闭包：安装要下载几秒，
+        // 用户可能已经换源了，旧闭包会把旧源的列表写回视图。
+        const current = marketRef.current
+        if (current !== null) {
           const next: MarketBrowseResult = {
-            ...market,
-            items: market.items.map((entry) =>
+            ...current,
+            items: current.items.map((entry) =>
               entry.name === item.name && entry.source === item.source ? { ...entry, installed: true } : entry,
             ),
           }
           setMarket(next)
-          // 离开页面再回来时，刚装好的条目不该又显示成「安装」。
-          if (marketKeyRef.current !== '') saveMarketCache(marketKeyRef.current, next)
+          // 只有列表还是点击时那一份，才把「已安装」写回缓存；否则旧源的数据会写进新源的
+          // 缓存键，接下来一小时都串源。
+          if (clickedKey !== '' && marketKeyRef.current === clickedKey) saveMarketCache(clickedKey, next)
         }
       })
       .catch((error: unknown) => {
@@ -971,8 +1007,9 @@ function SkillsView(): ReactNode {
             }
             value={query}
             onChange={(event) => {
-              // 只有「在市场 tab 里亲手改过」的搜索词才允许自动联网查询
-              if (tab === 'market') searchEditedInMarket.current = true
+              // 只有「在市场 tab 里亲手改过」的搜索词才允许自动联网查询；
+              // 在已安装 tab 里改词要把它复位，否则带着旧词切到市场会误触发一次搜索。
+              searchEditedInMarket.current = tab === 'market'
               setQuery(event.target.value)
             }}
           />

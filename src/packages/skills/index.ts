@@ -270,6 +270,14 @@ export const skillsPlugin: Plugin.Object = {
     /** 内存条目缓存的新鲜期：与磁盘缓存同一口径（1 小时）。 */
     const ENTRIES_TTL_MS = 60 * 60 * 1000
     /**
+     * 内存里最多留几条源结果（兜底上限）。
+     *
+     * 主要回收靠「命中到过期条目就删」——搜索型源每换一个关键词就是一条新键，
+     * 不删就只涨不落。这条上限管的是「1 小时内自己不断换词/刷新」那种极端：
+     * 到顶就按 `at` 最旧的淘汰一条，不做 LRU（够用，且一眼能看懂）。
+     */
+    const ENTRIES_CACHE_MAX = 32
+    /**
      * 每个源最近一次浏览用的搜索词。
      *
      * 为什么留一份：skills.sh 是搜索型源，安装时只有「源名 + 技能名」可用，
@@ -350,14 +358,15 @@ export const skillsPlugin: Plugin.Object = {
           // browseRemote 的缓存键也靠它区分「同一个源的两次不同搜索」。
           const remote = await browseRemote(target.source, refreshEntries === true, needle)
           const items = remote.entries.map((entry) => toMarketSkillView(entry, installed))
-          // 回退旧缓存要让人看得见：契约没有 stale 字段，就复用现成的 error 做软提示
-          // （items 非空 + error 存在 = 「列表能看，但这是上次缓存的」）。
+          // 回退旧缓存要让人看得见：契约没有 stale 字段，就复用现成的 error 装**原因**
+          // （items 非空 + error 存在 = 软提示）。前缀「这次没取到新结果，先显示上次的：」
+          // 由界面的市场文案模板加（`market.softFailed`），宿主只给原因，免得两层前缀叠一起。
           if (remote.fallbackReason !== '') {
             return {
               sources: sourceViews,
               source: target.source.name,
               items,
-              error: `显示的是上次缓存：${remote.fallbackReason}`,
+              error: remote.fallbackReason,
             }
           }
           return { sources: sourceViews, source: target.source.name, items }
@@ -409,7 +418,8 @@ export const skillsPlugin: Plugin.Object = {
      * 只有三层全空才把错误抛给界面——绝不拿空数组冒充成功。
      *
      * 返回值带 `fallbackReason`：这份列表是回退来的（磁盘回退或内存兜底）时非空，
-     * 调用方据此给界面做「显示的是上次缓存」的软提示。
+     * 调用方把**原因原文**放进结果的 `error`；界面模板（`market.softFailed`）负责加
+     * 「这次没取到新结果，先显示上次的：」前缀，宿主不再自己拼前缀（免得两层叠一起）。
      */
     async function browseRemote(
       source: MarketSource,
@@ -419,11 +429,16 @@ export const skillsPlugin: Plugin.Object = {
       // 键 = 源名 + 源地址（同名换地址不能串旧清单）；搜索型源再加关键词
       const base = `${source.name}\u0000${source.url}`
       const key = isSkillsShSource(source.url) ? `${base}\u0000${query}` : base
-      const cached = entriesCache.get(key)
-      // 命中且没过期才直接返回；过期的旧值不当命中，联网与否交给 browseMarketSource 判
-      if (cached !== undefined && !force && Date.now() - cached.at < ENTRIES_TTL_MS) {
-        return { entries: cached.entries, fallbackReason: '' }
+      let cached = entriesCache.get(key)
+      // 过期条目当场删掉再按 miss 处理：不删的话搜索型源每换一个关键词就多一条、
+      // 永不回收（每条最多 100 项带描述），进程开久了内存只涨不落。
+      // 联网与否交给 browseMarketSource 判（它自己还有磁盘缓存那一层）。
+      if (cached !== undefined && Date.now() - cached.at >= ENTRIES_TTL_MS) {
+        entriesCache.delete(key)
+        cached = undefined
       }
+      // 命中新鲜值（且不是强制刷新）才直接返回
+      if (cached !== undefined && !force) return { entries: cached.entries, fallbackReason: '' }
       let fallbackReason = ''
       let entries: MarketEntry[]
       try {
@@ -443,6 +458,18 @@ export const skillsPlugin: Plugin.Object = {
       // 出缓存一律按当前源名重新盖章：改名后浏览列出的行、点安装回查的键
       // 才与清单里的名字对得上（否则安装会报「没有名为 X 的市场源」）。
       const stamped = entries.map((entry) => ({ ...entry, source: source.name }))
+      // 到上限先按 at 最旧淘汰一条（键已存在时是刷新，不腾地方）
+      if (!entriesCache.has(key) && entriesCache.size >= ENTRIES_CACHE_MAX) {
+        let oldestKey: string | undefined
+        let oldestAt = Number.POSITIVE_INFINITY
+        for (const [candidate, value] of entriesCache) {
+          if (value.at < oldestAt) {
+            oldestAt = value.at
+            oldestKey = candidate
+          }
+        }
+        if (oldestKey !== undefined) entriesCache.delete(oldestKey)
+      }
       entriesCache.set(key, { at: Date.now(), entries: stamped })
       return { entries: stamped, fallbackReason }
     }
