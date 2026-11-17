@@ -361,13 +361,16 @@
   transform: rotate(90deg);
 }
 
+/* 三角顶掉文件夹图标只在两种真实意图下发生：鼠标悬停，或键盘焦点（:focus-visible）。
+   不能用 :focus-within / :focus：工作区行是 <div role="button" tabIndex={0}>，
+   鼠标点一下就会拿到焦点且不会自己丢，那样三角会常显、展开态的「打开的文件夹」永远看不到。 */
 .group-row:hover .folder-chevron,
-.group-row:focus-within .folder-chevron {
+.group-row:focus-visible .folder-chevron {
   display: inline-flex;
 }
 
 .group-row:hover .folder-icon,
-.group-row:focus-within .folder-icon {
+.group-row:focus-visible .folder-icon {
   display: none;
 }
 
