@@ -9,9 +9,12 @@
 | **代码怎么分层、往哪改、怎么验证** | **本文档** |
 | **界面怎么改、控件往哪加、颜色字号怎么取值** | [ui-design.md](ui-design.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
-| 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
-| 三家对标产品的功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
+| 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [archive/harness-benchmark-roadmap.md](archive/harness-benchmark-roadmap.md) |
+| 三家对标产品的功能清单全文（差距的证据底料） | [archive/peer-feature-inventory.md](archive/peer-feature-inventory.md) |
 | 怎么写一个插件 | [plugin-development.md](plugin-development.md) |
+| **测试是什么、怎么写一条好测试** | [testing-101.md](testing-101.md) |
+| **测试体系怎么设计、分几期、多少工** | [testing-design.md](testing-design.md) |
+| **详细设计：配置、解析插件、夹具、各层规格** | [testing-detailed-design.md](testing-detailed-design.md) |
 
 ## 1. 一张图看懂运行时
 
@@ -648,6 +651,22 @@ node scripts/composer-test.mjs     # TUI 输入候选面板
 
 # 打包版实拍
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
+
+# 打包产物逐功能验收（2026-11-17 起，跑的是 dist 里那份，不是 dev）
+node desktop/shots/_verify-welcome-packaged.mjs    # 首屏：当前时段那一句 + 引导行 + 四张卡
+node desktop/shots/_verify-core-loop-packaged.mjs  # 发一句话 → 假端点回复落到会话流
+node desktop/shots/_verify-features-packaged.mjs   # 思考 Markdown / 紧凑命令卡 / 设置页
+node desktop/shots/_verify-pages-packaged.mjs      # 设置、插件、技能三页，每页新起一个进程
+node desktop/shots/_verify-sandbox-write-packaged.mjs  # 命令真在系统级沙箱里跑：写根内成、写根外 EPERM
+# 共用壳 `desktop/shots/_pkg-harness.mjs`：隔离 HOME + 本地假端点 + CDP + 截图。
+# 新场景写成它的一个 `withApp({id, fake}, ctx => …)` 函数，不要再抄一遍启动逻辑。
+# 经 withApp 起的场景，HOME 落在系统临时目录（C 盘）：受限令牌后端要给可写根设完整性标签，
+# D 盘的新建目录设不了（`icacls /setintegritylevel` 直接 Access is denied），HOME 放仓库里
+# 会让沙箱用例集体假红。少数老探针（如 `_verify-pages-packaged.mjs`）自己建 HOME 且还在仓库里，
+# 它们不碰沙箱 ACL，暂时无碍；新写的别再学。
+# 工具卡里的输出默认折着，验命令结果别读界面文本（命令原文也会被画出来，容易自己骗自己）：
+# 读会话 jsonl 里 `type:"tool"` 那条，那是真实的 stdout 与退出码。
+# 验收里发现的问题登记在 docs/bugs.md（BUG-0001 起），修完在那条下面补验收命令。
 ```
 
 **包依赖方向门禁（含相对路径，2026-11-09 起）**：`scripts/plugin-dep-graph.mjs` 现在把 `./`、`../` 也解析成真实文件（`.js` → `.ts` / `.tsx`、目录 → `index.ts`），再按「文件属于哪一层、哪个包」归类；包 → 包的相对导入与 `@pneuma/<id>` 用同一个判据（功能包只许 import 库包）。

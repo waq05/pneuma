@@ -1,5 +1,5 @@
 /**
- * 发布页：标题（必填）+ 正文（多行）+ 起点分支（可选），提交走 `superagentPublish`。
+ * 发布页：标题（必填）+ 正文（多行），提交走 `superagentPublish`。
  *
  * 成功后做两件事：切到「工单」页，并把新工单 id 放进模块级高亮信号——列表里那一行
  * 会亮一下（`./tickets.tsx` 读这个信号，几秒后自己清掉），用户不用在几十条里找。
@@ -34,7 +34,6 @@ export function PublishPage({ surface }: { surface: SuperagentView }): ReactNode
   const channel = useHostChannel()
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
-  const [base, setBase] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
@@ -51,7 +50,6 @@ export function PublishPage({ surface }: { surface: SuperagentView }): ReactNode
     const input = {
       title: trimmed,
       body: body.trim(),
-      ...(base.trim() === '' ? {} : { base: base.trim() }),
     }
     void channel
       .invoke<string>('superagentPublish', [input])
@@ -59,7 +57,6 @@ export function PublishPage({ surface }: { surface: SuperagentView }): ReactNode
         setBusy(false)
         setTitle('')
         setBody('')
-        setBase('')
         if (typeof id === 'string' && id !== '') setHighlightedTicket(id)
         // 发完就看工单：成功与否的下一步都在那一页。
         setSuperagentTab('tickets')
@@ -92,25 +89,6 @@ export function PublishPage({ surface }: { surface: SuperagentView }): ReactNode
               }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') submit()
-              }}
-            />
-          </div>
-        </div>
-
-        <div className="setting-row">
-          <div className="setting-text">
-            <div className="setting-label">{t('superagent.publish.base.label')}</div>
-            <div className="setting-help">{t('superagent.publish.base.help')}</div>
-          </div>
-          <div className="setting-control">
-            <input
-              className="setting-input"
-              type="text"
-              aria-label={t('superagent.publish.base.label')}
-              placeholder={t('superagent.publish.base.placeholder')}
-              value={base}
-              onChange={(event) => {
-                setBase(event.target.value)
               }}
             />
           </div>

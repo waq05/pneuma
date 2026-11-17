@@ -279,17 +279,18 @@ cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过�
 | --- | --- |
 | [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
 | [docs/development-log.md](docs/development-log.md) | 开发记录：各阶段引入了什么、决策台账、真 bug 台账、还欠什么 |
+| [docs/bugs.md](docs/bugs.md) | 缺陷记录：按 issue 写法一条一节（编号、严重度、复现、证据、初步定位、验收），只增不删 |
 | [docs/plugin-development.md](docs/plugin-development.md) | 插件开发：§0 从零上手（选形态、跑通最小链路、扩展点速查、交付自检）+ §1–§10 完整规格（全表签名、dsh 兼容层、界面插件契约） |
 | [docs/presets.md](docs/presets.md) | **模式（Agent 预设）**：模式文件怎么写、出厂四个各是什么、可去掉哪些提示段、四条硬规矩 |
 | [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题引擎对照 |
 
 其余文档按用途分三类：
 
-**活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
+**参考与现状说明**：[docs/archive/harness-benchmark-roadmap.md](docs/archive/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/archive/peer-feature-inventory.md](docs/archive/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
 
-**外部实现拆解（按名字查的参考资料）**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)（codex 的请求组装）、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）、[docs/runtime-comparison.md](docs/runtime-comparison.md)（三家 runtime 逐轮编排对照）
+**外部实现拆解（按名字查的参考资料）**：[docs/archive/codex-request-assembly.md](docs/archive/codex-request-assembly.md)（codex 的请求组装）、[docs/archive/dsh-request-assembly.md](docs/archive/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）、[docs/runtime-comparison.md](docs/runtime-comparison.md)（三家 runtime 逐轮编排对照）
 
-**已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 14 篇，另有 `archive/shots/` 下 6 份当时的施工自检报告。
+**已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 21 篇，另有 `archive/code-review-2026-11-09/` 下 23 份一次性审查报告与 `archive/shots/` 下 6 份当时的施工自检报告。
 
 ## 许可
 

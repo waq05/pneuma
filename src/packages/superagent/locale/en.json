@@ -1,4 +1,4 @@
 {
   "title": "Super Agent",
-  "description": "Hand a one-line request to an agent in its own worktree; result is a ticket"
+  "description": "Hand a one-line request to an agent in its own workspace directory; result is a ticket"
 }

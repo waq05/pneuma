@@ -778,7 +778,7 @@
       "id": "log",
       "title": "运行日志",
       "order": 880,
-      "builtin": false
+      "builtin": true
     },
     {
       "id": "memory",

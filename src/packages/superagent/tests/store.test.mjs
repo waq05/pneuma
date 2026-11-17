@@ -2,7 +2,8 @@
  * @pneuma/superagent 存储层的包级测试：测移植版 `app/store.ts`（`Store` 类 + `store-read.ts` + `versions.ts`），
  * 转写自上游 `tests/store.spec.ts`。钉的是：版本上限与回滚、Thread 索引、工作集只读活行、老库补生成列、
  * 首条 Trigger 命名、来源计数、链接、meta 补丁、事务提交回调、设置版本历史、SQLite 与内存实现
- * 顺序一致、`%`/`_` 按字面匹配。每条坏的后果都不是抛错，而是「两个编排器各写一遍」「旧库读不出
+ * 顺序一致、`%`/`_` 按字面匹配，以及移植前的旧库（`PRAGMA user_version` v4）整份旁置而不是当新结构读。
+ * 每条坏的后果都不是抛错，而是「两个编排器各写一遍」「旧库读不出
  * 活工单」「界面按错误顺序翻页」这类静默错误。
  *
  * 全程用 `tmpdir()` 下的临时目录，且每个用例一个：绝不碰用户真实的 `~/.dsc`。
@@ -11,7 +12,7 @@
  * @module @pneuma/superagent/tests
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -237,6 +238,46 @@ test('打不开成当前版本的库要关掉句柄，让同进程的后续尝�
     assert.throws(() => new Store(path), /Unsupported orchestrator database version/)
     assert.equal(closes, 1)
   } finally { DatabaseSync.prototype.close = original }
+  passed += 1
+})
+
+test('移植前的旧库整份旁置：按新库启动、旧工单读不到、旁置文件内容还在，并报一句', () => {
+  const root = tempRoot('app-legacy')
+  const path = join(root, 'orchestrator.sqlite')
+  // 移植前的库：版本记在 PRAGMA user_version，没有 kv 的 schema 键，旧表 meta 与旧形状的 ticket 行都在。
+  const raw = new DatabaseSync(path)
+  raw.exec(`PRAGMA user_version = 4;
+    CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE ticket (id TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+  raw.prepare('INSERT INTO kv VALUES (?,?)').run('workspace-root', JSON.stringify('/srv/work'))
+  raw.prepare('INSERT INTO meta VALUES (?,?)').run('schema-version', '4')
+  raw.prepare('INSERT INTO ticket VALUES (?,?)').run('old-1', JSON.stringify({ id: 'old-1', state: 'open', meta: {} }))
+  raw.prepare('INSERT INTO ticket VALUES (?,?)').run('old-2', JSON.stringify({ id: 'old-2', state: 'ended', meta: {} }))
+  raw.close()
+  const reported = []
+  const db = new Store(path, (message) => { reported.push(String(message)) })
+  // 新库：schema 键写成本版，旧 ticket 行读不到。
+  assert.equal(db.get(KV.store.schema), SCHEMA_VERSION)
+  assert.deepEqual(db.tickets.list(), [])
+  db.close()
+  // 旧文件整份旁置（连同 SQLite 旁文件），新库留在原路径。
+  const moved = readdirSync(root).filter((name) => name.includes('.legacy-') && !name.endsWith('-wal') && !name.endsWith('-shm'))
+  assert.equal(moved.length, 1)
+  assert.equal(existsSync(path), true)
+  const legacy = new DatabaseSync(join(root, moved[0]), { readOnly: true })
+  assert.equal(Number(legacy.prepare('PRAGMA user_version').get().user_version), 4)
+  assert.equal(Number(legacy.prepare('SELECT COUNT(*) AS n FROM ticket').get().n), 2)
+  assert.equal(String(legacy.prepare("SELECT value FROM meta WHERE key = 'schema-version'").get().value), '4')
+  legacy.close()
+  // report 收到一条话，原路径与旁置路径都在里面。
+  assert.equal(reported.length, 1)
+  assert.equal(reported[0].includes(path), true)
+  assert.equal(reported[0].includes(join(root, moved[0])), true)
+  // 全新空库没有 user_version 也没有旧表，不能被误判旁置。
+  const fresh = join(tempRoot('app-legacy-fresh'), 'orchestrator.sqlite')
+  new Store(fresh).close()
+  assert.deepEqual(readdirSync(dirname(fresh)), ['orchestrator.sqlite'])
   passed += 1
 })
 

@@ -158,12 +158,20 @@ function workerEnvironment(env?: Record<string, string>): Record<string, string>
 
 /**
  * Spawns a command as a worker sees it (credential-shaped variables removed) and returns its stdout.
+ *
+ * `verbatim` passes the arguments to Windows unchanged (`windowsVerbatimArguments`). It exists for one caller: the
+ * settings `prepare` command runs as `cmd.exe /d /s /c <command>`, and node's default Windows quoting turns the
+ * quotes inside `<command>` into `\"`, which cmd keeps literally — so a quoted path such as `"C:\a b"` would reach
+ * the command as `\"C:\a b\"`. No other call site needs it, because they all pass plain argument vectors.
+ *
  * @throws CliError when the command cannot start, exits non-zero, or is stopped before it finishes.
  */
-export async function runAsWorker(argv: string[], cwd: string, signal: AbortSignal, env?: Record<string, string>): Promise<string> {
+export async function runAsWorker(argv: string[], cwd: string, signal: AbortSignal, env?: Record<string, string>,
+  verbatim = false): Promise<string> {
   const [program, ...args] = argv
   if (!program) throw new CliError('runAsWorker needs a command to run')
-  const child = spawn(program, args, { cwd, env: workerEnvironment(env), signal, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  const child = spawn(program, args, { cwd, env: workerEnvironment(env), signal, stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true, windowsVerbatimArguments: verbatim })
   let stdout = ''
   let stderr = ''
   child.stdout?.setEncoding('utf8')

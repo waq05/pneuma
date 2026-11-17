@@ -3,7 +3,9 @@
  * 改动只有 import 路径（目录按上游镜像，与上游只差 NodeNext 的 `.js` 扩展名；Policy 在本仓 `core/`）：
  *   `../core/index.ts` → `../core/index.js`；`../kv.ts` → `../kv.js`；`../policy.ts` → `../core/policy.js`；
  *   `./migration.ts` → `./migration.js`；`./versions.ts` → `./versions.js`；`./store-read.ts` → `./store-read.js`。
- * 逻辑一行未改，上游英文 doc 注释保留原文。
+ * 逻辑一行未改，上游英文 doc 注释保留原文。唯一新增：打开库时认出移植前的旧库（`PRAGMA user_version` 记版本、
+ * 数据在 `meta`/`candidate`/`assignment` 里），把库文件连同 `-wal`/`-shm` 旁置成 `<path>.legacy-<时间戳>`，
+ * 再按全新库启动——旧行读不成 schema 11 的形状，硬读出来只会是垃圾，写回又会毁掉旧版本写下的数据。
  *
  * SQLite 持久化：领域聚合、键值状态、设置历史与渠道发件箱。
  *
@@ -11,7 +13,7 @@
  */
 /** SQLite persistence for domain aggregates, key-value state, settings history, and the channel outbox. */
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.js'
@@ -54,6 +56,32 @@ const SETS: Record<string, Record<string, string>> = {
     AND value ->> '$.ticketId' IS NOT NULL THEN (value ->> '$.ticketId') || ' ' || (value ->> '$.channel.thread') END)` },
 }
 export { SCHEMA_VERSION }
+/** Tables only the implementation this package replaced ever created; schema 11 has none of them. */
+const LEGACY_TABLES = ['meta', 'candidate', 'assignment'] as const
+/** Whether `db` has a table named `table`. */
+const tableExists = (db: DatabaseSync, table: string): boolean =>
+  db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined
+/**
+ * Returns the `PRAGMA user_version` of a database written by the implementation this package replaced, or `undefined`
+ * for any other file. That implementation kept its version in `PRAGMA user_version` and its rows in `meta`/`candidate`/
+ * `assignment`; this Store keeps the version in the `kv` row `schema`. A missing `schema` row alone is not enough,
+ * because a brand-new empty file has none either.
+ */
+function legacySchemaVersion(db: DatabaseSync): number | undefined {
+  if (tableExists(db, 'kv') && db.prepare('SELECT 1 FROM kv WHERE key = ?').get(KV.store.schema) !== undefined) return undefined
+  const version = Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+  if (version <= 0) return undefined
+  return LEGACY_TABLES.some(table => tableExists(db, table)) ? version : undefined
+}
+/** A not-yet-used `<path>.legacy-<UTC timestamp>` name, numbered when that name or its SQLite sidecars are taken. */
+function apartPath(path: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  let target = `${path}.legacy-${stamp}`
+  for (let index = 2; existsSync(target) || existsSync(`${target}-wal`) || existsSync(`${target}-shm`); index += 1) {
+    target = `${path}.legacy-${stamp}-${index}`
+  }
+  return target
+}
 /**
  * SQLite backing store implementing domain `Repositories`, view read queries, versioned settings, outbox receipts, and key-value state.
  * The Runtime opens it after locking the state directory and automatically migrates supported older schemas on startup.
@@ -63,6 +91,11 @@ export class Store implements Repositories {
   readonly db: DatabaseSync
   /**
    * Opens or creates the SQLite database at `path`, migrating schema 10 to schema 11 in a single transaction.
+   *
+   * A database written by the implementation this package replaced (which tracked its schema in `PRAGMA user_version`
+   * and kept rows in `meta`/`candidate`/`assignment`) is not migrated: it is renamed beside `path` and a fresh database
+   * is created in its place, because its rows cannot be read as the schema 11 shape and rewriting them would destroy
+   * what the previous version wrote. `report` receives one sentence naming both paths.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
    * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (11), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
@@ -72,6 +105,26 @@ export class Store implements Repositories {
     this.read = storeReads(this.db)
     try {
       chmodSync(path, 0o600)
+      const legacy = legacySchemaVersion(this.db)
+      if (legacy !== undefined) {
+        const target = apartPath(path)
+        // Renaming needs the handle closed on Windows. Every branch below reopens it: the constructor's failure path
+        // closes a live handle, and the rest of the constructor must use the fresh database.
+        this.db.close()
+        try {
+          for (const suffix of ['', '-wal', '-shm']) {
+            if (existsSync(`${path}${suffix}`)) renameSync(`${path}${suffix}`, `${target}${suffix}`)
+          }
+        } catch (error) {
+          this.db = new DatabaseSync(path)
+          this.read = storeReads(this.db)
+          throw error
+        }
+        this.db = new DatabaseSync(path)
+        this.read = storeReads(this.db)
+        chmodSync(path, 0o600)
+        this.report(`The orchestrator database ${path} was written by the implementation this package replaced (it tracks schema ${legacy} in PRAGMA user_version and keeps rows in ${LEGACY_TABLES.join('/')}); those rows cannot be read as schema ${SCHEMA_VERSION}, so the file was moved to ${target} and a new database was created at ${path}.`)
+      }
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
       const version = this.get(KV.store.schema)
       if (version !== undefined && version > SCHEMA_VERSION) throw new Error(`Unsupported orchestrator database version ${version}`)

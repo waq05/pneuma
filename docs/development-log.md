@@ -17258,3 +17258,165 @@ TUI 接通后，桌面端的 @ 面板仍只从会话 cwd 懒递归——同一�
 
 
 
+
+## 2026-11-17：0.9.1 之后的合并内容，打包产物逐功能实机验收
+
+**为什么做**：11-16 把 387 个提交快进到 main（0.8.1 → 0.9.1 之后的那批），用户要求「重新打包，
+对新合进来的内容做实机测试」。测的不是 dev，是 `desktop/dist/win-unpacked/Pneuma.exe`。
+
+**怎么测**：新加了一个共用壳 `desktop/shots/_pkg-harness.mjs`（一次性 HOME + 本地假 OpenAI 端点
++ CDP + 截图），场景写成它的 body。打包产物与 dev 的区别是 `resources/dsc-core` 里另一批文件，
+dev 过不代表包里过。
+
+| 功能 | 判据 | 结果 |
+| --- | --- | --- |
+| 首屏问候 | h1 = 当前时段那一句、副行 = Codex 式引导、四张卡 | 5/5 通过 |
+| 核心闭环 | 发一句话 → 用户气泡 + 助手回复 + 无错误条目 | 5/5 通过 |
+| 思考正文 Markdown | `.think-block` 里有 `<pre>/<code>`、`<li>`、`<strong>` | 4/4 通过 |
+| 命令调用的终端块 | `$ echo …` 终端样式 + 退出码 | **失败**（见下） |
+| 设置页 | 打开、九个分区在 | 通过；但没有「运行日志」分组 |
+| 插件 / 技能页 | 点了主区换页 | **失败**（见下） |
+
+**问题一：`bash` 工具在全新 HOME 下第一次调用就失败。**
+界面原话：`沙箱：受限令牌后端已降级为策略围栏（不再换执行体）：给可写根
+[…\\.dsc\\sandbox\\tmp\\<hash>]（能力 SID S-1-4-…）打 ACL 失败：GetNamedSecurityInfoW(三件套)
+失败（Win32 错误码 2）：系统找不到指定的文件。` 结果：命令没执行，界面没有 `$ 命令` 与退出码，
+只剩一行说明。预建 `sandbox/tmp` 后同样失败（`_diag-bash-sandbox.mjs` 的 A/B 两轮），所以不是
+「目录晚一步建」这么简单，是打 ACL 的那个路径本身没被创建。待修。
+
+**问题二：侧栏「插件 / 技能」点了不换页。** 三个入口按钮本身正常（`BUTTON.nav-item`、不 disabled），
+element click、CDP 真实鼠标、点父节点三种方式都点过，主区仍是首屏。代码指向
+`src/packages/ui-sessions/ui/ui.tsx:220` 的守卫：当前页在页面注册表里查不到就 `setShellPage(null)`
+踢回对话页。dev 版（`desktop/out`）用 `DIAG_DEV=1 node desktop/shots/_diag-plugins.mjs` 复现同一现象，
+所以不是打包漏包（`lib/ui/plugins/` 下 22 个包齐全，含 `plugins`、`skills`）。待查。
+
+**没覆盖**：superagent（用户要求先留着）；归档的 OS 锁（要两个进程同时抢，另开）；
+「编辑重发后折叠复位」（时序成本高）；`/doctor`、`/log`、`/doctor --bundle`——壳的
+`shell: true` 白名单只有七条，这三条在应用里跑不了（`commands-core/commands-completion.ts`
+的 `shellHelpText`），要验得走终端。
+
+**这一批新增的探针**（都在 `desktop/shots/`，不进 CI）：`_pkg-harness.mjs`、
+`_verify-welcome-packaged.mjs`、`_verify-core-loop-packaged.mjs`、`_verify-features-packaged.mjs`、
+`_verify-pages-packaged.mjs`、`_diag-plugins.mjs`、`_diag-bash-sandbox.mjs`。
+
+**登记**：上面三条已写进 [docs/bugs.md](bugs.md)——BUG-0001（沙箱打 ACL 失败，bash 不可用）、BUG-0002（侧栏「技能/插件」点了不换页）、BUG-0003（设置里没有「运行日志」分区）。修完在那条 issue 下面补验收命令与提交号。
+
+
+## 2026-11-17：三条缺陷修完（沙箱建目录 / 切页守卫 / 运行日志分区）
+
+**为什么做**：上一节验收挑了三条缺陷（BUG-0001/0002/0003）。用户要求「先核实、再修、修完起子代理复核」。
+三条的结论都写在 [docs/bugs.md](bugs.md)，这里只记「根因—改法—怎么验」和踩到的坑。
+
+**BUG-0001（P0，P0 是真的）：第一次跑命令沙箱必降级。**
+根因不是「目录晚一步建」，是**两处算的不是同一个目录**：宿主建的是 `sandbox/tmp/<会话 id>`
+（`src/packages/sandbox/index.ts:224`），受限令牌后端要授权的是 `sandbox/tmp/<工作区哈希>`
+（`src/packages/sandbox/win/backend.ts:206`，不带会话 id）。后者谁都没建 → `GetNamedSecurityInfoW`
+返 Win32 错误 2 → 整条后端作废。自检一直绿，是因为 `scripts/sandbox-win-token-test.mjs` 里替它建好了，
+注释还写着「真实宿主里由插件建」，那句话是错的。
+改法：`ensureAuthorized` 打 ACL 前对每个可写根 `mkdirSync(path, { recursive: true })`，建不出来才降级。
+验收：自检 **90 通过 / 0 失败**（新增 3 条回归判据）；打包版实跑一条命令，会话 jsonl 里工具结果是
+`CWD=D:\dsc INSIDE_OK OUTSIDE_DENIED EPERM`——写根内真落盘、写根外被系统层拒。
+
+**BUG-0002（P1）：侧栏技能/插件点了不换页。**
+文档里记的两条候选（槽条目 id 与页键不一致、点击没进 React）**都被实验排掉了**：`/api/events` 的
+plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reactProps$` 里取出来直接调用，
+效果与真实点击一致，且点完侧栏那一行确实重渲染过。
+真因在第三处：`usePageEntryAvailable` 把「这页在不在」缓存成**布尔**。停在对话页时传的 entryId 是 `''`
+（恒 false），切页那一帧 entryId 变了、state 还是旧答案 false，守卫
+`if (page !== null && !pageEntry) setShellPage(null)` 就把「答案没更新」当成「插件被停用」踢回对话页。
+改法：state 存**启动图帧**，每次渲染现算。验收：新加闸门 `scripts/ui-page-switch-test.mjs` **15/15**
+（含「脏副本必须红」），`check:ui` **80/80**，打包版真实鼠标点技能 `aria-pressed=true`、主区换成技能页。
+
+**BUG-0003（P2）：设置里没有「运行日志」。**
+分区其实推上来了，是设置页过滤掉了：`src/packages/settings/index.ts:551` 的
+`builtin: section.inSettings === true || builtinIds.has(id)`，而 `log` 注册时没声明 `{ inSettings: true }`。
+改法：补声明（`src/packages/log/index.ts:346`）。验收：左栏 9 项 → 10 项，多出「运行日志」。
+
+**踩到的两个坑（都写进探针注释了）**
+
+1. 探针 HOME 原来落在仓库里（D 盘）。这台机器的 **D 盘不许给新建目录设完整性标签**
+   （`icacls /setintegritylevel` 直接 Access is denied），于是每个沙箱用例都撞 ACL 失败——
+   看着像产品坏了，其实是探针位置。`_pkg-harness.mjs` 的 HOME 已挪到系统临时目录（C 盘），
+   与真实用户的 `%USERPROFILE%` 同一条路。
+2. 验沙箱写边界时，「命令原文」也会被画进界面，用 `text.includes('OUTSIDE_WRITTEN')`
+   会把**命令里出现的词**当成**命令跑出来的结果**（第一版就这么假通过了）。改成读会话 jsonl 里
+   `type:"tool"` 的真实结果，标记串在运行时拼，界面文本只用来判「有没有降级提示」。
+
+**没修的**：`/doctor`、`/log`、`/doctor --bundle` 在桌面输入框里本来就不执行（壳只转 7 条
+`shell: true` 命令），探针里已从 FAIL 改成 SKIP 并写清原因，要验得走终端。
+
+
+## 2026-11-17：BUG-0004 修完（附加可写根的相对路径）
+
+**为什么做**：复核 BUG-0001 时在同一片代码里发现的独立成因，用户要求接着修。
+
+**根因**：策略层按**会话 cwd** 展开附加可写根（`policy.ts:677` 的 `canonicalizePath`），
+受限令牌后端照收原始串（`backend.ts:207-210`），`mkdir`/打 ACL 由**宿主进程的 cwd** 决定
+（打包版就是安装目录）。于是围栏放行、系统层拒写，还可能顺手在安装目录旁边造一个目录。
+
+**改法**：在 `writeRootsFor` 里对每条附加根调同一个 `canonicalizePath(…, { cwd })`，
+拿到绝对路径再派生能力 SID。没选「在 `sandbox/index.ts` 提前绝对化」，是因为那里有策略快照
+与受限令牌后端两个入口，漏一个就重现同一个 bug；放在产出可写根的那一处，后端被谁调用都绕不过去。
+绝对路径也过一遍同一个函数：8.3 短名、大小写、符号链接拼法不同会派生另一个 SID，
+而 runner 按 realpath 复算，对不上直接退 127。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **98 通过 / 0 失败**，其中 5 条新判据
+（解析成会话 cwd 下的绝对路径 / 不是宿主 cwd 旁边那个 / 与 `createPolicy` 同一条 / `--root`
+里是绝对路径 / 受限令牌里真写进那个相对附加根成功）。打包产物已按 HEAD 重建，沙箱写边界探针复跑 PASS。
+
+**没验到的**：没在打包版界面上点着改「附加根」再跑命令，证据停在令牌层——那正是出问题的那一层。
+
+
+### 2026-11-17 复核第二轮（BUG-0004）
+
+**复核提了什么**：`ok === false` 的附加根仍被拿去授权（与策略层口径不一致）、cwd 未规范化
+（junction 进来的会话会派生出第二条身份）、文档里「runner 按 realpath 复算 → 退 127」这句不实、
+「附加根写成文件会打 ACL 失败」这句不实。
+
+**怎么改的**
+
+1. `writeRootsFor` 里 `!resolved.ok` 直接跳过——策略层已经把它记进 `problems` 并拒绝写，
+   后端再授权只会失败一次、把整条后端降级。
+2. `cwd` 也过一遍 `canonicalizePath`（解析失败退回原串）：会话从 junction 进来时，
+   cwd 按原串、附加根按真实拼法会派生出两条根、两份能力 ACE，root 侧授权还不回收。
+   副作用是 junction 会话的 `--temp` 目录名换成真实拼法，旧目录由清扫按龄回收。
+3. 文档那两句改实：runner 的 `verifySidForPath` 用的是 `--root` 收到的串原样复算，不会退 127；
+   附加根写成已存在的文件时 `grantWrite` 对文件同样成功，只是 OI|CI 继承没意义。
+4. 顺手给自检里那行 `[Console]::OutputEncoding` 套 try——宿主 stdout 不是控制台时它会报
+   「无法设置」，整段假红（当天撞过一次）。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **100 通过 / 0 失败**（新增 junction 去重判据）。
+
+
+### 2026-11-17 复核第三轮（`--temp` 同源）
+
+**复核抓到一条真回归**（我上一步 `b4ec8ebf` 带进来的）：授权的是规范化后的 temp 根，
+`plan()` 的 `--temp` 还在用 `run.cwd` 原串。junction 或大小写拼法的会话里，TMP/TEMP 就指到
+一条既没能力 ACE、也没人建过的目录，子进程写临时目录直接被拒。100 条判据全绿也没照出来，
+因为 junction 那条只看 `writeRootsFor`，没检查 `--temp`。
+
+**改法**：把「规范化 cwd」抽成 `canonicalWriteCwd`，`writeRootsFor` 与 `plan()` 的 `--temp`
+共用同一个结果；顺带修掉「相对 cwd 被二次拼接」（`canonicalizePath('work', { cwd: 'work' })`
+会拼成 `work\work`）——契约上是绝对路径，相对路径不猜、原样返回。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **101 通过 / 0 失败**，新增判据
+「junction 会话的 `--temp` 与已授权的 temp 根是同一条」。
+
+**留下的一句**：junction 会话规范化之后，旧的原串哈希 temp 目录没人再派生得出来，能力 ACE
+等于惰性残留，由清扫按 24 小时龄回收；每个 junction 会话多一个空目录，可以接受。
+
+
+### 2026-11-17 复核第四轮：连「临时目录显示口径」一起收口（BUG-0005）
+
+**复核说了什么**：`--temp` 与授权那条 temp 根已经同源、`revokeWrite` 回收的也是同一条，可以合并；
+只剩一个老账——策略层（`sandbox/index.ts:224`）按**会话 id** 算私有临时目录，界面上显示的、
+策略层放行的都是那个目录，而子进程真正的 `TMP/TEMP` 是规范化 cwd 的哈希目录。
+
+**为什么顺手并掉**：这跟 BUG-0004 是同一类病（两层各算一遍路径），只是这次错在显示与放行那一侧，
+不影响强制，所以记 P3。一行改动、加一条判据就能收口，留着只会让后来人再查一遍。
+
+**改法**：插件层改用后端导出的 `canonicalWriteCwd`（[index.ts:224](src/packages/sandbox/index.ts#L224)），
+`currentSessionId` 这个帮手随之删掉。现在「策略层放行 / 界面显示 / 后端授权 / 子进程 TMP」四者同一个路径。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据
+「插件层算的私有临时目录 = 后端授权的那条 temp 根」。

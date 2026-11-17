@@ -303,34 +303,6 @@ export interface SuperagentSourceView {
 }
 
 /**
- * Super Agent 的快照面（§8.2）。
- *
- * 宿主插件 `@pneuma/superagent` 默认关着：关着时这一格整个缺席，界面按「未启动」画，
- * 不要拿缺字段当错误（与 `scheduled?` 同一约定）。开着但库还没打开时是
- * `ready: false` + 一句 `problem`，界面据此说清卡在哪。
- */
-/**
- * 一条等人拍板的推断候选（backlog G1）。
- *
- * 只放界面画卡片要的几项：判定结果本身（`AssessmentOutcome`）留在库里，人点「接单」
- * 时由宿主原样交给引擎，不经界面转手——那是最容易改坏的形状。
- */
-export interface SuperagentCandidateView {
-  /** 候选 id（接单 / 忽略时回传它）。 */
-  id: string
-  /** 卡片标题（模型给的工单标题）。 */
-  title: string
-  /** 模型给的理由：为什么它被判成可以接。 */
-  reason: string
-  /** 工单范围。 */
-  scope: string
-  /** 来源（`github` / `feishu` / `manual`）。 */
-  source: string
-  /** 判定出来的时间（ISO）。 */
-  at: string
-}
-
-/**
  * 一条设置变更（设置页「最近变更」块的一行）。对应上游管理面板的设置修订历史
  * （`app/settings-history.ts`），按 DSC 逐字段的保存方式裁成一行一字段。
  */
@@ -347,6 +319,13 @@ export interface SuperagentSettingsChangeView {
   to?: string
 }
 
+/**
+ * Super Agent 的快照面（§8.2）。
+ *
+ * 宿主插件 `@pneuma/superagent` 默认关着：关着时这一格整个缺席，界面按「未启动」画，
+ * 不要拿缺字段当错误（与 `scheduled?` 同一约定）。开着但库还没打开时是
+ * `ready: false` + 一句 `problem`，界面据此说清卡在哪。
+ */
 export interface SuperagentSurface {
   /** 运行期是否可用：false = 还没启动（懒建）或建库失败，看 `problem`。 */
   ready: boolean
@@ -368,14 +347,6 @@ export interface SuperagentSurface {
    */
   sources?: SuperagentSourceView[]
   /**
-   * 等人拍板的推断候选，新的在前。
-   *
-   * **可选**：「推断候选先等我确认」关着时这一格缺席（判定即接单，没有待确认的东西）。
-   * 「没有这一格」与「有但为空」是两件事——界面按 `undefined` 整块不画，按空数组画一句
-   * 「暂时没有待确认的候选」。
-   */
-  candidates?: SuperagentCandidateView[]
-  /**
    * 设置变更历史，新的在前（最多 30 条，写入侧裁剪）。
    *
    * **可选**：旧快照没有这一格时界面整块不画。设置页保存成功且值真的变了才记一条，
@@ -390,8 +361,6 @@ export interface SuperagentPublishInput {
   title: string
   /** 正文 = 派给 worker 的需求原文。 */
   body: string
-  /** 工作树起点 ref；省略 = HEAD。 */
-  base?: string
 }
 
 /**
@@ -438,14 +407,6 @@ export interface SuperagentService {
   clean(id: string): Promise<void>
   /** 只读读一张工单的执行会话转录（不落盘、不拿写租约）。 */
   peekSession(id: string): Promise<TranscriptEntry[]>
-  /**
-   * 接一条等人拍板的推断候选（backlog G1），返回建出来的工单 id。
-   *
-   * `title` 可选：界面允许人在接单时改个更清楚的名字；不给就用判定时那个。
-   */
-  acceptCandidate(id: string, title?: string): Promise<string>
-  /** 忽略一条等人拍板的推断候选（它就此结束，不再进工单）。 */
-  ignoreCandidate(id: string, reason?: string): Promise<void>
   /** 当前快照面（`ctx.surfaces.register('superagent', …)` 读它）。 */
   surface(): SuperagentSurface
 }
@@ -529,14 +490,6 @@ declare module './snapshot.js' {
     superagentCleanWorktree(input: SuperagentTicketRef | string): Promise<void>
     /** 只读读一张工单的执行会话转录。 */
     superagentPeekSession(input: SuperagentTicketRef | string): Promise<TranscriptEntry[]>
-    /**
-     * 接一条等人拍板的推断候选，返回建出来的工单 id。
-     *
-     * `title` 可选：界面允许人在接单时改个更清楚的名字；不给就用判定时那个。
-     */
-    superagentAcceptCandidate(input: { id: string; title?: string } | string): Promise<string>
-    /** 忽略一条等人拍板的推断候选（它就此结束，不再进工单）。 */
-    superagentIgnoreCandidate(input: { id: string; reason?: string } | string): Promise<void>
   }
 }
 

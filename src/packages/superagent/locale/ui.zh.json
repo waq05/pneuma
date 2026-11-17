@@ -1,8 +1,8 @@
 {
   "section.title": "Super Agent",
   "section.subtitle": "把一句话需求派给独占工作区的智能体，结果回到工单里",
-  "field.prepareCommand.label": "工作区准备命令",
-  "field.prepareCommand.help": "建好工作树之后、worker 开跑之前执行的一条命令，比如 pnpm install。留空表示不跑。命令失败这张工单直接判失败，不会自动重试；最多跑 10 分钟。",
+  "field.prepareCommand.label": "准备命令",
+  "field.prepareCommand.help": "新工单的目录还不存在时，在工单目录的上级根目录执行一次；执行环境变量就是这个命令的环境变量，例如用 git worktree add 或 git clone 把仓库检出到 %DSH_SUPERAGENT_DIR%。留空表示只建一个普通空目录。命令失败这张工单直接判失败，并附上命令输出，不会自动重试；最多跑 10 分钟。",
   "field.evalMode.label": "判定模式",
   "field.evalMode.help": "推断候选（群里没 @ 机器人、PR 里机器人被点名之类）怎么处理：观察 = 只记不做；自动 = 判定通过的按上面「先等我确认」的开关决定进收件箱还是直接开工。明确请求不受这个设置影响，一直直接开工。",
   "field.evalMode.option.observe": "观察（只记不做）",

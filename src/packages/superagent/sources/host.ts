@@ -2,9 +2,8 @@
  * 移植自上游 `src/sources/host.ts`（67 行）。改动只有两条：
  *   ① import 路径：`../core/index.ts` → `../core/index.js`（NodeNext 扩展名）；`Commands` / `Deployment` /
  *      `FeishuBot` / `SetupProblem` / `Tally` 改成从各自真实模块取，`fill` 改从 `../infra/text.js` 取
- *      （与上游同模块，只差扩展名）。目录已按上游镜像，所以相对深度与上游一致。
- *   ② 两处缝，各标一行 TODO：`Key` / `Family` 本地别名（上游在 `kv.ts`，TODO(P9-C)）、
- *      `SourceAgent = unknown`（上游是 dsh 的 `Agent`，TODO(P9-G/J)）。
+ *      （与上游同模块，只差扩展名）；`Key` / `Family` 按上游从 `../kv.js` 取。目录已按上游镜像，所以相对深度与上游一致。
+ *   ② 一处缝，标了 TODO：`SourceAgent = unknown`（上游是 dsh 的 `Agent`，TODO(P9-G/J)）。
  * 与上游的差异逐条列在这里：能力清单与命名一个没动——`deployment` / `commands` / `ready` /
  * `configured` / `problem` / `config` / `receive` / `atomic` / `state` / `threads` / `tickets` /
  * `triggers` / `notify` / `report`，以及 `SourceHost` / `ThreadDescription` / `sourceContext` 全部保留；
@@ -20,12 +19,8 @@ import type { Deployment } from '../deployment.js'
 import type { SourceRegistry } from './registry.js'
 import type { SetupProblem } from '../setup.js'
 import { fill } from '../infra/text.js'
+import type { Family, Key } from '../kv.js'
 
-// TODO(P9-C): 上游在 `kv.ts` 里定义 `Key` / `Family`；本仓按批次约定先留本地别名，接线时改成 `import type { Family, Key } from '../kv.js'`。
-/** KV 记录的键，值类型是 `V`；纯字符串表示无类型的键（上游 `kv.ts:11`）。 */
-export type Key<V> = string & { readonly __value?: V }
-/** 共享前缀的 KV 键族：可调用（用名字各部分拼出键），并暴露 `prefix` 供列举（上游 `kv.ts:13`）。 */
-export type Family<V, A extends unknown[]> = ((...name: A) => Key<V>) & { readonly prefix: string }
 // TODO(P9-G/J): 上游是 `@deepseek-ai/dsh-agent` 的 `Agent`；本仓还没有会话句柄这一层，先收不透明值。
 export type SourceAgent = unknown
 

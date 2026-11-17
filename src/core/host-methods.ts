@@ -59,9 +59,6 @@ export const INVOKABLE_METHODS = [
   'superagentAnswer',
   'superagentCleanWorktree',
   'superagentPeekSession',
-  // 候选收件箱（backlog G1）：人在界面上给一条推断候选定结论。两个都是写类。
-  'superagentAcceptCandidate',
-  'superagentIgnoreCandidate',
   'runCommand',
   // 壳的 `/` 命令菜单：只读那份 `shell: true` 的元数据 + 只派发同一批（清单与挑选
   // 尺子在 packages/commands-core/commands-completion.ts；界面通道（core/ui-methods.ts）再按同一批放行）

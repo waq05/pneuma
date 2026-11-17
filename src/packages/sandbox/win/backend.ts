@@ -22,7 +22,7 @@
  * @module dsc/core/sandbox/win/backend
  */
 import { existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DSC_HOME } from '../../../core/path-policy.js'
 import type { CommandRunner, SpawnPlan } from '../../../core/tools/command-runner.js'
@@ -31,7 +31,7 @@ import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
 import { resolveRunnerInterpreter } from './interpreter.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
 import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
-import { sandboxTmpDir } from '../policy.js'
+import { canonicalizePath, sandboxTmpDir } from '../policy.js'
 import { errText as describeError } from '../../../core/err-text.js'
 
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
@@ -182,6 +182,28 @@ export interface SandboxWriteRoot {
 }
 
 /**
+ * 把一次调用的工作目录规范化成「派生身份用的那个拼法」。
+ *
+ * `writeRootsFor`（授权哪条根）与 `plan()` 的 `--temp`（子进程 TMP/TEMP 指哪）必须用**同一个**
+ * 结果：两边一旦不同源，junction / 大小写拼法的会话里 TMP 会指到一条既没能力 ACE、也没人建过的
+ * 目录，子进程写临时目录直接被拒（2026-11-17 复核抓到，`b4ec8ebf` 带进来的）。
+ *
+ * 契约上 `cwd` 是绝对路径；万一给了相对路径（调用方 bug），**不规范化**、原样返回——
+ * 别拿它同时当 raw 与 base 拼出 `work\work` 这种二次拼接。
+ *
+ * 导出给插件层（`sandbox/index.ts` 算私有临时目录）用：策略层显示与放行的临时目录，
+ * 必须和这里授权的、以及 `--temp` 交给子进程的是同一条。
+ */
+export function canonicalWriteCwd(cwd: string): string {
+  const trim = (path: string): string => path.replace(/[\\/]+$/, '')
+  const raw = trim(cwd)
+  if (!isAbsolute(raw)) return raw
+  const resolved = canonicalizePath(raw, { win32: process.platform === 'win32', cwd: raw })
+  // 解析不了（盘符没了之类）退回原串：这一步失败不该让整条后端降级，打 ACL 时自然会报真实原因。
+  return resolved.ok ? trim(resolved.path) : raw
+}
+
+/**
  * 一次命令调用该授权的可写根（2026-10-30 修：以前按挂载时那个会话钉死）。
  *
  * 常驻多会话时，后台会话的工作目录与当前查看的会话往往不是同一个：钉死之后，
@@ -189,11 +211,22 @@ export interface SandboxWriteRoot {
  * 工作区反倒被永久授权。现在按 `run.cwd` 现算：工作区一个 root SID、它的私有临时目录
  * 一个 temp SID，附加可写根照配置带进来。
  *
- * @param cwd - 这次调用所在会话的工作目录（realpath 后的绝对路径）。
- * @param extraRoots - 配置里的附加可写根。
+ * 附加根里的**相对路径按 `cwd` 解析**（2026-11-17 修 BUG-0004）：策略层
+ * （`policy.ts` 的 `createPolicy`）是拿同一个 `canonicalizePath(…, { cwd })` 展开的，
+ * 这一层要是照收原始串，`mkdir`/打 ACL 会落到**宿主进程的 cwd**（打包版就是安装目录）——
+ * 围栏说「可以写」、系统层仍然拒，还顺手在安装目录旁边造一个目录。两处必须用同一个函数、
+ * 同一个 cwd。
+ *
+ * `cwd` 自己也过一遍这个函数：同一个目录只能有一个身份。会话是从 junction / 符号链接进来的
+ * 时候（`D:\link\proj` 实际指 `E:\data\proj`），cwd 按原串、附加根按真实拼法，同一个目录就会
+ * 派生出两条 SID、打两份能力 ACE（root 侧授权不回收），去重也认不出来。
+ *
+ * @param cwd - 这次调用所在会话的工作目录（调用方给的是绝对路径；可能带 junction / 符号链接）。
+ * @param extraRoots - 配置里的附加可写根（允许相对路径，按 `cwd` 展开）。
  */
 export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): SandboxWriteRoot[] {
   const trim = (path: string): string => path.replace(/[\\/]+$/, '')
+  const win32 = process.platform === 'win32'
   const list: SandboxWriteRoot[] = []
   /** 同一个目录只出现一次：尾巴分隔符不同、或附加根与工作区重合，都算同一个。 */
   const add = (path: string, side: 'root' | 'temp'): void => {
@@ -201,13 +234,19 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
     if (list.some((item) => item.path.toLowerCase() === key)) return
     list.push({ path, sid: side === 'root' ? rootWriteSid(path) : tempWriteSid(path), side })
   }
-  const root = trim(cwd)
+  const root = canonicalWriteCwd(cwd)
   add(root, 'root')
   add(sandboxTmpDir(DSC_HOME, root), 'temp')
   for (const extra of extraRoots) {
     const trimmed = trim(extra.trim())
     if (trimmed === '') continue
-    add(trimmed, 'root')
+    // 绝对路径也过一遍同一个函数：大小写、8.3 短名、符号链接拼法不同会派生出另一个 SID 身份，
+    // 同一个目录就有两份能力 ACE（root 侧不回收），去重也认不出来。
+    // 规范化不通过（8.3 短名、盘符不存在这类）就跟策略层保持一致：**这条不加**——
+    // 策略层已经把它记进 `problems` 并在判定里拒绝写，这里再加进来只会让整条后端降级。
+    const resolved = canonicalizePath(trimmed, { win32, cwd: root })
+    if (!resolved.ok) continue
+    add(trim(resolved.path), 'root')
   }
   return list
 }
@@ -256,6 +295,9 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
    *
    * 不能「授权过一次就短路」：清单会随着不同会话的调用继续增长（见 scopeOf），
    * 新补进来的根必须在这一次调用之前授权好。已授权的根在 grants 里有记录，重复调用只花几次查找。
+   *
+   * 授权前自己把**私有临时目录**建出来（`mkdirSync`）：ACL 能打的只有真实存在的路径，而那个目录
+   * 在第一次调用之前谁都没建过。工作区与附加根不替用户建——它们是既有路径，配错了要让人看见。
    */
   const ensureAuthorized = (): boolean => {
     if (degraded) return false
@@ -275,6 +317,23 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       const boundNow = bound
       for (const root of roots) {
         if (grants.has(root.path)) continue
+        // 授权的前提是目录**真存在**：GetNamedSecurityInfoW 对不存在的路径返回 Win32 错误 2，
+        // 整条后端当场降级。而私有临时目录 `<DSC_HOME>/sandbox/tmp/<工作区哈希>` 在第一次跑命令
+        // 之前没有任何人建过（宿主建的临时目录带会话 id，是另一个路径），所以这一格由我们自己建
+        // （2026-11-17 修 BUG-0001：全新安装后第一次跑命令，沙箱直接失效）。
+        //
+        // 只建 temp：工作区与附加根**都是既有路径**（工作区是用户打开的目录，附加根是用户配的
+        // 可写目录）。替它们建目录属于多管闲事——配错的路径会被我们悄悄造出来、打成可继承的
+        // 低完整性标签，而 root 侧的授权不回收；配成相对路径时还会按宿主进程的 cwd 落点，
+        // 与策略层按会话 cwd 解析的口径对不上。它们的目录不存在就照旧让这次授权失败并降级，
+        // 那是用户配置的问题，得让他看见。
+        if (root.side === 'temp') {
+          try {
+            mkdirSync(root.path, { recursive: true })
+          } catch (error) {
+            throw new Error(`建可写根「${root.path}」（能力 SID ${root.sid}）失败：${describeError(error)}`)
+          }
+        }
         try {
           grants.set(root.path, grantWrite(boundNow, root.path, root.sid, LOCK_DIR))
         } catch (error) {
@@ -351,8 +410,10 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       const args = [
         entry,
         '--mode', options.mode,
-        // 临时目录按这次调用的工作区取（与 roots 里的 temp 同源）
-        '--temp', sandboxTmpDir(DSC_HOME, run.cwd.replace(/[\\/]+$/, '')),
+        // 临时目录按这次调用的工作区取，**必须与 roots 里那条 temp 同源**（同一个
+        // canonicalWriteCwd）：两边拼法不一致时 TMP/TEMP 会指到一条既没能力 ACE、也没人建过的
+        // 目录，junction / 大小写会话里子进程写临时目录直接被拒。
+        '--temp', sandboxTmpDir(DSC_HOME, canonicalWriteCwd(run.cwd)),
         // 只把**常驻**可写根（工作区 / 附加根）传 --root。私有临时目录绝不能混进来：
         // 清单是跨会话累积的，一旦把别的会话的 temp 也当 --root 传过去，runner 会拿
         // rootWriteSid 去复算那个路径 → 「SID 与路径对不上」→ 第二个工作区直接退 127。
