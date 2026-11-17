@@ -1,4 +1,4 @@
 {
   "title": "Web search",
-  "description": "Search the web with cited sources; pick Tavily, Bocha or Serper and add a key"
+  "description": "Search the web with sources; DeepSeek by default, or Tavily, Bocha, Serper"
 }
