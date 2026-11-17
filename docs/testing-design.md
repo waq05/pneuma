@@ -176,7 +176,7 @@ tests/snapshots/session/
 
 回放器复用现有假 SSE 的骨架，但数据来源从「脚本」换成「录制文件」：按请求顺序吐出录制的 SSE chunk。
 
-**录制命令**：`pnpm test:snapshot:record`（要 key），产物进版本库；回放时 `DSC_SNAPSHOT=replay`，CI 强制只读。
+**录制命令**：`pnpm test:snapshot:record`（要 `DSC_SNAPSHOT_RECORD_KEY` 与 `DSC_SNAPSHOT_BASE_URL`），产物进版本库。回放/录制/跳过三种形态由「`session.jsonl` 在不在」自动判定，没有 `DSC_SNAPSHOT=replay` 这类开关；CI 只回放，没录制时整段 skip 并打 warn。
 
 ### 4.2 第 6 层：性能基准
 

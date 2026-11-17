@@ -582,7 +582,7 @@ export function expectGolden(actual: string, name: string, opts?: { update?: boo
 tests/snapshots/
 ├── session/
 │   └── basic-turn/
-│       └── scenario.snapshot.ts     # 录制文件 session.jsonl 未入库 → 当前整段 skip（B45）
+│       └── scenario.snapshot.ts     # 录制文件 session.jsonl 未入库 → 默认整段 skip + 收集期 warn（B45）
 ├── tui/
 │   ├── frame-kit.ts
 │   └── frames.snapshot.ts           # 30 个 TUI 整屏帧
@@ -623,7 +623,9 @@ export default defineSnapshotScenario({
 2. `replayLLM(session.jsonl)` 起回放服务器。
 3. `bootKernel`，逐个 `inputs` 跑回合。
 4. 读会话文件，按 `expect` 断言。
-5. 如果是新场景（`session.jsonl` 不存在）且 `RECORD=1`，则连真模型录制。
+5. 如果是新场景（`session.jsonl` 不存在），且给了 `DSC_SNAPSHOT_RECORD_KEY` 与
+   `DSC_SNAPSHOT_BASE_URL`，则连真模型录制。模式由「录制文件是否存在」自动判定，
+   没有 `RECORD=1` / `DSC_SNAPSHOT` 这类开关。
 
 ### 8.3 `session.jsonl` 格式
 
@@ -667,10 +669,11 @@ export default defineSnapshotScenario({
 
 | 命令 | 行为 |
 | --- | --- |
-| `RECORD=1 pnpm test:snapshot -- basic-turn` | 连真模型，录制 `session.jsonl` |
-| `UPDATE_EXPECTED=1 pnpm test:snapshot -- basic-turn` | 只更新 `expected.json`，不重录 |
-| `pnpm test:snapshot` | 纯回放，不碰网络 |
-| CI | 强制 `DSC_SNAPSHOT=replay`，录制被禁用 |
+| `DSC_SNAPSHOT_RECORD_KEY=... DSC_SNAPSHOT_BASE_URL=... pnpm test:snapshot:record` | 连真模型，录制 `session.jsonl`（模式按「录制文件是否存在」自动判定） |
+| `pnpm test:snapshot` | 有录制文件就纯回放，不碰网络 |
+| CI / 夜跑 | 只回放库里已有的录制文件；没有就跳过并打 warn（`DSC_SNAPSHOT_STRICT=1` 时才变红） |
+
+设计稿里的 `expected.json` 与 `UPDATE_EXPECTED` 未采用：断言直接内联在 `scenario.snapshot.ts` 里。
 
 **录制产物必须人审**：进 PR 时 review 重点是 `session.jsonl` 里模型说了什么，不是只看测试绿了。
 
@@ -817,12 +820,14 @@ snapshot: build + ui-shell build + xvfb-run test:snapshot
 e2e:      build + ui-shell build + xvfb-run test:e2e
 coverage: build + ui-shell build + xvfb-run test:coverage
 
-# 分支保护只认一个聚合 check
+# 分支保护只认 all-checks-passed（PR 门）；夜跑另有 all-nightly-passed，不参与分支保护
 all-checks-passed: needs [core, ui, desktop, integration, bench, cli, windows]
 ```
 
 `probe` / `snapshot` / `e2e` / `coverage` **不进 `needs`**：它们只在夜跑与手动触发，
-PR 上是 skipped；放进聚合门会把每个 PR 判红（B51 已定，注释写在 job 里）。
+PR 上是 skipped；放进聚合门会把每个 PR 判红（B51 已定，注释写在 job 里）。夜跑侧由
+`all-nightly-passed`（`needs: [snapshot, e2e, coverage, probe]`，只在 schedule /
+workflow_dispatch 执行）兜住。
 
 与最初设想不同的两处：
 
@@ -861,17 +866,37 @@ jobs:
 
 ```yaml
   all-checks-passed:
-    needs: [core, ui, desktop, probe]
+    needs: [core, ui, desktop, integration, bench, cli, windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - run: |
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
-            exit 1
-          fi
+          # toJson 给的是多行 pretty JSON：先去掉方括号 / 引号 / 空白 / 换行，拍平成
+          # "success,success,failure"，再按逗号逐项比 success。单行与多行同一条路径。
+          flat=$(printf '%s' "${{ toJson(needs.*.result) }}" | tr -d '[]" \t\n\r')
+          [ -n "$flat" ] || { echo "::error::needs 结果为空，按红处理"; exit 1; }
+          failed=""
+          for r in $(printf '%s' "$flat" | tr ',' ' '); do
+            [ "$r" = "success" ] || failed="$failed $r"
+          done
+          if [ -n "$failed" ]; then echo "未成功的 job：$failed"; exit 1; fi
 ```
 
-分支保护只要求这一个 check。
+分支保护只要求 `all-checks-passed` 这一个 check。判定不能写成
+`contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')`：它漏 `skipped`，
+而 GitHub 把跳过的 job 记成 Success。规则是「拍平后逐项比 `success`，空数组判红」，
+实装还会按 `needs` 的声明顺序把没成功的 job 名逐个打出来。
+
+夜跑另有自己的聚合门，只覆盖四个夜跑 job，不参与分支保护（PR / push 上它是 skipped）：
+
+```yaml
+  all-nightly-passed:
+    needs: [snapshot, e2e, coverage, probe]
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    # 判定脚本与 all-checks-passed 同一套（拍平后逐项比 success，空数组判红），
+    # 只把 needs 换成四个夜跑 job；实装见 verify.yml 末尾。
+```
 
 ---
 
@@ -887,7 +912,7 @@ jobs:
   "test:ui": "vitest run --project ui",
   "test:tui": "vitest run --project tui",
   "test:e2e": "vitest run --config vitest.e2e.config.ts",
-  "test:snapshot": "vitest run --project snapshot --passWithNoTests",
+  "test:snapshot": "vitest run --project snapshot",
   "test:cli": "vitest run --config vitest.cli.config.ts",
   "test:live": "vitest run --config vitest.live.config.ts",
   "test:built": "vitest run --config vitest.built.config.ts",
@@ -901,7 +926,8 @@ jobs:
 
 - `test` 纳入了 `tui`（121 条 TUI 用例要进 PR 门）；snapshot 不进 `test`（要 Electron、分钟级）。
 - `test:int` 前面加了 `pnpm run build`：integration 跑的是 `lib` 平面（D25）。
-- `test:snapshot` 带 `--passWithNoTests`；会话场景当前整段 skip（B45）。
+- `test:snapshot` 不带 `--passWithNoTests`（一个测试文件都没匹配到时退出码 1）；会话场景默认整段
+  skip 并在收集期打 `console.warn`，设 `DSC_SNAPSHOT_STRICT=1` 时改为一条必红用例（B45）。
 - `test:e2e` / `test:cli` / `test:live` / `test:built` 各自独立 config，不挂主 projects。
 - `test:coverage` 显式全五 project（D40/B47），不是 `vitest run --coverage`。
 - `check:all` 链尾**没有**追加 `pnpm test`：CI 的 `core` job 已单列跑。
@@ -1010,7 +1036,7 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 | --- | --- | --- | --- |
 | 1 | 装依赖 | `package.json` | `pnpm install` 退出码 0 |
 | 2 | 写解析插件 | `tests/plugins/js-to-ts.ts` | 单测不了，靠第 6 步验证 |
-| 3 | 写主配置 | `vitest.config.ts` | `vitest run --project unit --passWithNoTests` 退出码 0 |
+| 3 | 写主配置 | `vitest.config.ts` | `vitest run --project unit --passWithNoTests` 退出码 0（历史命令：`--passWithNoTests` 现已从 `test:snapshot` 移除，此处仅记录当时的验收方式） |
 | 4 | 改 tsconfig | 三处 exclude + `tsconfig.spec.json` + `ui-shell/tsconfig.spec.json` | `pnpm build` 后 `lib` 下 `*.spec.*` 为 0；`typecheck:spec` 退出码 0 |
 | 5 | **建两个 setup** | `tests/setup/temp-home.ts`、`tests/setup/dom.ts` | 第 6、7 步的前置，缺了直接报 `Cannot find module`（不是可跳过的装饰） |
 | 6 | 迁 POC-1 | `src/core/todo-reminder.spec.ts` | 19 条绿 |

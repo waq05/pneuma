@@ -635,12 +635,12 @@ cd D:\dsc\desktop && pnpm run typecheck
 # ── 主测试体系（Vitest，2026-11 起）：改完代码优先跑这几条 ─────────────────
 pnpm test                          # unit + ui + tui 三层（PR 门的核心，约 2 分钟）
 pnpm run test:int                  # 先 build 再跑 integration（真内核 + 临时 HOME，约 8 分钟；maxWorkers 4）
-pnpm run test:snapshot             # 帧/会话 golden（TUI 整屏 + 录制回放），PR 门的关键面
+pnpm run test:snapshot             # 帧/golden（TUI 帧 30 + 浏览器 DOM 11；夜跑，PR 门不跑。会话回放场景无录制时整段 skip 并打 warn，B45）
 pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，161 通过 + 1 skip；B40 的 6 红已于 779498b7 修掉）
 pnpm run test:cli                  # 真入口 bin/dsc.js 八条（先 build，约 5 秒）
 pnpm run test:live                 # 真模型冒烟 5 条（无 DSC_LIVE_API_KEY 时整层跳过，不算失败）
 pnpm run test:bench                # 性能基准 4 条，7 次中位数 vs tests/bench/baseline.json（runner 不符只记录）
-pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升）
+pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升；文件缺：本地放行、CI 报错；文件坏：一律报错）
 pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
 
 # ── 探针通道（Vitest 表达不了的那批；不是主入口）────────────────────────────

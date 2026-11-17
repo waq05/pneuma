@@ -75,7 +75,7 @@ check('勾选框是画的', read(TODO_VIEW).includes('tc-todo-box'))
 | **unit** | 一个函数/一个模块，不碰网络和磁盘 | 毫秒 | 303 个 `.spec.ts`，跑 `pnpm test` |
 | **integration** | 几个模块 + 假模型，起真内核 | 秒 | 114 个 `.int.spec.ts`，跑 `pnpm run test:int`（先 build） |
 | **ui** | React 组件与交互 | 百毫秒 | 155 个，jsdom，跑 `pnpm run test:ui` |
-| **snapshot** | TUI 整屏帧、浏览器 DOM 的 golden | 秒–分钟 | 3 个场景文件，跑 `pnpm run test:snapshot` |
+| **snapshot** | TUI 整屏帧、浏览器 DOM 的 golden | 秒–分钟 | 3 个场景文件，跑 `pnpm run test:snapshot`；其中会话场景本仓库没有录制文件，默认整段 skip 并打一条 warn，`DSC_SNAPSHOT_STRICT=1` 可让它变红 |
 | **tui** | ink 终端界面（假终端抓帧） | 百毫秒 | 16 个，跑 `pnpm run test:tui` |
 
 四条独立通道（不在 `pnpm test` 里，各有前提）：
@@ -144,7 +144,7 @@ afterAll(restore)
 
 理由不是洁癖：测试往真实 `~/.dsc` 写，会污染用户正在用的会话，而且并行跑会互相踩。
 
-**临时目录的收尾**（`tests/support/tmp-dir.ts` + `tests/setup/global-clean.ts`）：全绿时整轮 teardown 删掉本轮建的目录；本文件有任一条红就整轮保留，teardown 把目录路径打到 stderr；`DSC_KEEP_TMP=1` 强制保留。被强杀留下的残留，下一轮开跑时由 `global-clean.ts` 清掉超过 24 小时的。想立刻清就 `pnpm run clean:test-tmp`。自己建目录时用 `createTempDir('dsc-xxx-')`，不要直接 `mkdtempSync`——后者不进认领范围，teardown 清不到。
+**临时目录的收尾**（`tests/support/tmp-dir.ts` + `tests/setup/global-clean.ts`）：全绿时整轮 teardown 删掉本轮建的目录；本文件有任一条红就整轮保留，teardown 把目录路径打到 stderr；`DSC_KEEP_TMP=1` 强制保留。被强杀留下的残留，下一轮开跑时由 `global-clean.ts` 清掉超过 24 小时的。想立刻清就 `pnpm run clean:test-tmp`。自己建目录时用 `createTempDir('dsc-xxx-')`：它只建目录并校验前缀（失败标记由同文件的钩子写），**不登记任何表**；teardown 认领的判据是「系统临时根顶层 + 名字以 `dsc-` 开头 + 本轮创建时间」。所以裸 `mkdtempSync` 建的目录，只有同时满足「名字带 `dsc-`」和「在临时根顶层」才会被收走，不带前缀的一定漏。
 
 ### 3.5 假外部：只 mock 贵的和不确定的
 
@@ -223,7 +223,7 @@ const kernel = await bootKernel({ providerBaseUrl: llm.baseUrl })
 | 金字塔比例 | 单元占多数 | 单元 60%、集成 30%、端到端 10% |
 | 覆盖率 | 核心模块有数字、不倒退 | 只降不升基线（**不设 100%**） |
 | Flake 率 | < 1%（一百次里抖不到一次） | 重试 + 串行组 + 超时治理 |
-| 门禁分层 | 快的进 PR，慢的进夜跑 | unit/ui/tui/integration/cli 进 PR；snapshot/e2e/coverage 夜跑 |
+| 门禁分层 | 快的进 PR，慢的进夜跑 | unit/ui/tui/integration/cli 进 PR；snapshot/e2e/coverage 夜跑；夜跑（含 probe）由 `all-nightly-passed` 汇总，PR 由 `all-checks-passed` 汇总 |
 | 真实性 | 至少一层碰真东西（真模型/真入口） | 5 条 live + 8 条 cli |
 
 ### 5.3 三个最常见的错误标准

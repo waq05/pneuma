@@ -33,6 +33,8 @@ pnpm run test:live ── live       真模型（要 key，没 key 整层 skip�
 pnpm run test:coverage ─ 五层全跑 + 覆盖率门
 ```
 
+快照层的会话场景默认整段 skip（当前仓库没有 `session.jsonl`）：收集期打一条 `console.warn`，要让它变红用 `DSC_SNAPSHOT_STRICT=1`。
+
 ---
 
 ## 2 选层：改什么，跑什么，为什么
@@ -43,7 +45,7 @@ pnpm run test:coverage ─ 五层全跑 + 覆盖率门
 | 会话落盘、插件加载、内核装配、工具执行 | `pnpm run test:int` | 要起真内核，必须读 `lib/`（命令自带 build） |
 | React 组件、样式、交互 | `pnpm exec vitest run --project ui <文件>` | jsdom 渲染，不启 Electron |
 | ink 终端界面 | `pnpm run test:tui` | 假终端抓帧，不能用 jsdom |
-| TUI 帧、浏览器 DOM 的整屏结构 | `pnpm run test:snapshot` | golden 逐字节比，改结构必须更新 golden |
+| TUI 帧、浏览器 DOM 的整屏结构 | `pnpm run test:snapshot` | golden 逐字节比，改结构必须更新 golden；会话场景默认 skip + warn，要让它红用 `DSC_SNAPSHOT_STRICT=1` |
 | 真入口（`bin/dsc.js`）行为 | `pnpm run test:cli` | 必须 spawn 真进程，先 build |
 | 真产物形状（`lib/ui/plugins/*/client.js`、SDK 类型树） | `pnpm run test:built` | 故意绕开 `src` 别名验产物 |
 | 真 Electron 全链路、真宿主 | `pnpm run test:e2e` | 单条 10–60 秒，不进 PR 门 |
@@ -172,7 +174,7 @@ UPDATE_GOLDEN=1 pnpm exec vitest run --project snapshot <场景文件>
 - **临时目录**：全绿时 teardown 会自动清（`tests/setup/global-clean.ts`）。想确认：`%TEMP%\dsc-*` 应为 0；有红时目录会保留，路径打在 stderr。
   - 要保留现场：`DSC_KEEP_TMP=1 pnpm ...`
   - 手动清：`pnpm run clean:test-tmp`
-- **覆盖率**（只有 `test:coverage`）：阈值来自 `coverage-baseline.json`，跑过基线要抬就改这个文件并 review（只升不降）。
+- **覆盖率**（只有 `test:coverage`）：阈值来自 `coverage-baseline.json`，跑过基线要抬就改这个文件并 review（只升不降）。缺文件：本地打一条 warn 后放行、`CI` 为真值直接报错；文件坏（非法 JSON / 缺指标 / 值越界 / `directories` 为 null）：本地也报错，报错带文件路径与字段名。
 - **工作区**：`git status` 应只剩你该改的文件；`*.log`、`reports/`、`coverage/` 已忽略。
 
 ---
@@ -198,6 +200,7 @@ UPDATE_GOLDEN=1 pnpm exec vitest run --project snapshot <场景文件>
 | Windows 删目录 EPERM | 收尾报错删不掉 | 用 `removeTempDir()`（自带重试与 cwd 保护） |
 | 快照跨午夜变红 | golden 每天 +1 格 | 场景里把页面 `Date` 钉死（`SNAP_NOW`），种子同锚 |
 | 改了 `src` 没 build 就跑 int | `bootKernel` 抛「lib 比源码旧」 | 别改测试，去 build |
+| `pnpm test` 起不来、报 `[coverage] 基线…` | `coverage-baseline.json` 被改坏（非法 JSON / 缺指标 / 越界） | `git checkout -- coverage-baseline.json` |
 
 ---
 

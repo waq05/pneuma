@@ -16,9 +16,9 @@
 | **P1b 包级测试** | ✅ | 119 条包级 `.test.mjs` → `.spec.ts`（806 条用例），旧脚手架拆净 |
 | **P2 内核探针** | ✅ | 122 → 7：能迁的迁进 unit/integration，剩下的 7 条是机制上迁不走的（§4） |
 | **P3 ui 层** | ✅ | 九组代理迁移 + 四批渲染测试（R1/R2/R3a/R3b）+ 收尾对账；check-ui 80 → 42（全部是 jsdom 够不到的产物审计/源码闸/CSS） |
-| **P4 快照层** | ✅ 部分 | TUI 帧 golden 30 份、**浏览器 DOM 快照 10 份**、覆盖率基线冻结；**会话录制未入库**，会话回放场景只 skip（B45） |
+| **P4 快照层** | ✅ 部分 | TUI 帧 golden 30 份、**浏览器 DOM 快照 10 份**、覆盖率基线冻结；**会话录制未入库**，会话回放场景默认 skip 并打 warn，`DSC_SNAPSHOT_STRICT=1` 变红（B45 未闭环） |
 | **P5 live/bench/契约** | ✅ | live 冒烟 5 条（独立 workflow + 防假绿）、性能基准 4 条（基线 + PR 门）、契约测试 3 份 |
-| **P6 CI/入口** | ✅ | integration 三片并行、Node 22/24 矩阵、真入口 e2e 8 条、flake 治理（K2+/K4）、聚合门 |
+| **P6 CI/入口** | ✅ | integration 三片并行、Node 22/24 矩阵、真入口 e2e 8 条、flake 治理（K2+/K4）、聚合门（PR 门 `all-checks-passed` + 夜跑门 `all-nightly-passed`） |
 | **P7 收尾** | ✅ | 属性测试 17 条、覆盖率基线门、Windows 车道、文档定稿；**2026-11-16 审计**补 B44–B53 与 [90% 计划](testing-coverage-plan.md) |
 
 ## 2 现场
@@ -36,7 +36,7 @@
 | --- | --- |
 | `pnpm test`（unit + ui + tui） | **295 文件 / 3251 条 / exit 0**（2026-11-16 审计复跑） |
 | `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0**（交接时记录，审计未重跑） |
-| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 11 全绿；**会话回放 1 场景是 skip**（无 `session.jsonl`，B45） |
+| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 11 全绿；**会话回放 1 场景默认 skip 并打 warn**（无 `session.jsonl`，B45 未闭环；`DSC_SNAPSHOT_STRICT=1` 时变红） |
 | `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42/B50） |
 | `pnpm run test:e2e` | **8 文件 / 161 通过 + 1 skip / exit 0**（2026-11-16 审计复跑；B40 的 6 红已归零） |
 | `pnpm run typecheck:spec` | exit 0（2026-11-16 审计复跑，两份 tsconfig） |
@@ -88,15 +88,18 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 1. **e2e 已全绿**：B40 修完（`779498b7`），全量 `8 文件 / 161 通过 + 1 skip / exit 0`。
    原 6 条已知红（`ui-anchor`×5、`ui-plugin-disable`×1）全部转绿，不再是已知态。
-2. **快照层的会话回放其实没跑**（B45）：`tests/snapshots/session/basic-turn/` 没有
-   `session.jsonl`，4 条用例整段 skip；TUI 帧 30 与浏览器 11 是实跑的。
-3. **CI 不跑 e2e / snapshot / coverage**（B46）：`verify.yml` 只有 `pnpm test`、`test:int`、
-   `test:bench`、`test:cli`；快照与覆盖率门目前只在本机存在。
+2. **快照层的会话回放其实没跑**（B45 未闭环）：`tests/snapshots/session/basic-turn/` 没有
+   `session.jsonl`，4 条用例默认整段 skip，收集期打一条 warn，`DSC_SNAPSHOT_STRICT=1` 时改为
+   一条必红用例；TUI 帧 30 与浏览器 11 是实跑的。
+3. **e2e / snapshot / coverage 只在夜跑跑**（B46 部分闭环）：`verify.yml` 已有 `snapshot`、
+   `e2e`、`coverage`、`probe` 四个夜跑 job，并由 `all-nightly-passed` 汇总；PR 门上刻意
+   不跑这四道（进了 needs 会因为 skipped 把每个 PR 判红）。
 4. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
    「无 key 整层跳过（exit 0）」与类型检查。`test-live.yml` 的 key 预检 / 非零用例断言
    也没在 Actions 上跑过——首次夜间跑才算实证。
 5. **CI 没有真跑过**：`verify.yml` 的全部 job（core / integration 三片 / bench / cli /
-   windows / ui / desktop / probe）与 `test-live.yml` 只在本机按同一脚本验证过命令，
+   windows / ui / desktop / probe，夜跑的 snapshot / e2e / coverage，以及两个聚合门
+   `all-checks-passed` / `all-nightly-passed`）与 `test-live.yml` 只在本机按同一脚本验证过命令，
    GitHub 上没跑过一次。Windows 车道与 Ubuntu 的差异（路径、ConPTY、Electron）要等首跑。
 6. **覆盖率 90% 已达成**（2026-11-17 实测 lines 92.09 / branches 81.85）：基线抬到
    92.0 / 81.8 / 89.7 / 89.6，逐目录门只升不降；剩余长尾债（`approval` 深层决策、
@@ -122,8 +125,8 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 **还欠（要拍板 / 下一阶段）**：
 
-- **B45**：会话回放没有录制文件，整段 skip；要一份真会话入库。
-- **B46**：CI 接 e2e / snapshot / coverage 三个入口。
+- **B45**：会话回放没有录制文件，默认整段 skip 并打 warn，`DSC_SNAPSHOT_STRICT=1` 变红；要一份真会话入库。
+- **B46**：CI 接 e2e / snapshot / coverage 三个入口——**夜跑已接**（三个 job + `all-nightly-passed` 汇总，2026-11-17）；仍欠「首次真跑验证」与 PR 侧是否要纳入其中某一道。
 - **B47**：覆盖率口径与阈值互斥，90% 计划见 [testing-coverage-plan.md](testing-coverage-plan.md)。
 - **B37-R / B48**：R3b 迁移后 13 条探针的 CSS 与源码残留；CSS 转真 Chromium computed-style。
 - **B31/B32 / B49**：界面 SDK 产物层与插件产物审计——建 `tests/built/*.built.e2e.ts`，对齐 DSH。
@@ -161,7 +164,7 @@ git status --porcelain          # 应为空
 git log --oneline -10           # 本阶段的提交（P3–P7 + 2026-11-16 审计修复）
 pnpm test                       # 295 文件 / 3251 条
 pnpm run test:int               # 先 build；integration 全量（114 / 1883 + 1 skip）
-pnpm run test:snapshot          # TUI 30 + 浏览器 11；会话回放当前 skip（B45）
+pnpm run test:snapshot          # TUI 30 + 浏览器 11；会话回放默认 skip + warn（DSC_SNAPSHOT_STRICT=1 变红，B45）
 pnpm run test:cli               # 8 + 1 skip
 pnpm run test:e2e               # 8 文件 / 161 通过 + 1 skip
 pnpm run typecheck:spec && pnpm run check:style
