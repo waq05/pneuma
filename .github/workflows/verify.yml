@@ -274,9 +274,21 @@ jobs:
     # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
     # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
     #
+    # 判定必须逐条做：needs 里每个 job 的 result 要**全部**等于 success，出现 failure /
+    # cancelled / skipped / 任何别的值都判红，并把哪几个 job 没成功打出来。
+    # 旧写法 `echo "$results" | grep -qv '"success"'` 的语义是「只要有一行不含 success
+    # 就成功退出」，它回答的是「有没有一行是坏的」，不是「有没有 job 没成功」。而 toJson
+    # 给的又是多行 pretty JSON，于是全绿也判红；万一压成单行，有失败反而判绿，两头都错。
+    #
+    # 现在的做法：tr 把 JSON 拍平成 "success,success,failure"（去掉方括号 / 引号 / 空白 /
+    # 换行，保留逗号），再按逗号逐项比较。单行和多行输入走同一条路径，两种形态都对。
+    # 不用 jq：runner 上有，本地 Windows 没有，这份脚本必须能在 Git bash 里自证。
+    # 空数组 [] 判红：needs 声明了 job 就一定有 result，取不到说明 needs 配错了（比如
+    # job 改了名），「聚合门其实什么都没看」不能算绿。
+    #
     # 刻意不把 probe / snapshot / e2e / coverage 放进 needs（B51）：这四个只在夜跑与手动
-    # 触发，PR 上不执行；放进 needs 会让「skipped」把每个 PR 的聚合门判红。它们的红灯
-    # 通过夜跑通知看，分支保护只守 PR 能跑的那批。
+    # 触发，PR 上不执行；放进 needs 会让「skipped」把每个 PR 的聚合门判红。它们的红灯由
+    # 夜跑的 all-nightly-passed 兜住（见文件末尾），分支保护只守 PR 能跑的那批。
     if: always()
     needs: [core, ui, desktop, integration, bench, cli, windows]
     runs-on: ubuntu-latest
@@ -285,10 +297,43 @@ jobs:
         run: |
           results="${{ toJson(needs.*.result) }}"
           echo "needs 结果：$results"
-          if echo "$results" | grep -qv '"success"'; then
-            echo "存在未成功的 job，聚合门红。"
+
+          # 按上面 needs 的声明顺序写；只用来在日志里打印 job 名，不参与判定。
+          # GitHub 不保证 needs.* 的顺序（Object filters 一节明说对象过滤器的输出顺序
+          # 无法保证），名字可能错位；判定不看名字，结论不受影响。
+          names="core ui desktop integration bench cli windows"
+          expected=7
+
+          flat=$(printf '%s' "$results" | tr -d '[]" \t\n\r')
+          if [ -z "$flat" ]; then
+            echo "::error::needs 结果为空，聚合门拿不到任何 job，按红处理。"
             exit 1
           fi
+
+          failed=""
+          i=0
+          for r in $(printf '%s' "$flat" | tr ',' ' '); do
+            i=$((i + 1))
+            if [ "$r" != "success" ]; then
+              name=$(printf '%s' "$names" | cut -d' ' -f"$i")
+              [ -n "$name" ] || name="第 $i 个 job"
+              echo "::error::job「$name」的结果是「$r」，不是 success"
+              failed="$failed $name($r)"
+            fi
+          done
+
+          # 个数兜底：某个 result 变成空串（如 ["success",""]）或 null 时，拍平后 token 数会
+          # 变少但仍全是 success，只比 success 会误判为绿。所以个数必须与 needs 数量相等。
+          if [ "$i" -ne "$expected" ]; then
+            echo "::error::只拿到 $i 个结果，期望 $expected 个"
+            exit 1
+          fi
+
+          if [ -n "$failed" ]; then
+            echo "聚合门红：未成功的 job：$failed"
+            exit 1
+          fi
+          echo "聚合门绿：$i 个 job 全部 success。"
 
   windows:
     name: Windows 车道（unit + ui + tui）
@@ -403,3 +448,67 @@ jobs:
       # 上面的正常安装（没带 --ignore-scripts）已经把 Electron 二进制拉下来了。
       - name: 界面 e2e 自检（真 Chromium）
         run: pnpm run check:ui:e2e
+
+  all-nightly-passed:
+    name: all-nightly-passed（夜跑聚合）
+    # 夜跑 / 手动的聚合口（B51）：snapshot / e2e / coverage / probe 四个只在 schedule 与
+    # workflow_dispatch 执行，PR 上是 skipped。它们此前没有被任何聚合口覆盖——夜跑里哪个
+    # 红了，没有任何一个 check 变红，只能靠人去翻通知。所以补这一个口。
+    #
+    # 分工写死：分支保护只认 all-checks-passed（PR 门）；夜跑看 all-nightly-passed。
+    # 两边互不牵连：这四个 job 不进 all-checks-passed.needs，否则它们在 PR 上全是 skipped，
+    # 逐项比 success 会把每个 PR 判红。
+    #
+    # 事件守卫必须保留，但理由不是「免得 PR 上多一个 skipped 的 check」：加了 if，这个 job
+    # 在 PR 上照样出现在 check 列表里，只是显示 skipped；而按 GitHub 官方语义「被跳过的 job
+    # 报告为 Success」，它本身不影响分支保护。真正必须守卫的理由是：去掉 if 之后 always()
+    # 会让它在 PR 上真的跑起来，而它的 4 个 needs 在 PR 上全是 skipped，逐项比 success
+    # 必然判红——那才会把每一个 PR 判红。
+    #
+    # 判定与 all-checks-passed 同一套规则：全部 success 才算过，其余一律判红，空数组与
+    # 结果个数不足也判红。
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [snapshot, e2e, coverage, probe]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 聚合判定
+        run: |
+          results="${{ toJson(needs.*.result) }}"
+          echo "needs 结果：$results"
+
+          # 按上面 needs 的声明顺序写；只用来在日志里打印 job 名，不参与判定。
+          # GitHub 不保证 needs.* 的顺序（Object filters 一节明说对象过滤器的输出顺序
+          # 无法保证），名字可能错位；判定不看名字，结论不受影响。
+          names="snapshot e2e coverage probe"
+          expected=4
+
+          flat=$(printf '%s' "$results" | tr -d '[]" \t\n\r')
+          if [ -z "$flat" ]; then
+            echo "::error::needs 结果为空，夜跑聚合门拿不到任何 job，按红处理。"
+            exit 1
+          fi
+
+          failed=""
+          i=0
+          for r in $(printf '%s' "$flat" | tr ',' ' '); do
+            i=$((i + 1))
+            if [ "$r" != "success" ]; then
+              name=$(printf '%s' "$names" | cut -d' ' -f"$i")
+              [ -n "$name" ] || name="第 $i 个 job"
+              echo "::error::job「$name」的结果是「$r」，不是 success"
+              failed="$failed $name($r)"
+            fi
+          done
+
+          # 个数兜底：某个 result 变成空串（如 ["success",""]）或 null 时，拍平后 token 数会
+          # 变少但仍全是 success，只比 success 会误判为绿。所以个数必须与 needs 数量相等。
+          if [ "$i" -ne "$expected" ]; then
+            echo "::error::只拿到 $i 个结果，期望 $expected 个"
+            exit 1
+          fi
+
+          if [ -n "$failed" ]; then
+            echo "夜跑聚合门红：未成功的 job：$failed"
+            exit 1
+          fi
+          echo "夜跑聚合门绿：$i 个 job 全部 success。"
