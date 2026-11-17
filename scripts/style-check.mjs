@@ -36,8 +36,13 @@ import { extname, join, relative } from 'node:path'
 
 const ROOT = process.cwd()
 
-/** 扫这些目录；不在这里的（docs / README）不查——markdown 的行尾两空格是硬换行。 */
-const SCAN_DIRS = ['src', 'ui-shell/src', 'desktop/src', 'remote-web/src', 'scripts', '.github']
+/**
+ * 扫这些目录；不在这里的（docs / README）不查——markdown 的行尾两空格是硬换行。
+ *
+ * `tests` 是 2026-11-13 补的：测试体系落地后那里会出现解析插件、harness、快照场景，
+ * 不扫就是「新写的代码不受排版闸门管」，而闸门本身正是靠这条扫描清单才看得见东西。
+ */
+const SCAN_DIRS = ['src', 'ui-shell/src', 'desktop/src', 'remote-web/src', 'scripts', 'tests', '.github']
 
 /** 查这些扩展名；其余（图片、字体、lock）是二进制或机器生成，不查。 */
 const EXTS = new Set(['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx', '.css', '.json', '.yml', '.yaml', '.ps1', '.html'])

@@ -1776,7 +1776,13 @@ ${body}
         return `${head}\n${reason}`
       }
 
-      void waitForIdle(teammate).then(() => reportHome(teammate))
+      void waitForIdle(teammate)
+        .then(() => reportHome(teammate))
+        .catch(() => {
+          // 尽力而为的汇报：宿主先于队友收尾（关机、测试拆内核）时，等待环的下一拍会摸到
+          // 已停用的 context（"cannot get required service"）。拆都拆了，汇报没有意义，
+          // 吞掉——不能让一条后台汇报变成 unhandled rejection 打断收尾。
+        })
       const bound = taskId === '' ? '' : `已认领并绑定任务 ${taskId}（它成功收工后会自动结项并写入最终结论）。`
       const tail =
         teammate.mode === 'one-shot'

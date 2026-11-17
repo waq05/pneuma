@@ -1,0 +1,56 @@
+# 场景：子代理/队友页（状态面板 → 只读运行记录）
+# 稳定：名册与队友日志都是种子文件；当前会话 cwd 指向不存在的 `D:\dom-work`，状态面板因此没有 Git 读数（不会把工作树脏文件数带进 golden）；队友耗时用固定的 startedAt/finishedAt。
+# hash：（空）
+# 计数：
+#   dom.buttons = 44
+#   dom.elements = 388
+#   dom.inputs = 1
+#   team.reader = 1
+#   team.reader.entries = 2
+#   team.rows = 1
+
+Pneuma
+新会话
+技能
+插件
+工作区
+dom-work
+看一下 README，然后说说测试层怎么搭。
+<time>
+今日总用量
+0 tok
+设置
+Super Agent
+看一下 README，然后说说测试层怎么搭。
+/
+writer-1
+只读
+标准模式
+对话
+轨迹
+已结束 1 个子智能体
+看一下 README，然后说说测试层怎么搭。
+已完成，用时 <elapsed>
+
+README 读完了：测试层按 unit、integration、ui、snapshot、tui 五层分工，快照层负责把渲染面钉成文本。
+
+~32 tok
+·
+<time>
++
+工作区可写
+演示端点/
+demo-chat
+默认
+1 轮 3 步
+writer-1
+writer
+已完成
+<elapsed>
+只读：这是子智能体的运行记录
+移除
+发话
+返回原会话
+写浏览器快照的说明：先说为什么选 DOM 文本，再说归一化边界。
+
+先写「为什么不是像素」这一段，再补归一化规则表。

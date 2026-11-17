@@ -13,6 +13,14 @@
  * 产物依赖：测试 import 的是 lib/ 下的编译结果，跑之前先 `pnpm run build`。
  * 接在 package.json 的 check:plugin 里、plugin-standard-check 之后。
  *
+ * 两套跑法并存（2026-11-17 合并 dev 之后的状态，别当成遗漏）：
+ *   老包级测试 119 条已在测试设施迁移里转写成 Vitest 的 `*.spec.ts`，由 `pnpm test` 覆盖，
+ *   不再进这里；现在这 42 条是 dev 那条线（主要是 superagent 新树）后来新写的 `.test.mjs`，
+ *   还留在 node:test 形态。两边的发现规则各认各的后缀，重合为 0 —— `plugin-standard-check`
+ *   要求 tests/ 下至少有 `*.spec.ts` 或 `*.test.mjs`，两种都算数。
+ *   把它们也迁进 Vitest 是欠账，记在 docs/testing-backlog.md（B57），不是这里要不要跑的问题：
+ *   不跑等于这些用例不存在。
+ *
  * 分工边界（写测试的人照这个切）：
  *   包级测试只测这个包自己的东西——导出的插件对象、工具 schema、注册/销毁、纯函数、
  *   设置分区的字段与默认值、package.json 与 cordis.patch.yml 的声明；

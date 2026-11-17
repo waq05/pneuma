@@ -65,6 +65,13 @@ const PROBES = [
   { file: 'dock-patch-invalidate-check.mjs' },
   // 靠 PATH / PATHEXT 找命令：Windows 才有那套语义，别的平台跳过。
   { file: 'mcp-command-resolve-check.mjs', platforms: ['win32'] },
+  // P7 收口（2026-11-14）：原先「没挂在任何门上」的三个真闸。runtime-package 钉的是
+  // 单实例约束（两份拷贝 = 沙箱 fail-open，build-runtime-package.mjs 第 6-7 行的同一约束）；
+  // settings-sections 钉设置分区三层投影；ui-switch 钉界面单元停用→启动图剔除。
+  // 同批删掉的两个 _market-* 是自标「临时诊断」（要联网），不进门禁。
+  { file: 'runtime-package-check.mjs' },
+  { file: 'settings-sections-check.mjs' },
+  { file: 'ui-switch-check.mjs' },
 ]
 
 const TIMEOUT_MS = 300_000
