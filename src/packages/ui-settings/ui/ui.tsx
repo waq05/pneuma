@@ -46,6 +46,10 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
+  FONT_LIST_MAX_CHARS,
+  FONT_SIZE_PX_DEFAULT,
+  FONT_SIZE_PX_MAX,
+  FONT_SIZE_PX_MIN,
   IconArchive,
   IconChart,
   IconClose,
@@ -55,6 +59,9 @@ import {
   IconPhone,
   IconSpark,
   createT,
+  normalizeFontList,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
 } from '@dsc/ui'
 import {
   ACTIONS_SERVICE,
@@ -1098,7 +1105,77 @@ const SOUND_VARIANT_OPTIONS = COMPLETION_SOUND_VARIANTS.map((variant) => ({
 }))
 
 /**
- * 外观：主题 / 字号 / 密度三行（改完即时落到 `<html>` 上，与旧界面同一套）。
+ * 一行字体输入框：本地草稿 + 失焦 / 回车提交。
+ *
+ * 为什么不能把 `value` 直接绑到 appearance 上：外观是「改完即时落到 `<html>`」的，
+ * 每敲一个字母都会走一次 `setUiPrefs` 落盘，输入一个字体名要写十几次档。所以这里
+ * 打字只改草稿，失焦或回车才归一（`normalizeFontList`：去重、加引号、超长回空）并提交，
+ * 归一结果同时回填草稿——用户看到的正是真正生效的那串。Escape 丢掉草稿，显示回当前值。
+ *
+ * 空串是合法值（= 用内置字体栈），不拦。
+ */
+function FontRow(props: {
+  label: string
+  help: string
+  placeholder: string
+  value: string
+  onCommit: (next: string) => void
+}): ReactNode {
+  const [draft, setDraft] = useState<string | null>(null)
+  // 真值一变就把草稿丢掉，显示回 `value`：
+  //   - 提交成功时归一结果就是 value，清成 null 显示的是同一个串，界面不跳；
+  //   - 写盘失败回滚时 value 变回旧值，草稿跟着回落，输入框不会显示一串没生效的字。
+  useEffect(() => {
+    setDraft(null)
+  }, [props.value])
+  const commit = (typed: string): void => {
+    const next = normalizeFontList(typed)
+    setDraft(next)
+    if (next !== props.value) props.onCommit(next)
+  }
+  return (
+    <div className="setting-row">
+      <div className="setting-text">
+        <div className="setting-label">{props.label}</div>
+        <div className="setting-help">{props.help}</div>
+      </div>
+      <div className="setting-control">
+        <input
+          className="setting-input"
+          type="text"
+          aria-label={props.label}
+          placeholder={props.placeholder}
+          spellCheck={false}
+          autoComplete="off"
+          maxLength={FONT_LIST_MAX_CHARS}
+          value={draft ?? props.value}
+          onChange={(event) => {
+            setDraft(event.target.value)
+          }}
+          onBlur={(event) => {
+            // 读 DOM 值而不是读草稿 state：回车触发的 blur 与最后一次输入的 setState
+            // 可能在同一批里，读 state 会拿到上一帧的值。
+            commit(event.currentTarget.value)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.currentTarget.blur()
+            } else if (event.key === 'Escape') {
+              // 不 blur：清掉草稿后输入框显示回当前值，也不会触发一次多余的落盘。
+              setDraft(null)
+            }
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 外观：主题 / 正文字体 / 代码字体 / 字号 / 密度（改完即时落到 `<html>` 上，与旧界面同一套）。
+ *
+ * 字号这一行调的是**正文字号多少 px**（10–22，默认 14），不是百分比：倍率是派生值
+ * （`px ÷ 14`），用户说的是「16px」，界面上就该显示 16px。
  *
  * 「按钮大小」那条轴在阶段 5.5 取消了：按钮尺寸改成对齐参考实现的固定档位，
  * 所以这一版没有那一行（旧界面还有）。
@@ -1132,7 +1209,13 @@ function AppearanceRows(): ReactNode {
     if (appearance === null) return
     const next = { ...appearance, ...patch }
     setAppearance(next)
-    const appearanceKeys = ['themeMode', 'fontSize', 'density'] as const
+    const appearanceKeys = [
+      'themeMode',
+      'textSizePx',
+      'textFontFamily',
+      'codeFontFamily',
+      'density',
+    ] as const
     const appearanceOnly = Object.fromEntries(
       Object.entries(patch).filter(([key]) => (appearanceKeys as readonly string[]).includes(key)),
     )
@@ -1150,7 +1233,6 @@ function AppearanceRows(): ReactNode {
   }
 
   if (appearance === null) return <div className="settings-empty">{note === '' ? t('settings.ui.appearanceLoading') : note}</div>
-  const fontPercent = Math.round(appearance.fontSize * 100)
   return (
     <div className="settings-appearance">
       <div className="settings-group-title">{t('settings.ui.appearance')}</div>
@@ -1176,6 +1258,24 @@ function AppearanceRows(): ReactNode {
           ))}
         </div>
       </div>
+      <FontRow
+        label={t('settings.ui.fontFamily.text.label')}
+        help={t('settings.ui.fontFamily.text.help')}
+        placeholder={t('settings.ui.fontFamily.text.placeholder')}
+        value={appearance.textFontFamily}
+        onCommit={(next) => {
+          change({ textFontFamily: next })
+        }}
+      />
+      <FontRow
+        label={t('settings.ui.fontFamily.code.label')}
+        help={t('settings.ui.fontFamily.code.help')}
+        placeholder={t('settings.ui.fontFamily.code.placeholder')}
+        value={appearance.codeFontFamily}
+        onCommit={(next) => {
+          change({ codeFontFamily: next })
+        }}
+      />
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">{t('settings.ui.fontSize')}</div>
@@ -1186,15 +1286,15 @@ function AppearanceRows(): ReactNode {
             className="font-scale-range"
             type="range"
             aria-label={t('settings.ui.fontSize')}
-            min={85}
-            max={135}
+            min={FONT_SIZE_PX_MIN}
+            max={FONT_SIZE_PX_MAX}
             step={1}
-            value={fontPercent}
+            value={appearance.textSizePx}
             onChange={(event) => {
-              change({ fontSize: Number(event.target.value) / 100 })
+              change({ textSizePx: Number(event.target.value) })
             }}
           />
-          <span className="font-scale-value">{fontPercent}%</span>
+          <span className="font-scale-value">{appearance.textSizePx} px</span>
         </div>
       </div>
       <div className="setting-row">
@@ -1392,7 +1492,12 @@ function AppearanceRows(): ReactNode {
 /** 面板里那几项的本地形态（归一化的权威在壳的 appearance.ts，这里只为自己画控件）。 */
 interface Appearance {
   themeMode: 'dark' | 'light' | 'claude' | 'system'
-  fontSize: number
+  /** 正文字号（px，10–22）——字号的真源；`fontSize` 倍率由它派生，这里不再写。 */
+  textSizePx: number
+  /** 正文字体列表（已归一；空串 = 用内置栈）。 */
+  textFontFamily: string
+  /** 代码字体列表（已归一；空串 = 用内置栈）。 */
+  codeFontFamily: string
   density: 'compact' | 'standard' | 'roomy'
   /** 过程折叠程度（紧凑/标准/详细/完全展开）——消息流整轮折叠的能力表。 */
   processFold: 'compact' | 'standard' | 'detailed' | 'verbose'
@@ -1417,20 +1522,21 @@ interface Appearance {
  *
  * 为什么在这里再归一一次、而不 import 壳的 `appearance.ts`：那个模块被插件 bundle 内联
  * 一份就会多出一组模块级状态（见 plugin-api 里 `requestAppearance` 的注释）。
- * 归一规则很短（三档枚举 + 字号夹取），重复这一小段比多一个 applier 划算。
+ * 归一规则本身已经从契约层（`contract/fonts.ts`）取，这里只做「缺哪个字段、兜哪个默认」。
  */
 function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appearance {
-  const raw = prefs?.fontSize
-  const size = typeof raw === 'number' && Number.isFinite(raw) ? raw : 1
-  const legacy: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
-  const fromLegacy = typeof raw === 'string' ? legacy[raw] : undefined
-  const second = fromLegacy ?? size
   return {
     themeMode:
       prefs?.themeMode === 'light' || prefs?.themeMode === 'dark' || prefs?.themeMode === 'system'
         ? prefs.themeMode
         : 'claude',
-    fontSize: Math.min(1.35, Math.max(0.85, Math.round(second * 100) / 100)),
+    // 新档存 px；旧档只有倍率（`fontSize`），按 14px 基准换算，认不出就用默认。
+    textSizePx:
+      typeof prefs?.textSizePx === 'number'
+        ? normalizeTextSizePx(prefs.textSizePx)
+        : (textSizePxFromLegacy(prefs?.fontSize) ?? FONT_SIZE_PX_DEFAULT),
+    textFontFamily: normalizeFontList(prefs?.textFontFamily),
+    codeFontFamily: normalizeFontList(prefs?.codeFontFamily),
     density: prefs?.density === 'compact' || prefs?.density === 'roomy' ? prefs.density : 'standard',
     processFold:
       prefs?.processFold === 'compact' || prefs?.processFold === 'detailed' || prefs?.processFold === 'verbose'

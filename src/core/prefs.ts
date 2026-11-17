@@ -10,7 +10,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
+import {
+  DEFAULT_STATUS_BAR_PREFS,
+  FONT_SIZE_PX_DEFAULT,
+  fontScaleFromTextSizePx,
+  normalizeFontList,
+  normalizeStatusBarPrefs,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '../contract.js'
 import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, PanelWidthsView, SessionGroupKey, SessionSortKey, ThemeMode, UiCollapseTiming, UiDensity, UiFoldedReplies, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
 import { dscPath } from './path-policy.js'
@@ -181,18 +189,6 @@ const FOLDED_REPLIES = ['all', 'final'] as const satisfies readonly UiFoldedRepl
  */
 const FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'final'
 
-/**
- * 旧存档里的三档字号：0.6 之前 `ui.fontSize` 存的是字符串，读到时按这张表
- * 换成倍率，之后的存档只存数字。
- */
-const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
-
-/** 字号倍率的可调范围，与桌面端滑杆一致（desktop/src/renderer/appearance.ts）。 */
-const FONT_SCALE_MIN = 0.85
-const FONT_SCALE_MAX = 1.35
-/** 读不出字号时的基准倍率：正文 13px 原样。 */
-const FONT_SCALE_DEFAULT = 1
-
 /** 按钮倍率的可调范围，与桌面端滑杆一致（desktop/src/renderer/appearance.ts）。 */
 const BUTTON_SCALE_MIN = 0.9
 const BUTTON_SCALE_MAX = 1.5
@@ -217,21 +213,6 @@ const SOUND_VARIANT_COUNT = 14
 function readSoundVariant(value: unknown): number {
   const id = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : 1
   return Math.min(SOUND_VARIANT_COUNT, Math.max(1, id))
-}
-
-/**
- * 把存档里的字号读成倍率。
- *
- * 数字直接夹到 0.85–1.35；旧的 `'sm' | 'md' | 'lg'` 迁移成 0.92 / 1 / 1.12；
- * 手改坏的值（`"大"`、NaN、null）一律回落 1，绝不让存档把启动拦下来。
- *
- * @param value settings.json 里 `ui.fontSize` 的原始值
- * @returns 可直接写进 `--dsc-font-scale` 的倍率
- */
-function readFontScale(value: unknown): number {
-  const legacy = typeof value === 'string' ? LEGACY_FONT_SCALES[value] : undefined
-  const scale = legacy ?? (typeof value === 'number' && Number.isFinite(value) ? value : FONT_SCALE_DEFAULT)
-  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, scale))
 }
 
 /**
@@ -380,7 +361,13 @@ export function readPrefs(): DscPrefs {
       // 出厂主题是 claude（暖米白）。2026-10-30 从 dark 改过来：这是产品默认口径，
       // 不是个人偏好——已经存过 settings.json 的用户不受影响（读档优先）。
       themeMode: 'claude',
-      fontSize: FONT_SCALE_DEFAULT,
+      // 字号真源是 px（textSizePx）；fontSize 只是给还没升级的消费方读的派生值，
+      // 出厂 14px → 1.0 倍（为什么不继续存倍率见 contract/fonts.ts 的说明）。
+      textSizePx: FONT_SIZE_PX_DEFAULT,
+      fontSize: fontScaleFromTextSizePx(FONT_SIZE_PX_DEFAULT),
+      // 两套字体出厂都是空串 = 用内置栈，不覆盖样式表里垫着的兜底字体。
+      textFontFamily: '',
+      codeFontFamily: '',
       buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',
       processFold: PROCESS_FOLD_DEFAULT,
@@ -440,13 +427,32 @@ export function readPrefs(): DscPrefs {
           if (name !== '') prefs.ui.workspaceAliases[cwd] = name
         }
       }
-      // 外观四项 + 过程折叠程度：老 settings.json 里没有这几项，读不到就保持上面的默认值。
+      // 外观：主题、字号（px 真源 + 派生倍率）、两套字体、按钮倍率、密度。
+      // 老 settings.json 里没有后加的这几项，读不到就保持上面的默认值。
       if (typeof ui.themeMode === 'string' && THEME_MODES.includes(ui.themeMode as ThemeMode)) {
         prefs.ui.themeMode = ui.themeMode as ThemeMode
       }
-      if (typeof ui.fontSize === 'string' || typeof ui.fontSize === 'number') {
-        prefs.ui.fontSize = readFontScale(ui.fontSize)
-      }
+      // 字号：真源是 px（textSizePx），读档三条路，顺序就是优先级：
+      //   1. 有新键 textSizePx → 归一（坏值回落 14，越界夹进 10–22，小数取整）；
+      //   2. 只有旧键 fontSize（0.85–1.35 的倍率，或 0.6 之前的 'sm' | 'md' | 'lg'）
+      //      → 换算成 px（16 ← 1.12 与 'lg'），换算不出来（'大'、null）走第 3 条；
+      //   3. 两者都没有 → 出厂 14px。
+      // 为什么真源换成 px：用户说的是「16px」，倍率只是实现细节。存 px 之后设置页显示的
+      // 数与实际画出来的数是同一个数，基准从 13 改到 14 也不会冒出「100% 却不是 14px」。
+      // 这两条注释也解释了旧档怎么迁移：读的时候一次性换算，下一次写盘起就只会有 px。
+      const textSizePx =
+        ui.textSizePx !== undefined
+          ? normalizeTextSizePx(ui.textSizePx)
+          : (textSizePxFromLegacy(ui.fontSize) ?? FONT_SIZE_PX_DEFAULT)
+      prefs.ui.textSizePx = textSizePx
+      // fontSize 只读不写：界面里那批 `calc(Npx * scale)` 与旧消费方仍读倍率，
+      // 所以每次读档都从 px 重算，绝不信档里存的倍率——否则改了基准（13→14）之后
+      // 「存的倍率」和「设置页写的 px」就对不上，而且没人会再去改那个旧值。
+      prefs.ui.fontSize = fontScaleFromTextSizePx(textSizePx)
+      // 两套字体：非串 / 空串 / 超长 / 带 `;{}` 的值由 normalizeFontList 归一成空串或
+      // 干净列表（空串 = 用内置栈，与缺键同义），所以这里不用再判类型。
+      prefs.ui.textFontFamily = normalizeFontList(ui.textFontFamily)
+      prefs.ui.codeFontFamily = normalizeFontList(ui.codeFontFamily)
       // 按钮缩放只有桌面端这一个写入方，存的是数字；NaN/Infinity 由 readButtonScale 回落 1。
       if (typeof ui.buttonScale === 'number') {
         prefs.ui.buttonScale = readButtonScale(ui.buttonScale)
