@@ -32,8 +32,9 @@
  *
  * ## 被强杀怎么办
  *
- * worker 全挂、teardown 也没跑到时目录会留下；下一轮开跑时清掉超过 24 小时的残留
- * （`sweepStaleTempDirs`），不会越积越多。
+ * worker 全挂、teardown 也没跑到时目录会留下。所以每次 `createTempDir` 都把目录登记到
+ * 本轮清单（`dsc-run-<pid>.dirs`，见 `tmp-clean.ts`）：下一轮开跑时按「登记 pid 已退出」
+ * 删掉，不依赖 24 小时门槛。没走这里、直接 `mkdtempSync` 的散装目录仍归 24 小时清扫。
  *
  * @module dsc/tests/support/tmp-dir
  */
@@ -41,29 +42,16 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll } from 'vitest'
-import { markRunFailed, TEMP_PREFIX } from './tmp-clean.js'
+import { currentRunPid, markRunFailed, registerRunDir, TEMP_PREFIX } from './tmp-clean.js'
 
 /** 本文件是否已确认有失败（一个布尔，细节在 vitest 报告里）。 */
 let failed = false
-
-/**
- * 本轮主进程 pid。
- *
- * 由 `tests/setup/global-clean.ts` 在 globalSetup 里写进 `DSC_RUN_PID`；没有 globalSetup
- * （直接用 `--config` 跑单层且该配置没挂）时退回 `process.ppid`——forks 池里 worker 的
- * 父进程就是主进程。
- */
-function runPid(): number {
-  const fromEnv = Number(process.env.DSC_RUN_PID)
-  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
-  return process.ppid
-}
 
 /** 记下「本轮有红」。`markRunFailed` 写失败也不抛：清理是尽力而为。 */
 function noteFailure(): void {
   if (failed) return
   failed = true
-  markRunFailed(runPid())
+  markRunFailed(currentRunPid())
 }
 
 /**
@@ -94,7 +82,10 @@ afterAll(({}, suite) => {
 /**
  * 建一个临时目录。
  *
- * 只负责「建」和「校验前缀」；回收由整轮 teardown 统一做（见文件头）。
+ * 只负责「建」「校验前缀」「登记到本轮清单」；回收由整轮 teardown 统一做（见文件头）。
+ * 登记是为了下一轮能按 pid 兜底清理，**不在目录内写标记文件**——`createTempDir`
+ * 也用来建临时 git 仓库，多一个未跟踪文件会改变 `git status` 读数（理由见
+ * `tmp-clean.ts` 的 `registerRunDir`）。
  *
  * @param prefix - 目录前缀，必须以 `dsc-` 开头（teardown 按前缀认领），不带路径分隔符
  * @returns 目录绝对路径
@@ -111,5 +102,7 @@ export function createTempDir(prefix = `${TEMP_PREFIX}test-`): string {
   if (prefix.includes('/') || prefix.includes('\\') || prefix.includes('..')) {
     throw new TypeError(`createTempDir：prefix 不能包含路径分隔符或 ".."（收到 ${JSON.stringify(prefix)}）`)
   }
-  return mkdtempSync(join(tmpdir(), prefix))
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  registerRunDir(dir, currentRunPid())
+  return dir
 }

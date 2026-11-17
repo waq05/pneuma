@@ -1,5 +1,5 @@
 /**
- * 临时目录的清理原语：列、删、扫过期。
+ * 临时目录的清理原语：列、删、扫过期、以及「删不掉时把占着文件的进程收掉」。
  *
  * ## 为什么单独一层，不直接写进钩子
  *
@@ -14,17 +14,45 @@
  * 2. 目录名必须以 `dsc-` 开头，别的程序建的临时目录不认领；
  * 3. 软链接直接跳过：链过去可能是任意位置。
  *
- * ## 过期门槛为什么是 24 小时
+ * ## Windows 上「删不掉」的真实原因（2026-11-17 实测）
  *
- * 一次全量跑约 8 分钟，比它长两个数量级才不会误伤「同时在跑的另一个 vitest」。
- * 门槛只在开跑时用（`sweepStaleTempDirs`），收尾删除不过期判断——那些目录是
- * 本次跑自己造的。
+ * 集成层每个测试文件都起真内核；checkpoint 插件会跑影子仓库快照
+ * `git -c core.autocrlf=false -c gc.auto=0 add -A`，`GIT_DIR` 指向
+ * `<临时 HOME>/.dsc/checkpoints/<id>/repo`、`GIT_WORK_TREE` 指向会话工作树。
+ * 本仓库工作树上这条 `git add -A` 实测要 **30 秒**；测试文件跑完、worker 退出时它还
+ * 在跑，于是 git 变成**孤儿进程**，继续握着 `repo/index.lock`。收尾删目录时报
+ * `EPERM`（errno=1，失败路径是目录本身；细探针定位到被锁的就是 `index.lock`），
+ * 重试几百毫秒必败——要等 git 自己结束（实测 16~30 秒）。
+ *
+ * 更麻烦的是进程树：`worker → git（launcher）→ git.exe（真正干活）`，launcher 先退出，
+ * 真正握着锁的那个进程的父进程已经不在进程表里——按「worker 的子进程」去找找不到它。
+ *
+ * 所以这一层用 **Restart Manager**（Windows 自带的「谁在用这个文件」接口，koffi 直接调
+ * `rstrtmgr.dll`）精确定位持有者：先把目录里能删的文件删掉，只剩被占的那几个；用 RM 查出
+ * 打开它们的 pid；收掉这些进程；句柄释放后再删目录。只要路径来自本轮的临时目录，杀掉的
+ * 就一定是占着**我们**文件的进程，不会误伤并行的另一轮。
+ *
+ * ## 跨轮兜底：`dsc-run-<pid>.dirs` 登记表
+ *
+ * 收尾 / 进程退出时仍删不掉的目录记进登记表；**下一轮开跑时**按「登记 pid 已退出」清掉
+ * （不清的用同样的 RM 流程），不依赖 24 小时门槛。没有走 `createTempDir` 的散装
+ * `mkdtempSync` 仍归 24 小时过期清扫。
  *
  * @module dsc/tests/support/tmp-clean
  */
-import { existsSync, lstatSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import type { Dirent } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 /** 临时目录前缀：测试建的主目录一律用它，清理时按它认领。 */
 export const TEMP_PREFIX = 'dsc-'
@@ -99,8 +127,8 @@ export function listDscTempDirs(root = tmpdir()): TempDirInfo[] {
  * 删除一个临时目录。成功返回 true，删不掉返回 false（不抛）。
  *
  * `maxRetries` 是 Windows 的必需品：子进程刚退，句柄可能还压着目录，立刻删会
- * `EPERM`/`EBUSY`。重试 5 次 × 100ms 足够覆盖正常收尾；还删不掉说明真有东西占着，
- * 交给下一轮过期清扫。
+ * `EPERM`/`EBUSY`。重试 5 次 × 100ms 覆盖收尾阶段的正常抖动；真正的大头是孤儿 git
+ * 进程（见文件头），由 `removeTempDirOrRelease` 先收进程再重试。
  *
  * 另一条是 cwd：如果调用方忘了还原工作目录，Windows 会拒绝删除「正在使用的目录」，
  * 所以先看当前 cwd 是否在目标里，在就先退回临时根。
@@ -120,6 +148,193 @@ export function removeTempDir(dir: string): boolean {
   }
 }
 
+/** 同步睡一小会：收进程后等句柄释放只能同步等（teardown / exit 都是同步回调）。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * 把目录里能删的都删掉，返回**删不掉**的文件（被别的进程占着的那些）。
+ *
+ * 只在「整目录删失败、准备收占用进程」时调用：这些目录本来就要删，先清掉没被占的
+ * 文件，既缩小 Restart Manager 的查询范围，也让持有者只剩下那几个占着句柄的进程。
+ */
+export function collectLockedFiles(dir: string): string[] {
+  const locked: string[] = []
+  const walk = (current: string): void => {
+    let entries: Dirent<string>[]
+    try {
+      entries = readdirSync(current, { withFileTypes: true, encoding: 'utf8' })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) {
+        walk(path)
+        // 子目录里如果还有删不掉的文件，这一下会失败——忽略，留给调用方。
+        try {
+          rmSync(path, { recursive: true, force: true })
+        } catch {
+          // 非空或仍被占：跳过。
+        }
+      } else {
+        try {
+          rmSync(path, { force: true })
+        } catch {
+          locked.push(path)
+        }
+      }
+    }
+  }
+  walk(dir)
+  return locked
+}
+
+// ── Restart Manager：谁打开着这些文件 ───────────────────────────────────────
+
+/** koffi 的最小子集（只声明本文件用到的入口，不拉整包类型）。 */
+interface KoffiLike {
+  load(name: string): { func(definition: string): (...args: unknown[]) => unknown }
+  struct(name: string, fields: Record<string, unknown>): unknown
+  array(type: unknown, count: number): unknown
+  alloc(type: unknown, count: number): unknown
+  encode(pointer: unknown, type: unknown, value: unknown): void
+  decode(pointer: unknown, type: unknown, count?: number): unknown
+}
+
+interface RestartManagerApi {
+  /** 查这些文件正被哪些进程打开；不可用时返回 null。 */
+  holders(paths: readonly string[]): number[] | null
+}
+
+/** 懒加载：只有真的删不掉时才碰 FFI，正常跑一次都不加载。 */
+let restartManagerCache: RestartManagerApi | null | undefined
+
+/**
+ * 加载 Windows Restart Manager 绑定（`rstrtmgr.dll`）。
+ *
+ * 为什么用它而不是遍历进程表猜：实测真正握着 `index.lock` 的 git 进程的父进程（git 的
+ * launcher）已经退出，按「worker 的子进程」根本找不到它；`Get-CimInstance` 也看不到
+ * 文件句柄。Restart Manager 是系统自带的「谁在用这个文件」接口，按文件查 pid，精确。
+ *
+ * 非 Windows、或 koffi 不可用（裁剪安装）时返回不可用：删不掉的目录交给跨轮登记表。
+ */
+function restartManager(): RestartManagerApi | null {
+  if (restartManagerCache !== undefined) return restartManagerCache
+  if (process.platform !== 'win32') {
+    restartManagerCache = null
+    return null
+  }
+  try {
+    const require = createRequire(import.meta.url)
+    const koffi = require('koffi') as KoffiLike
+    const lib = koffi.load('rstrtmgr.dll')
+    const filetime = koffi.struct('FILETIME', { dwLowDateTime: 'uint32', dwHighDateTime: 'uint32' })
+    const uniqueProcess = koffi.struct('RM_UNIQUE_PROCESS', {
+      dwProcessId: 'int32',
+      ProcessStartTime: filetime,
+    })
+    const processInfo = koffi.struct('RM_PROCESS_INFO', {
+      Process: uniqueProcess,
+      strAppName: koffi.array('char16_t', 256),
+      strServiceName: koffi.array('char16_t', 64),
+    })
+    const RmStartSession = lib.func('uint32 RmStartSession(_Out_ uint32_t *pSessionHandle, int dwSessionFlags, char16_t *strSessionKey)')
+    const RmEndSession = lib.func('uint32 RmEndSession(uint32_t pSessionHandle)')
+    const RmRegisterResources = lib.func(
+      'uint32 RmRegisterResources(uint32_t pSessionHandle, uint32_t nFiles, const char16_t **rgsFilenames, uint32_t nApplications, void *rgApplications, uint32_t nServices, char16_t **rgsServiceNames)',
+    )
+    const RmGetList = lib.func(
+      'uint32 RmGetList(uint32_t dwSessionHandle, _Out_ uint32_t *pnProcInfoNeeded, _Inout_ uint32_t *pnProcInfo, RM_PROCESS_INFO *rgAffectedApps, _Inout_ uint32_t *lpdwRebootReasons)',
+    )
+    restartManagerCache = {
+      holders(paths: readonly string[]): number[] | null {
+        const session = koffi.alloc('uint32_t', 1)
+        if (Number(RmStartSession(session, 0, `dsc-rm-${String(Date.now())}`)) !== 0) return null
+        const handle = koffi.decode(session, 'uint32_t')
+        try {
+          if (Number(RmRegisterResources(handle, paths.length, paths, 0, null, 0, null)) !== 0) return null
+          const needed = koffi.alloc('uint32_t', 1)
+          const count = koffi.alloc('uint32_t', 1)
+          const reasons = koffi.alloc('uint32_t', 1)
+          koffi.encode(count, 'uint32_t', 0)
+          koffi.encode(reasons, 'uint32_t', 0)
+          // 先拿所需条数（ERROR_MORE_DATA = 234），再按条数取。
+          let rc = Number(RmGetList(handle, needed, count, null, reasons))
+          if (rc === 0) return []
+          if (rc !== 234) return null
+          const size = koffi.decode(needed, 'uint32_t') as number
+          if (size <= 0) return []
+          const infos = koffi.alloc(processInfo, size)
+          koffi.encode(count, 'uint32_t', size)
+          rc = Number(RmGetList(handle, needed, count, infos, reasons))
+          if (rc !== 0) return null
+          const list = koffi.decode(infos, processInfo, size) as { Process: { dwProcessId: number } }[]
+          return list.map((info) => Number(info.Process.dwProcessId)).filter((pid) => Number.isInteger(pid) && pid > 0)
+        } finally {
+          RmEndSession(handle)
+        }
+      },
+    }
+    return restartManagerCache
+  } catch {
+    restartManagerCache = null
+    return null
+  }
+}
+
+/** 谁打开着这些文件（Windows Restart Manager；其它平台或不可用返回空数组）。 */
+export function processesHoldingFiles(paths: readonly string[]): number[] {
+  if (paths.length === 0) return []
+  const api = restartManager()
+  if (api === null) return []
+  return api.holders(paths) ?? []
+}
+
+export interface ReleaseResult {
+  /** 目录最终是否删掉。 */
+  removed: boolean
+  /** 为释放句柄而收掉的进程 pid（空表示没找到/没权限）。 */
+  killed: number[]
+}
+
+/**
+ * 删目录；删不掉就找出占着文件的进程收掉，再删一次。
+ *
+ * 只在「这个目录确定属于本轮 / 确定是上一轮遗留」时调用（收尾的 exit 钩子、开跑前的
+ * 登记表清扫）：杀进程的影响面严格限定在「打开着我们自己临时目录里文件」的进程，
+ * 不会碰到另一份并行运行的 vitest。
+ *
+ * 为什么要多轮：一次可能不只一个持有者（git 的 `add` 与 `ls-files` 快照并存），也可能
+ * 刚查到持有者它就自己退了。每轮都是「清掉能删的文件 → 查持有者 → 收掉新出现的 →
+ * 再删」，最多 4 轮；每轮之间给句柄释放留一拍。
+ */
+export function removeTempDirOrRelease(dir: string): ReleaseResult {
+  if (removeTempDir(dir)) return { removed: true, killed: [] }
+  if (process.platform !== 'win32') return { removed: false, killed: [] }
+  const killed: number[] = []
+  for (let round = 0; round < 4; round += 1) {
+    const locked = collectLockedFiles(dir)
+    // 被占的只有文件时按文件查；一个都查不出来时再拿目录本身兜一次（cwd / 目录句柄）。
+    const holders = locked.length > 0 ? processesHoldingFiles(locked) : processesHoldingFiles([dir])
+    const fresh = [...new Set(holders)].filter((pid) => pid !== process.pid && !killed.includes(pid))
+    for (const pid of fresh) {
+      try {
+        process.kill(pid, 'SIGKILL')
+        killed.push(pid)
+      } catch {
+        // 已退出 / 没权限：忽略，交给下一轮或下一轮运行兜底。
+      }
+    }
+    // 刚杀完要给句柄释放留一拍；只是持有者自己退了、没杀到东西，也等一小拍再试。
+    sleepSync(fresh.length > 0 ? 150 : 80)
+    if (removeTempDir(dir)) return { removed: true, killed }
+    if (locked.length === 0 && fresh.length === 0) break
+  }
+  return { removed: false, killed }
+}
+
 /** 清扫选项；只给测试与脚本留口子，正常调用不带参数。 */
 export interface SweepOptions {
   /** 扫描根，缺省系统临时目录。 */
@@ -136,10 +351,11 @@ export interface SweepResult {
 }
 
 /**
- * 删掉临时根下「上一轮或更早」留下的 `dsc-` 目录。
+ * 删掉临时根下「上一轮或更早」留下的、没有登记主人的 `dsc-` 目录。
  *
- * 只碰年龄超过门槛的：本轮刚建的那些一定在门槛内，正在并行跑的另一个 vitest
- * 也一样，两者都不会被误删。
+ * 只看年龄超过门槛的：本轮刚建的那些一定在门槛内，正在并行跑的另一个 vitest
+ * 也一样，两者都不会被误删。有登记表的目录不归这里管（`sweepAbandonedRunDirs`
+ * 按 pid 判定，比年龄准）。
  */
 export function sweepStaleTempDirs(options: SweepOptions = {}): SweepResult {
   const root = options.root ?? tmpdir()
@@ -176,9 +392,10 @@ export function sweepRunTempDirs(options: { root?: string; since: number }): Swe
 
 // ── 本轮运行的标记文件 ──────────────────────────────────────────────────────
 //
-// 两个小文件，都放在系统临时根下、都带 `dsc-` 前缀：
+// 三个小文件，都放在系统临时根下、都带 `dsc-` 前缀：
 //   - `dsc-run-<pid>.lock`：本轮正在跑。用来认出「另一份 vitest 还活着」；
-//   - `dsc-failed-<pid>.flag`：本轮有红。teardown 读到就整轮保留现场。
+//   - `dsc-failed-<pid>.flag`：本轮有红。teardown 读到就整轮保留现场；
+//   - `dsc-run-<pid>.dirs`：本轮建过的目录清单（跨轮兜底：下一轮开跑时清）。
 
 /** 本轮锁文件路径。`pid` 用主进程的（worker 里是 `process.ppid`）。 */
 export function runLockPath(runPid: number, root = tmpdir()): string {
@@ -261,7 +478,7 @@ export function clearStaleRunFailures(selfPid: number, root = tmpdir()): string[
 }
 
 /** pid 是否还活着。`EPERM` 说明进程在、只是没权限发信号，也算活着。 */
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
@@ -290,4 +507,126 @@ export function otherRunActive(selfPid: number, root = tmpdir()): boolean {
     if (processAlive(pid)) return true
   }
   return false
+}
+
+// ── 本轮目录清单（跨轮兜底） ────────────────────────────────────────────────
+
+/**
+ * 本轮主进程 pid。
+ *
+ * `globalSetup` 把它写进 `DSC_RUN_PID`，worker 继承；没有 globalSetup 的配置
+ * （直接用 `--config` 跑单层）退回 `process.ppid`——forks 池里 worker 的父进程就是主进程。
+ */
+export function currentRunPid(): number {
+  const fromEnv = Number(process.env.DSC_RUN_PID)
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
+  return process.ppid
+}
+
+/** `DSC_KEEP_TMP=1`：明确要求保留现场，不登记（下一轮也就不该替它清）。 */
+function keepTmpRequested(): boolean {
+  return process.env.DSC_KEEP_TMP === '1'
+}
+
+/** 本轮目录清单路径。 */
+export function runDirsPath(runPid: number, root = tmpdir()): string {
+  return join(root, `dsc-run-${String(runPid)}.dirs`)
+}
+
+/**
+ * 登记一个本轮建的临时目录。
+ *
+ * 由 `tmp-dir.ts` 的 `createTempDir` 调用：**不写目录内的标记文件**，而是集中记在
+ * 临时根下的 `dsc-run-<pid>.dirs`。为什么不在目录里放 `.dsc-run-pid`：`createTempDir`
+ * 也用来建临时 git 仓库（`harness.tempRepo()`），多一个未跟踪文件会改变
+ * `git status` 的读数，把 `turnDiff` / env-facts 这类用例带歪。登记表在目录外，
+ * 对被测工作区零影响。
+ */
+export function registerRunDir(dir: string, runPid: number, root = tmpdir()): void {
+  if (keepTmpRequested()) return
+  // 只登记「临时根顶层的 dsc- 目录」（createTempDir 的产物一定长这样）：
+  // 清单被篡改或路径写错时，下一轮也不会拿它去删别的位置。
+  if (!isInside(dir, root)) return
+  if (normalize(dirname(resolve(dir))) !== normalize(root)) return
+  if (!basename(resolve(dir)).startsWith(TEMP_PREFIX)) return
+  try {
+    appendFileSync(runDirsPath(runPid, root), `${dir}\n`, 'utf8')
+  } catch {
+    // 临时根不可写：没有登记表就退回「24 小时过期清扫」这条老路。
+  }
+}
+
+/** 读某个登记表里的目录清单。 */
+function readDirManifest(path: string): string[] {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+}
+
+/** 清掉本轮目录清单（收尾清干净后不需要它了）。 */
+export function clearRunDirs(runPid: number, root = tmpdir()): void {
+  try {
+    rmSync(runDirsPath(runPid, root), { force: true })
+  } catch {
+    // 下一轮按 pid 判定再清。
+  }
+}
+
+/**
+ * 删掉「上一轮已经退出、但没清干净」的目录，并把它的登记表一起收掉。
+ *
+ * 判据是「登记表名字里的 pid 已不存活」——比 24 小时年龄准得多：绿跑被强杀、
+ * CI 取消、孤儿进程占着句柄导致收尾失败，都靠这一步在**下一轮开跑时**清掉。
+ * 本轮自己的登记表（pid === selfPid）**绝不**动；pid 还活着的另一份 vitest 也不动。
+ *
+ * 不看目录年龄：15 秒前被强杀的那一轮，下一轮开跑时就该把它清掉，等 60 秒门槛
+ * 反而会让「下一轮残留 = 0」不成立。pid 已死 + 清单来自我们自己的登记机制，
+ * 归属是确定的，不需要年龄兜底。
+ *
+ * 删除用 `removeTempDirOrRelease`：上一轮被强杀时它的孤儿 git 可能还在跑，照样能收。
+ */
+export function sweepAbandonedRunDirs(selfPid: number, root = tmpdir()): SweepResult {
+  let entries: string[]
+  try {
+    entries = readdirSync(root)
+  } catch {
+    return { removed: [], failed: [] }
+  }
+  const removed: string[] = []
+  const failed: string[] = []
+  for (const name of entries) {
+    if (!name.startsWith('dsc-run-') || !name.endsWith('.dirs')) continue
+    const pid = Number(name.slice('dsc-run-'.length, -'.dirs'.length))
+    if (!Number.isInteger(pid) || pid <= 0 || pid === selfPid) continue
+    if (processAlive(pid)) continue
+    const manifestPath = join(root, name)
+    let remaining = 0
+    for (const dir of readDirManifest(manifestPath)) {
+      // 清单内容也要过一遍认领边界：只删临时根顶层、`dsc-` 开头的真目录。
+      if (!isInside(dir, root)) continue
+      if (normalize(dirname(resolve(dir))) !== normalize(root)) continue
+      if (!basename(resolve(dir)).startsWith(TEMP_PREFIX)) continue
+      if (!existsSync(dir)) continue
+      if (removeTempDirOrRelease(dir).removed) removed.push(dir)
+      else {
+        failed.push(dir)
+        remaining += 1
+      }
+    }
+    if (remaining === 0) {
+      try {
+        rmSync(manifestPath, { force: true })
+      } catch {
+        // 删不掉就留着，下一轮再试。
+      }
+    }
+  }
+  return { removed, failed }
 }
