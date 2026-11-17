@@ -252,6 +252,7 @@
 | 命令 | 结果 |
 | --- | --- |
 | `node desktop/shots/_diag-settings-sections2.mjs` | 修前左栏 9 项、没有运行日志；修后 **10 项**，多出「运行日志」（排在「工作区」与「关于」之间，order 880） |
+| `node desktop/shots/_diag-log-section.mjs` | 点进去字段全在：记录级别（当前 `info`）、日志目录、保留多少天、单文件上限、目录总量上限、当前文件（真实路径）、「立即清理」按钮可点 |
 | `node desktop/shots/_verify-features-packaged.mjs` | 第 [6] 段 3 条全绿；整份 **14 通过 / 0 失败 / 3 不适用** |
 
 ---
