@@ -53,11 +53,13 @@ interface MiddleBlock {
  */
 const ROW_FOLD_KEY_KINDS: ReadonlySet<string> = new Set([
   'thinking', 'tool',
+  // 系统提示卡与上下文注入卡（2026-11-17）：它们已经跟着整轮一起收了（见 round-fold.tsx 的
+  // TURN_INDEPENDENT 注释），收起那一刻同样要把自己那句「点开过」的存档抹掉，否则切走再切回
+  // 会带着收起之前的展开态回来。
+  'system-prompt', 'context-injection',
 ])
-// 为什么只有这两类：这张表是给「整轮收起时抹掉这一行自己的展开存档」用的（见下面 `rowFoldKey`
-// 与 `RowSeat` 的 `onHidden`）。系统提示卡与上下文注入卡虽然也有展开体，但它们属于
-// `TURN_INDEPENDENT`（`round-fold.tsx:80`）——整轮收起永远不藏它们，`onHidden` 也就永远
-// 不会为它们触发，把这两类写进来只会让人以为它们会被藏。
+// 这张表只服务「整轮收起时抹掉这一行自己的展开存档」（见下面 `rowFoldKey` 与 `RowSeat` 的
+// `onHidden`）：行不进这张表，收起时就不会清它。system 通知不在这里——它本来就不藏。
 
 /**
  * 这一行自己的折叠存档键（没有展开体的行返回 undefined）。

@@ -76,19 +76,35 @@ export function processFoldPolicy(fold: ProcessFold | undefined): ProcessFoldPol
   return PROCESS_FOLD_POLICIES[fold ?? 'standard']
 }
 
-/** 独立条目（不进过程区、收起整轮也不许藏的类型；对照 dsh 的 TURN_PROCESS_INDEPENDENT_KINDS）。 */
+/**
+ * 独立条目（不进过程区、收起整轮也不许藏的类型；对照 dsh 的 TURN_PROCESS_INDEPENDENT_KINDS）。
+ *
+ * 2026-11-17 改口径（用户报障）：系统提示卡与上下文注入卡**改成跟着整轮一起收**，从这张表里
+ * 拿掉了（原来在表里，见下面 {@link isRoundProcessKind}）。理由是这两张卡回答的只是「模型当时
+ * 收到了什么」，一轮固定两三行、内容又不常变；挂着不收起，等于每轮都给会话多两行常驻噪音，
+ * 长会话里「已完成」收起来了、账单还摊在外面。要查那一刻的上下文，点开「已完成」就在原位置。
+ *
+ * `system` 仍留在这里：它混着错误、中断、「已恢复会话」，说的是「这一轮没正常结束」，藏掉会让
+ * 用户以为那一轮只是正常答完了。
+ */
 export const TURN_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = new Set([
   'user',
   'plan',
   'system',
   'turn-end',
   'turn-max-tokens',
-  // 系统提示卡与上下文注入卡（2026-11-10）：它们是**请求侧**的读数，不是这一轮的执行步骤。
-  // 不放进这张表的话，一条落在过程区区间里的注入卡会跟着整轮一起被藏掉——而它恰恰是
-  // 「模型当时收到了什么」的唯一线索，收起来之后用户再也找不到（与 system 同一条理由）。
-  'system-prompt',
-  'context-injection',
 ])
+
+/**
+ * 算得上「这一轮的过程」的条目：思考、工具，以及请求侧那两张账单卡（系统提示 / 上下文注入）。
+ *
+ * 为什么两张卡也必须算进来：整轮折叠的过程区**区间**由这些条目撑开（见 `buildRoundFolds` 里
+ * 那两趟扫描），区间不覆盖它们时，`hidden` 集合里根本不会出现这两行——只把它们从
+ * {@link TURN_INDEPENDENT} 删掉是不够的，收起之后它们照样留在屏幕上。
+ */
+function isRoundProcessKind(kind: TranscriptEntry['kind']): boolean {
+  return kind === 'thinking' || kind === 'tool' || kind === 'system-prompt' || kind === 'context-injection'
+}
 
 /**
  * 一轮过程区的折叠情况。
@@ -159,12 +175,12 @@ export function buildRoundFolds(
     // 本轮最后一条定稿正文（从后往前找，找到就走）：**只有它后面再没有过程行时**，
     // 它才是最终回答。
     let answerIndex = -1
-    // 本轮最后一个过程条目（thinking / tool）：过程区真正的终点。
+    // 本轮最后一个过程条目（思考 / 工具 / 两张账单卡）：过程区真正的终点。
     let lastProcessIndex = -1
     for (let at = round.endIndex; at > round.startIndex; at -= 1) {
       const entry = entries[at]
       if (entry === undefined) continue
-      if (lastProcessIndex < 0 && (entry.kind === 'thinking' || entry.kind === 'tool')) lastProcessIndex = at
+      if (lastProcessIndex < 0 && isRoundProcessKind(entry.kind)) lastProcessIndex = at
       if (answerIndex < 0 && entry.kind === 'text' && entry.id >= 0) answerIndex = at
       if (answerIndex >= 0 && lastProcessIndex >= 0) break
     }
@@ -195,7 +211,7 @@ export function buildRoundFolds(
       if (entry.id < 0) hasLiveEntry = true
       if (entry.kind === 'user' && entry.steering === true) hasSteering = true
       if (entry.kind === 'turn-end') endReason = entry.reason
-      if (entry.kind !== 'thinking' && entry.kind !== 'tool' && entry.kind !== 'text') continue
+      if (entry.kind !== 'text' && !isRoundProcessKind(entry.kind)) continue
       // 只算到 endLimit（见上面那段）：最终回答排在最后一条过程之后时，这里天然把它排除在外。
       if (at > endLimit) continue
       if (startIndex < 0) startIndex = at
@@ -203,6 +219,9 @@ export function buildRoundFolds(
     }
     /**
      * 收起后要藏的下标：过程区范围内、且不是独立条目的行。
+     *
+     * 系统提示卡与上下文注入卡自 2026-11-17 起也在集合里（它们从 {@link TURN_INDEPENDENT} 出来
+     * 了）：收起「已完成」时跟着一起消失，展开时回到原位。
      *
      * foldedReplies=all 时正文不进集合——有正文的助手步骤是给用户看的话，哪怕它后面
      * 紧跟着工具调用也不藏（它只是「过程里的一句交代」，但仍然是话）；这一轮**最后一条**

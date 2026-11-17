@@ -220,7 +220,10 @@ const entryOf = (kind: TranscriptEntry['kind'], extra: object = {}): TranscriptE
   ({ kind, id: (seq += 1), ...extra }) as TranscriptEntry
 
 describe('结构表：两张卡进了整轮折叠 / 分轮 / 欢迎态的判据', () => {
-  test('整轮收起不藏两张账单卡，思考与工具照藏', () => {
+  // 2026-11-17（dev 2bcf8d3c）：整轮折叠以前只收 thinking / tool，两张账单卡留在折叠之外，
+  // 收起之后仍看得见一长条提示词与注入内容——「收起」等于没收。现在它们算回合过程内容，
+  // 与 thinking / tool 一起藏；轮尾早退与欢迎态判据仍认它们（见下一条用例）。
+  test('整轮收起把两张账单卡当过程内容一起藏，思考与工具同样藏', () => {
     const entries = [
       entryOf('user', { text: '问', ts: 1 }),
       entryOf('thinking', { text: '想' }),
@@ -233,8 +236,8 @@ describe('结构表：两张卡进了整轮折叠 / 分轮 / 欢迎态的判据'
     expect(fold).toBeTruthy()
     expect(fold?.hidden.has(1)).toBe(true) // thinking
     expect(fold?.hidden.has(4)).toBe(true) // tool
-    expect(fold?.hidden.has(2)).toBe(false) // system-prompt
-    expect(fold?.hidden.has(3)).toBe(false) // context-injection
+    expect(fold?.hidden.has(2)).toBe(true) // system-prompt
+    expect(fold?.hidden.has(3)).toBe(true) // context-injection
   })
 
   test('分轮：开场与轮中的账单卡都不推进 endIndex / answered', () => {
