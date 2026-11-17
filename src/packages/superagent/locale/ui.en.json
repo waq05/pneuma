@@ -1,8 +1,8 @@
 {
   "section.title": "Super Agent",
-  "section.subtitle": "Hand a one-line request to an agent that owns its own worktree; the result comes back as a ticket",
-  "field.prepareCommand.label": "Workspace prepare command",
-  "field.prepareCommand.help": "A command run in the worktree after it is created and before the worker starts, such as pnpm install. Leave it empty to skip. A failure fails the ticket at once with no automatic retry; it runs for at most 10 minutes.",
+  "section.subtitle": "Hand a one-line request to an agent that owns its own workspace directory; the result comes back as a ticket",
+  "field.prepareCommand.label": "Prepare command",
+  "field.prepareCommand.help": "Runs once in the parent root directory before a new ticket's directory exists, with the execution environment's variables as its environment; for example, check a repository out to $DSH_SUPERAGENT_DIR with git worktree add or git clone. Leave it empty for a plain empty directory. A failure fails the ticket at once with the command's output and no automatic retry; it runs for at most 10 minutes.",
   "field.evalMode.label": "Assessment mode",
   "field.evalMode.help": "How inferred candidates (messages in a chat without @-mentioning the agent, and similar) are handled: observe records them only; automatic sends accepted ones to the pending list above or starts work directly, depending on the confirmation switch. Explicit requests bypass this setting and always start work.",
   "field.evalMode.option.observe": "Observe (record only)",
