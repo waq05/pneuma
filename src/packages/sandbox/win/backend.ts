@@ -215,7 +215,10 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
     if (trimmed === '') continue
     // 绝对路径也过一遍同一个函数：大小写、8.3 短名、符号链接拼法不同会派生出另一个 SID 身份，
     // 而 runner 那边是按 realpath 复算的（`--root` 里 SID 与路径对不上会直接退 127）。
+    // 规范化不通过（8.3 短名、盘符不存在这类）就跟策略层保持一致：**这条不加**——
+    // 策略层已经把它记进 `problems` 并在判定里拒绝写，这里再加进来只会让整条后端降级。
     const resolved = canonicalizePath(trimmed, { win32: process.platform === 'win32', cwd: root })
+    if (!resolved.ok) continue
     add(trim(resolved.path), 'root')
   }
   return list

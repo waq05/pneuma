@@ -809,6 +809,15 @@ async function runRelativeExtraRootCase(backend) {
     `围栏可写根=${policy.roots.join('、')}`,
   )
 
+  // 规范化不通过的那类（8.3 短名、盘符不存在）与策略层同口径：不加这条根。
+  // 否则策略层已经把这条记进 problems 并拒绝写，后端却还去授权，失败一次就把整条后端降级。
+  const badRoots = backend.writeRootsFor(workspace, ['PROGRA~1'])
+  check(
+    '规范化不通过的附加根不加进来（与策略层同口径）',
+    !badRoots.some((root) => root.path.toLowerCase().includes('progra~1')),
+    badRoots.map((root) => root.path).join('、'),
+  )
+
   // 计划里的 --root 也要是这条绝对路径：runner 按 realpath 复算 SID，对不上会直接退 127。
   // 先把目录建出来（root 侧不替用户建，见 BUG-0001 那段），否则授权会失败、执行器降级。
   mkdirSync(expected, { recursive: true })
