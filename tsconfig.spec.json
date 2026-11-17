@@ -1,0 +1,32 @@
+{
+  // 测试代码单独一份编译配置。测试文件被主构建排除（见 tsconfig.json 的 exclude），
+  // 但类型错误不能等到 CI 跑测试时才暴露，所以给它们一条自己的 `tsc --noEmit`。
+  // 覆盖 include 而不是往根配置里加，是为了让主构建只编 src、只产出运行期代码。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // 根配置的 rootDir 是 `src`，而这里要检查 `tests/**`（在 src 之外）。不覆盖就报
+    // TS6059「File is not under rootDir」——这是 checked-in 的 tsconfig，不是靠 noEmit 能绕过的。
+    "rootDir": ".",
+    // 测试里显式 `import { test, expect } from 'vitest'`，不启用 globals，
+    // 所以不需要 vitest/globals 的类型，只要 node。
+    "types": ["node"]
+  },
+  "include": [
+    "vitest.config.ts",
+    // 整棵 src 都要进来，不只是 spec。
+    //
+    // 原因：cordis 的 `Context` 增强是「声明合并」，靠的是某个模块在程序里被包含进来。
+    // 只列 spec 文件时，spec 里静态 import 内核会把 kernel.ts 拉进程序，可增强那一份
+    // 却不在，于是满屏 `Property 'xxx' does not exist on type 'Context'`——而主构建
+    // （`pnpm typecheck`）是全绿的。两边的差别就在这一条 include。
+    // 代价：与主构建重复编一遍 src，实测 7.2s → 约 20s，换来的是不用在 harness 里写 @ts-ignore。
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts"
+  ],
+  // `tests/setup/dom.ts` 给 jsdom 打桩，必然用 DOM API，归 ui-shell/tsconfig.spec.json 查。
+  // 界面半整片（`src/packages/*/ui/**`）同理：它们要 `.tsx`、DOM 库与 `@dsc/*` 的解析条件，
+  // 而 `src/**/*.spec.ts` 这条 include 会把它们一并收进来，必须在这里排掉。
+  "exclude": ["node_modules", "lib", "tests/setup/dom.ts", "src/packages/*/ui/**"]
+}

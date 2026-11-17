@@ -16,7 +16,7 @@
  *
  * @module dsc/core/sandbox/net-proxy
  */
-import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import { connect as tcpConnect } from 'node:net'
 import type {Duplex} from 'node:stream'
 import { allowlistMatches } from './policy.js'
@@ -67,11 +67,32 @@ function parseAuthority(authority: string): { host: string; port: string } | nul
   return { host, port }
 }
 
-/** 绝对形式 HTTP 请求行里的 URL → `host:port`；不是绝对形式给 null。 */
+/** 绝对形式 HTTP 请求行里的 URL → `host:port`；不是绝对形式给 null。
+ *
+ * 没有显式端口时按协议补 80/443：代理语义里 `GET http://example.com/ HTTP/1.1` 是标准写法
+ * （浏览器与 curl 走 HTTP_PROXY 时都这么发）；只认 `host:port` 会把这类请求一律 400。
+ */
 function parseAbsoluteUrl(raw: string): { host: string; port: string } | null {
-  const match = /^https?:\/\/([^/?#]+)/i.exec(raw)
-  if (match === null) return parseAuthority('') // 非 URL：不是代理形态
-  return parseAuthority(match[1]!)
+  const match = /^(https?):\/\/([^/?#]+)/i.exec(raw)
+  if (match === null) return null
+  const scheme = match[1]!.toLowerCase()
+  const authority = match[2]!
+  const explicit = parseAuthority(authority)
+  if (explicit !== null) return explicit
+  const host = authority.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === '' || !/^[a-z0-9._-]+$/i.test(host)) return null
+  return { host, port: scheme === 'https' ? '443' : '80' }
+}
+
+/** 转发给上游的路径：绝对形式去掉 `scheme://host:port` 前缀，相对形式原样。 */
+function forwardPathOf(raw: string): string {
+  if (!/^https?:\/\//i.test(raw)) return raw
+  try {
+    const parsed = new URL(raw)
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    return raw
+  }
 }
 
 export function createNetProxy(options: NetProxyOptions): Promise<NetProxy> {
@@ -111,20 +132,34 @@ export function createNetProxy(options: NetProxyOptions): Promise<NetProxy> {
       res.end(`dsc 沙箱代理：${parsed.host} 被阻断 —— ${one.why}。要放行请在「插件中心 → 文件与命令围栏」把它加进出网白名单。`)
       return
     }
-    // 放行：按原样转发（去代理语义的 URL 前缀），流式直通不缓存
+    // 放行：按原样转发（去代理语义的 URL 前缀），流式直通不缓存。
+    // 代理专用头要**跳过**而不是赋 undefined：Node 24 的 http.request 对显式
+    // undefined 的 header 值直接抛 ERR_HTTP_INVALID_HEADER_VALUE（实测放行即崩）。
+    const headers: OutgoingHttpHeaders = {}
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue
+      if (key === 'proxy_connection' || key === 'proxy-authorization') continue
+      headers[key] = value
+    }
+    headers['host'] = `${parsed.host}:${parsed.port}`
     const upstream = httpRequest({
       host: parsed.host,
       port: Number(parsed.port),
-      path: req.url ?? '/',
+      path: forwardPathOf(req.url ?? '/'),
       method: req.method,
-      headers: { ...req.headers, host: `${parsed.host}:${parsed.port}`, proxy_connection: undefined, 'proxy-authorization': undefined },
+      headers,
     })
-    upstream.on('error', () => {
-      if (!res.headersSent) res.writeHead(502).end(`dsc 沙箱代理：连不上 ${parsed.host}:${parsed.port}`)
+    upstream.on('error', (error: Error) => {
+      if (!res.headersSent) res.writeHead(502).end(`dsc 沙箱代理：连不上 ${parsed.host}:${parsed.port}（${error.message}）`)
       else res.destroy()
     })
+    // 响应要从 `upstream` 的 'response' 事件里拿：ClientRequest 本身不是 Readable，
+    // 直接 `upstream.pipe(res)` 会当场抛「Cannot pipe, not readable」。
+    upstream.on('response', (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
+      upstreamRes.pipe(res)
+    })
     req.pipe(upstream)
-    upstream.pipe(res)
   })
 
   // CONNECT：只认目标主机并做双向裸中继（TLS 原样透传，不落盘不看内容）

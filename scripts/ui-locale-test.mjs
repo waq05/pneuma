@@ -53,7 +53,15 @@ function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) walk(path, out)
-    else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts')) out.push(path)
+    // 测试文件不算产品文案：P3 渲染批把断言里的中文（预期值、describe 名）写进了
+    // ui/**/*.spec.tsx，它们不是「界面里会出现的话」。排除口径与 d.ts 同一层。
+    else if (
+      /\.tsx?$/.test(entry.name) &&
+      !entry.name.endsWith('.d.ts') &&
+      !entry.name.includes('.spec.')
+    ) {
+      out.push(path)
+    }
   }
   return out
 }
@@ -65,7 +73,7 @@ function hostFilesOf(packageDir) {
     if (entry.isDirectory()) {
       if (entry.name === 'ui' || entry.name === 'tests' || entry.name === 'locale' || entry.name === 'node_modules') continue
       walk(join(packageDir, entry.name), out)
-    } else if (/\.ts$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+    } else if (/\.ts$/.test(entry.name) && !entry.name.endsWith('.d.ts') && !entry.name.includes('.spec.')) {
       out.push(join(packageDir, entry.name))
     }
   }

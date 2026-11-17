@@ -1,0 +1,70 @@
+{
+  // 界面半测试单独一份 tsc 配置。
+  //
+  // 为什么不塞进根 `tsconfig.spec.json`：那份是 node 环境的（`lib` 只有 ES2023、没有 DOM，
+  // `module` 是 NodeNext，paths 只有 `@pneuma/*`）。界面半的 spec 一 import `@dsc/ui`，
+  // 解析链就走进 `.tsx`、`document`、JSON 字典，在那份配置下必然报三类错：
+  // `Cannot find module '@dsc/ui'`、JSON 缺 `with { type: 'json' }`、`document` 不存在。
+  //
+  // 反过来把 DOM 库加进根配置更糟：内核那侧跑在 node 环境，配上 DOM 库等于允许它们在测试里
+  // 写 `document`，写了在真跑时就是 `undefined`——类型检查反而给出假绿。
+  //
+  // 所以这里直接继承 `ui-shell/tsconfig.json`：它已经有 DOM 库、bundler 解析、全套 `@dsc/*`
+  // paths、`resolveJsonModule`，正是界面半代码的编译条件。
+  "extends": "./tsconfig.json",
+  // P3 的界面半 spec 会合法 import 非界面模块（如 web 卡的真 wrapUntrusted），tsc 跟随
+  // import 把 src/packages/commands-core 这类文件拉进程序，它们身上的 `@pneuma/*` 导入
+  // 在这份配置里原本没有映射（父配置的 paths 只有 `@dsc/*`），整片 TS2307。
+  // 注意 extends 的 paths 是**整体替换**，所以这里必须把 `@dsc/*` 那九条原样带上，
+  // 只写 @pneuma 两条会把界面半自己的别名拆了。
+  "compilerOptions": {
+    // cordis 4.1 的声明文件之间用 `.ts` 扩展名互引（`export * from './context.ts'`）。
+    // bundler 解析下开它（noEmit 下合法）才吃得下这种声明引用；实测它对 cordis-host 那
+    // 六条 TS2576/2339 不是必要条件（关掉错一样在，真正的机关在下面的 include 顺序），
+    // 保留它是为了别让 `.ts` 扩展声明在任何口径下被静默丢掉。
+    // 注意：不能顺手把 module/moduleResolution 换成 nodenext——壳的产物代码按 bundler
+    // 口径写（JSON 导入、扩展名风格），换回去整片翻红（实测 67+45 条）。
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@dsc/ui-core": ["../src/packages/ui-core/index.ts"],
+      "@dsc/ui": ["./src/plugin-api.ts"],
+      "@dsc/ui-boot": ["../src/packages/ui-boot/ui/index.ts"],
+      "@dsc/ui-dockkit": ["../src/packages/ui-dockkit/ui/index.ts"],
+      "@dsc/ui-layout": ["../src/packages/ui-layout/ui/index.ts"],
+      "@dsc/ui-primitives": ["../src/packages/ui-primitives/ui/index.ts"],
+      "@dsc/ui-renderer": ["../src/packages/ui-renderer/ui/index.ts"],
+      "@dsc/ui-runtime": ["../src/packages/ui-runtime/ui/index.ts"],
+      "@dsc/ui-slots": ["../src/packages/ui-slots/ui/index.ts"],
+      "@pneuma/runtime/*": ["../src/*"],
+      "@pneuma/*": ["../src/packages/*", "../src/packages/*/index.ts"]
+    }
+  },
+  // include 必须保持这个口径与顺序：壳 src → ui-core → 界面半整片目录 → services/types.ts → dom.ts。
+  //
+  // 为什么是目录整片而不是 `ui/**/*.spec.ts` 三条通配：cordis 的 `declare module` 增强
+  // （services/types.ts 的 llm/session 等 30 个服务 + cordis-host.ts 的 slots/host/uiRuntime）
+  // 能不能合并进 context.d.ts 的 `class Context`，实测取决于程序收 root files 的顺序。
+  // 按 spec 通配收（services/types.ts 排在界面半源码之前）时，两处增强落到一个独立符号上：
+  // `new Context()` 的实例侧拿不到 slots/llm，`Context` 类型引用侧拿不到 effect/provide/get，
+  // cordis-host.ts 报满屏 TS2576/2339/2740/2345。同一份文件集，include 换成壳主支的目录口径
+  // 就全绿——红绿只随 include 条目顺序翻转（对照实验已核），与文件集本身无关。
+  // 目录整片还顺带解决旧口径靠 `**/*.d.ts` 通配单独保的 vite-env.d.ts
+  // （`declare module '*?url'`，Vite 专有导入能过类型检查的唯一依据）——现在随目录进来。
+  //
+  // 代价：这份配置顺带把界面半的非 spec 源码也查一遍（与壳主支同一套 compilerOptions，重复
+  // 但无害，壳主支本来就 0 错）。换来的是不用在「spec 通配口径」上再叠补丁。
+  "include": [
+    "src",
+    "../src/packages/ui-core",
+    "../src/packages/*/ui",
+    // cordis 的 Context 增强声明在 services/types.ts（D20 那条「声明合并靠 include」的根），
+    // 必须作为 root file 收进来，被 spec 拉进来的 cordis-host.ts 的 ctx 才带得上这些服务。
+    "../src/services/types.ts",
+    // 这个 setup 文件给 jsdom 打桩（`matchMedia` 之类），必然写 DOM API，
+    // 归这份配置查；根配置的 exclude 里排掉了它。
+    "../tests/setup/dom.ts"
+  ],
+  // 必须重写：父配置把界面半的 spec 排除在外（那边是「界面壳自己的 typecheck 不跑测试」），
+  // 不覆盖的话 include 白写。
+  "exclude": ["node_modules", "../node_modules"]
+}

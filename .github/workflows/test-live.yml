@@ -1,0 +1,82 @@
+# 真模型冒烟（设计 §10 / §12.2）：夜间 + 手动，不挂在推门与 PR 上。
+#
+# ## 为什么必须是独立 workflow
+#
+# 这层连真实模型：要钱、要网、要 key，一条几十秒。放在 verify.yml 里会让每个 PR 都可能
+# 触发真请求；而 fork 来的 PR 更不能拿到密钥——所以本文件**不允许**改成
+# `pull_request_target`（那会把 secret 交给 fork 的代码，DSH 的 e2e.yml 同一条禁令）。
+#
+# ## 防假绿（设计 §10.3）
+#
+# 三步缺一不可：
+#   1. key 预检：workflow 被触发但没配 key，直接红——「跑了但什么都没测」不是绿；
+#   2. 跑 live：`describe.skipIf` 在没有 key 时才跳过；到这一步 key 已经在，跳过即异常；
+#   3. 断言非零用例：从 JSON 报告读 numTotalTests，0 条 = 红（key 在却没执行 = 假绿）。
+#
+# ## 为什么 build 一次
+#
+# live 用例 import 的是 `src/**`（vitest 解析），build 不是必需的；但内核装配会读
+# `lib/**` 的插件产物（D25 混合平面），跳过 build 等于拿旧产物验真模型链。
+name: Live
+
+on:
+  # 每天 18:30 UTC = 北京时间 02:30，与 verify 的夜跑错开半小时。
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+# 与 verify 同一条：同一个分支连触发两次只留最后一次。
+concurrency:
+  group: live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: 真模型冒烟（5 条）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核
+        run: pnpm run build
+      - name: key 预检（没有 key 就红，不静默跳过）
+        env:
+          DSC_LIVE_API_KEY: ${{ secrets.DSC_LIVE_API_KEY }}
+        run: |
+          if [ -z "$DSC_LIVE_API_KEY" ]; then
+            echo "::error::live workflow 被触发但仓库没配 DSC_LIVE_API_KEY——拒绝假绿"
+            exit 1
+          fi
+      - name: 真模型冒烟
+        env:
+          DSC_LIVE_API_KEY: ${{ secrets.DSC_LIVE_API_KEY }}
+          DSC_LIVE_BASE_URL: ${{ vars.DSC_LIVE_BASE_URL }}
+          DSC_LIVE_MODEL: ${{ vars.DSC_LIVE_MODEL }}
+        run: pnpm test:live --reporter=json --outputFile=live.json
+      - name: 确认真的跑了用例（key 在却 0 条 = 红）
+        run: |
+          node -e "
+            const report = require('./live.json')
+            if (report.numTotalTests === 0) {
+              console.error('::error::live 报告里 0 条用例——key 在却没执行，拒绝假绿')
+              process.exit(1)
+            }
+            console.log('执行 ' + report.numTotalTests + ' 条，失败 ' + report.numFailedTests + ' 条')
+          "
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-report
+          path: live.json
+          retention-days: 14
+          if-no-files-found: ignore
