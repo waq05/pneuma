@@ -281,14 +281,14 @@
 
 **实际**：两处落点不同——策略层 `src/packages/sandbox/policy.ts:677` 用
 `canonicalizePath(value, { win32, cwd })` 按会话 cwd 展开；后端
-`src/packages/sandbox/win/backend.ts:207-210` 直接拿原始串传给 `grantWrite`，
+`src/packages/sandbox/win/backend.ts:207-210`（**修前的行号**）直接拿原始串传给 `grantWrite`，
 相对路径由宿主进程的 cwd 决定（打包版就是安装目录），于是 ACL 打在另一个地方。
 （顺带一个相邻的坑：附加根写成**已存在的文件**时，`grantWrite` 走 `GetNamedSecurityInfoW` /
 `SetNamedSecurityInfoW`，对文件同样能成功，只是 OI|CI 继承在文件上没有意义——既不抛也不降级，
 所以它不是「打 ACL 失败」那条路。复核时实测过。）
 
 **证据**：`src/packages/sandbox/locale/ui.zh.json:20` 的帮助文案、
-`policy.ts:677` 与 `backend.ts:207-210` 的对照；复核者用一次性探针确认了两处解析结果不同。
+`policy.ts:677` 与 `backend.ts:207-210`（修前行号）的对照；复核者用一次性探针确认了两处解析结果不同。
 
 **修复方向**：在 `src/packages/sandbox/index.ts:530` 一带先把附加根绝对化（按当前会话 cwd），
 再交给后端；或者后端复用 `canonicalizePath` 并在 `plan()` 里按 `run.cwd` 解析。
@@ -316,6 +316,10 @@
 `--root` 收到的那个串原样复算，宿主怎么拼它就怎么算，对不上是不可能的；上一版文档里
 「runner 按 realpath 复算，对不上会退 127」这句是错的，复核时纠正了。
 
+`cwd` 规范化抽成了 `canonicalWriteCwd`，`plan()` 的 `--temp` 也用它。这一条是复核第二轮
+抓到的回归：授权的是规范化后的那条 temp 根，`--temp` 还用原串，junction / 大小写拼法的会话里
+TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程写临时目录直接被拒。
+
 规范化**不通过**的那一类（8.3 短名、盘符不存在）与策略层同口径：这条根干脆不加。
 否则策略层已经把它记进 `problems` 并拒绝写，后端还去授权，失败一次就把整条后端降级。
 
@@ -323,7 +327,7 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `node scripts/sandbox-win-token-test.mjs` | **100 通过 / 0 失败**：新增 7 条 —— 相对附加根解析成「会话 cwd + rel-out」/ 不是宿主进程 cwd 旁边的那个 rel-out / 与 `createPolicy` 的可写根是同一条路径 / `--root` 里带的是绝对路径 / **受限令牌里真往那条相对附加根写文件成功** / 规范化不通过的附加根不加进来 / 经 junction 进来的 cwd 与真实路径的附加根只算一条根 |
+| `node scripts/sandbox-win-token-test.mjs` | **101 通过 / 0 失败**：新增 8 条 —— 相对附加根解析成「会话 cwd + rel-out」/ 不是宿主进程 cwd 旁边的那个 rel-out / 与 `createPolicy` 的可写根是同一条路径 / `--root` 里带的是绝对路径 / **受限令牌里真往那条相对附加根写文件成功** / 规范化不通过的附加根不加进来 / 经 junction 进来的 cwd 与真实路径的附加根只算一条根 / **junction 会话的 `--temp` 与已授权的 temp 根是同一条** |
 | `node desktop/shots/_verify-sandbox-write-packaged.mjs`（重建后的打包版） | **PASS**（这次改动不碰工作区口径，跑它是确认没把 P0 那条弄回去） |
 
 **没验到的**：没有在打包版界面上点着改「附加根」再跑命令（要动设置表单 + 一次重建），

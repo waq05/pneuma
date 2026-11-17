@@ -835,6 +835,30 @@ async function runRelativeExtraRootCase(backend) {
       rootSides.length === 1 && rootSides[0] === realpathSync.native(workspace).toLowerCase(),
       rootSides.join('、'),
     )
+
+    // --temp 必须等于已授权的那条 temp 根：不同源的话，子进程的 TMP/TEMP 会指到一条
+    // 既没能力 ACE、也没人建过的目录（2026-11-17 复核抓到的回归）。
+    const linkTemp = viaLink.find((root) => root.side === 'temp')
+    const linkHandle = backend.createWindowsTokenRunner({
+      mode: 'workspace-write',
+      cwd: junction,
+      networkAccess: () => false,
+    })
+    try {
+      const planned = await linkHandle.runner.plan(
+        { command: 'cmd /c echo ok', cwd: junction, timeoutMs: 30_000, signal: new AbortController().signal },
+        { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: junction },
+      )
+      const tempArg = planned === null ? undefined : planned.args[planned.args.indexOf('--temp') + 1]
+      check(
+        'junction 会话的 --temp 与已授权的 temp 根是同一条',
+        planned !== null && tempArg !== undefined && linkTemp !== undefined &&
+          tempArg.toLowerCase() === linkTemp.path.toLowerCase(),
+        `--temp=${String(tempArg)}；授权=${linkTemp === undefined ? '(无)' : linkTemp.path}`,
+      )
+    } finally {
+      linkHandle.dispose()
+    }
   } else {
     note('建不了 junction，跳过「同一目录只有一个身份」这条')
   }

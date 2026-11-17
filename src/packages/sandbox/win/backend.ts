@@ -22,7 +22,7 @@
  * @module dsc/core/sandbox/win/backend
  */
 import { existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DSC_HOME } from '../../../core/path-policy.js'
 import type { CommandRunner, SpawnPlan } from '../../../core/tools/command-runner.js'
@@ -182,6 +182,25 @@ export interface SandboxWriteRoot {
 }
 
 /**
+ * 把一次调用的工作目录规范化成「派生身份用的那个拼法」。
+ *
+ * `writeRootsFor`（授权哪条根）与 `plan()` 的 `--temp`（子进程 TMP/TEMP 指哪）必须用**同一个**
+ * 结果：两边一旦不同源，junction / 大小写拼法的会话里 TMP 会指到一条既没能力 ACE、也没人建过的
+ * 目录，子进程写临时目录直接被拒（2026-11-17 复核抓到，`b4ec8ebf` 带进来的）。
+ *
+ * 契约上 `cwd` 是绝对路径；万一给了相对路径（调用方 bug），**不规范化**、原样返回——
+ * 别拿它同时当 raw 与 base 拼出 `work\work` 这种二次拼接。
+ */
+function canonicalWriteCwd(cwd: string): string {
+  const trim = (path: string): string => path.replace(/[\\/]+$/, '')
+  const raw = trim(cwd)
+  if (!isAbsolute(raw)) return raw
+  const resolved = canonicalizePath(raw, { win32: process.platform === 'win32', cwd: raw })
+  // 解析不了（盘符没了之类）退回原串：这一步失败不该让整条后端降级，打 ACL 时自然会报真实原因。
+  return resolved.ok ? trim(resolved.path) : raw
+}
+
+/**
  * 一次命令调用该授权的可写根（2026-10-30 修：以前按挂载时那个会话钉死）。
  *
  * 常驻多会话时，后台会话的工作目录与当前查看的会话往往不是同一个：钉死之后，
@@ -212,10 +231,7 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
     if (list.some((item) => item.path.toLowerCase() === key)) return
     list.push({ path, sid: side === 'root' ? rootWriteSid(path) : tempWriteSid(path), side })
   }
-  // 工作区也规范化：解析不了（盘符没了之类）就退回原串——这一步的失败不该让整条后端降级，
-  // 后面打 ACL 时自然会报出真实原因。
-  const canonicalCwd = canonicalizePath(trim(cwd), { win32, cwd: trim(cwd) })
-  const root = trim(canonicalCwd.ok ? canonicalCwd.path : trim(cwd))
+  const root = canonicalWriteCwd(cwd)
   add(root, 'root')
   add(sandboxTmpDir(DSC_HOME, root), 'temp')
   for (const extra of extraRoots) {
@@ -391,8 +407,10 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       const args = [
         entry,
         '--mode', options.mode,
-        // 临时目录按这次调用的工作区取（与 roots 里的 temp 同源）
-        '--temp', sandboxTmpDir(DSC_HOME, run.cwd.replace(/[\\/]+$/, '')),
+        // 临时目录按这次调用的工作区取，**必须与 roots 里那条 temp 同源**（同一个
+        // canonicalWriteCwd）：两边拼法不一致时 TMP/TEMP 会指到一条既没能力 ACE、也没人建过的
+        // 目录，junction / 大小写会话里子进程写临时目录直接被拒。
+        '--temp', sandboxTmpDir(DSC_HOME, canonicalWriteCwd(run.cwd)),
         // 只把**常驻**可写根（工作区 / 附加根）传 --root。私有临时目录绝不能混进来：
         // 清单是跨会话累积的，一旦把别的会话的 temp 也当 --root 传过去，runner 会拿
         // rootWriteSid 去复算那个路径 → 「SID 与路径对不上」→ 第二个工作区直接退 127。

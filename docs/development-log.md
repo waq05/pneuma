@@ -17330,3 +17330,21 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
    「无法设置」，整段假红（当天撞过一次）。
 
 **怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **100 通过 / 0 失败**（新增 junction 去重判据）。
+
+
+### 2026-11-17 复核第三轮（`--temp` 同源）
+
+**复核抓到一条真回归**（我上一步 `b4ec8ebf` 带进来的）：授权的是规范化后的 temp 根，
+`plan()` 的 `--temp` 还在用 `run.cwd` 原串。junction 或大小写拼法的会话里，TMP/TEMP 就指到
+一条既没能力 ACE、也没人建过的目录，子进程写临时目录直接被拒。100 条判据全绿也没照出来，
+因为 junction 那条只看 `writeRootsFor`，没检查 `--temp`。
+
+**改法**：把「规范化 cwd」抽成 `canonicalWriteCwd`，`writeRootsFor` 与 `plan()` 的 `--temp`
+共用同一个结果；顺带修掉「相对 cwd 被二次拼接」（`canonicalizePath('work', { cwd: 'work' })`
+会拼成 `work\work`）——契约上是绝对路径，相对路径不猜、原样返回。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **101 通过 / 0 失败**，新增判据
+「junction 会话的 `--temp` 与已授权的 temp 根是同一条」。
+
+**留下的一句**：junction 会话规范化之后，旧的原串哈希 temp 目录没人再派生得出来，能力 ACE
+等于惰性残留，由清扫按 24 小时龄回收；每个 junction 会话多一个空目录，可以接受。
