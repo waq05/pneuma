@@ -125,10 +125,9 @@ export async function withApp(options, body) {
   delete env.ELECTRON_RUN_AS_NODE
 
   const app = spawn(EXE, ['--remote-debugging-port=' + String(debugPort), '--disable-background-timer-throttling', '--disable-renderer-backgrounding'], {
-    // 默认把进程 cwd 当工作区（仓库里那份，和以前一样）；要验沙箱写边界的场景传
-    // `workspace: 'home'`，让工作区落在 C 盘的 HOME 下——受限令牌后端要给工作区打完整性标签，
-    // 这台机器的 D 盘不让设标签（见上面那段注释）。
-    cwd: options.workspace === 'home' ? join(home, 'work') : join(ROOT, 'desktop/dist/win-unpacked'),
+    // 进程 cwd 仍是打包目录（工作区怎么定由应用自己算，别在这儿猜）。要换工作区请改这里，
+    // 并且记住：受限令牌后端要给工作区打完整性标签，这台机器的 D 盘新建目录不让设标签。
+    cwd: join(ROOT, 'desktop/dist/win-unpacked'),
     env,
     stdio: 'ignore',
   })

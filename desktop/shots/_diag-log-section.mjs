@@ -29,7 +29,8 @@ await withApp({ id: 'log-section', index: 190 }, async (ctx) => {
     navItem.click()
     await wait(1200)
     const panel = document.querySelector('.settings') ?? document.body
-    const labels = [...panel.querySelectorAll('label, .field-label, .settings-field-label')]
+    // 设置页的字段标签用 .setting-label（不是 label 元素）：选错了会得出「一个字段都没画」的反结论。
+    const labels = [...panel.querySelectorAll('.setting-label, .setting-field-label, label')]
       .map((n) => (n.textContent ?? '').trim())
       .filter((t) => t !== '')
     const buttons = [...panel.querySelectorAll('button')]
