@@ -1560,14 +1560,14 @@ src/packages/superagent/
 
 ### 18.2 两类移植的审计结论
 
-- **逐字类（47 文件）**：38 条 A 类路径经脚本归一（去中文头、`.js`→`.ts`、`policy→core/policy`）后逐行比对——26 个文件 0 差异；9 个只差「上游首行英文注释」，已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块来自不移植的 `app/api.ts`；`skill-files.ts` 用包根解析替代上游 `packagePath`）。`@deepseek-ai/*` import 0 处，残留 `.ts` import 0 处。`as unknown as` 4 处全是上游原文继承（`app/migration.ts`、`app/effects.ts`）。
+- **逐字类（47 文件）**：38 条 A 类路径经脚本归一（去中文头、`.js`→`.ts`、`policy→core/policy`）后逐行比对——26 个文件 0 差异；9 个只差「上游首行英文注释」，已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块来自不移植的 `app/api.ts`；`skill-files.ts` 用包根解析替代上游 `packagePath`）。`@deepseek-ai/*` import 0 处，残留 `.ts` import 0 处。`as unknown as` 4 处全是上游原文继承（`app/migration.ts`、`app/effects.ts`）。**2026-11-17 对齐轮**把审计扩到全部 79 个可对照文件（排除不移植的 client / http / navigation / paths / 入口 / 上游 api）：归一化后 **47 个逐行相同**，4 处结构漂移已修（工具出口回 `Tool[]`、时钟可选、共享常量去重、`Key`/`Family` 缝消除），其余差异全部是宿主 API 替换或 §18.3 已登记的取舍，见 §18.8。
 - **原生类（22 文件）**：语义审计按「导出名/函数划分/判定顺序/错误文案/KV 键/会话 id/阈值」逐项比对，A 档（宿主 API 等价替换）106 处全部在文件头声明；B 档（行为偏差）9 条，其中 3 条已修：worker 最后发言提取改为上游的「最后一条 assistant 消息 + `join('\n')` + trim」（`app/sessions.ts`）、队友收尾判据从 `working` 放宽到非终态（`executor/background.ts`）、`ensure` 复用分支不再早退（补权限/标题/角色模型）。C 档（缺能力）7 条，按 DSC 是否需要逐条记为已知差异。
 
 ### 18.3 仍然存在的差异（原则：能对齐的都对齐了，剩下的写清影响）
 
 | 差异 | 影响 | 为什么不追平 |
 | --- | --- | --- |
-| `app/api.ts` 的 `acceptCandidate`/`ignoreCandidate` 抛错，快照无 `candidates` 格 | 面板上「推断候选先等确认」不可达；候选结论直接进主会话 | 新树把候选做成工具调用（`orchestrator_eval/route`），没有收件箱模型 |
+| 无候选收件箱：契约没有 `candidates` 格与两个候选 RPC，`PanelApi` 也没有 `acceptCandidate`/`ignoreCandidate` | 面板上「推断候选先等确认」不可达；候选结论直接进主会话 | 新树把候选做成工具调用（`orchestrator_eval/route`），没有收件箱模型；复审后已把残留的契约 / 白名单 / 界面 / 文案一并删除 |
 | `app/sessions.ts` 无 `retryHealth.restore` | 重启后模型预算重试状态从零 | 本仓无「会话事件序号快照」，恢复点不存在 |
 | `app/sessions.ts` 无 `limitSubagent` | worker 派出的队友不继承 WORK_TOOLS 白名单与「工单结束拒动」闸 | 需要 subagent 插件加白名单能力，属另一扩展点 |
 | `app/delivery.ts` 认领按正文而非消息 id | 两条同文 pending 会互认；跨重启后编辑过的排队消息重投会重复入箱一次 | 本仓 `Session` 收件箱没有消息 id，正文是唯一稳定锚点（文件头已声明） |
@@ -1606,6 +1606,17 @@ node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-tes
                                     → 0（3/3：28/28、29/29、26/26，合计 72.5 s）
 ```
 
+### 18.6 「加第三种来源」验收切片
+
+新包 `src/packages/superagent-webhook/`（只发不收的 webhook 来源，默认 `disabled`）只写了一个 `SourceKind` 插件，**主包业务代码一行没改**，四件事自动接通，6 条用例全过：
+
+1. **设置页自动多一块**：`webhookKind.fields` 里的 `rows`（`targets` 表：name/address）与 `fact`（`delivery`）经 `host/settings-section.ts` 原样投影成新契约字段，四个界面（终端、通用设置页、Super Agent 设置页、插件中心）都能画；
+2. **准入表自动多一行**：`policy.rows(config)` 生效，`policyPart('webhook')` 返回 `allowed` 与准入行；
+3. **出站发送自动接上**：`SourceRegistry.send` 按 `message.channel.source` 路由到该 kind 的 `channel.send`（本地 http 服务实测收到消息体与 `x-webhook-secret` 头）；
+4. **体检自动多一项**：注册表替它领 `health: ['webhook']` 格子，`report` 状态变化可见。
+
+为此给主包 `package.json` 开了 `./sources/*.js` 子路径导出（第三方插件只 import 契约类型），插件标准检查只放行这一种形状，依赖图对纯类型 import 免 feature→feature 判定。
+
 ### 18.7 复审修复轮（2026-11-17）
 
 代码复审提出 7 条（P1×3、P2×3、P3×1）。逐条核实后 7 条现象全部属实；其中 6 条改代码，1 条（执行器不建 worktree）
@@ -1625,13 +1636,39 @@ node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-tes
 顺带修掉复审之外的一处 Windows 缺陷：`prepare` 走 `cmd.exe /d /s /c` 时 node 默认参数转义会把命令里的
 引号变成 `\"`，带空格的路径直接失败（实测）；`runAsWorker` 加第 5 个参数按 verbatim 传给 cmd，已写进 §18.3。
 
-### 18.6 「加第三种来源」验收切片
+### 18.8 上游对齐轮（2026-11-17）
 
-新包 `src/packages/superagent-webhook/`（只发不收的 webhook 来源，默认 `disabled`）只写了一个 `SourceKind` 插件，**主包业务代码一行没改**，四件事自动接通，6 条用例全过：
+复审修完之后又做了一遍**全量对照**：拿上游 `dsh-superagent/src` 与本仓 `src/packages/superagent` 逐文件比，
+归一化规则是「去块注释与行注释、去 import 行、压缩空白」，用 `difflib` 算真实增删行（不是按行号硬对）。
+排除不移植的 `client/**`、`app/http.ts`、`navigation.ts`、`infra/paths.ts`、上游 `index.ts` 与上游 `app/api.ts`，
+可对照 **79 个文件**。
 
-1. **设置页自动多一块**：`webhookKind.fields` 里的 `rows`（`targets` 表：name/address）与 `fact`（`delivery`）经 `host/settings-section.ts` 原样投影成新契约字段，四个界面（终端、通用设置页、Super Agent 设置页、插件中心）都能画；
-2. **准入表自动多一行**：`policy.rows(config)` 生效，`policyPart('webhook')` 返回 `allowed` 与准入行；
-3. **出站发送自动接上**：`SourceRegistry.send` 按 `message.channel.source` 路由到该 kind 的 `channel.send`（本地 http 服务实测收到消息体与 `x-webhook-secret` 头）；
-4. **体检自动多一项**：注册表替它领 `health: ['webhook']` 格子，`report` 状态变化可见。
+结果：**47 个文件归一化后逐行相同**。其余 32 个分三类：
 
-为此给主包 `package.json` 开了 `./sources/*.js` 子路径导出（第三方插件只 import 契约类型），插件标准检查只放行这一种形状，依赖图对纯类型 import 免 feature→feature 判定。
+| 类别 | 文件 | 结论 |
+| --- | --- | --- |
+| DSH 宿主 API 替换（必须不同） | `app/sessions`、`app/delivery`、`executor/background`、`executor/dsh`、`app/resources`、`app/runtime`、`infra/environment`、`deployment`、`app/setup`、`app/role-models`、`app/assessment`、`app/context` | 模块边界、导出名、判定顺序照上游；换掉的是 `ctx.agents` / `ctx.jobs` / `ctx.subagents` / `ctx.subprocess` / `sessionController` 这些 DSH 服务 |
+| 本仓专有（§18.3 已登记） | `app/store`（旧库旁置）、`app/api`（面板服务层）、`sources/github` / `feishu`（disposer 同步）、`sources/feishu-image`（无模型前置拒绝）、`views/threads`（筛选常量落位）、`core/index` 与 `policy` 的 import 行 | 有意为之 |
+| 结构漂移（本轮修掉） | `app/tools/main`、`app/tools/executor`、`core/part`、`core/policy`、`sources/host` | 见下 |
+
+四处结构漂移的处理：
+
+1. **工具出口回到上游形状**：`mainTools` / `executorTools` 返回 `Tool[]`，`ToolEntry` 转换（`z.toJSONSchema`、risk 分级、`image` 附件转 data URL）挪到 `app/sessions.ts` 的 `toolDirectory`，与上游 `Sessions.registerTool` 同一位置；测试改用导出的 `toolEntries` 走同一份转换。这两个文件现在与上游零差异。
+2. **时钟恢复上游口径**：`EngineOptions.now` 改回可选、缺省 `new Date().toISOString()`（运行期仍注入固定时钟，测试确定性不变）。
+3. **共享常量不再本地重抄**：`core/policy.ts` 的 `sameName` / `WORKER_COMMANDS` 改从 `infra/text.ts`、`infra/environment.ts` 取，与上游同一来源——此前两份清单靠人肉同步，`blockedCommands` 校验与 shim 生成一旦分叉就是静默错误。
+4. **`Key`/`Family` 过渡缝消除**：`sources/host.ts` 改从 `kv.ts` 取，移植计划 §0.1 的 P9-C 缝关闭。
+
+两处**有意保留**的偏差，已写进 §18.3：`executor/dsh.ts` 的 `wake`（本仓作业完成通知到不了 worker 会话，执行器自己叫醒它）与 `sources/host.ts` 的 `SourceAgent = unknown`（来源读图钩子不用会话，反向依赖 app 会成环）。
+
+验收（本轮复跑）：
+
+```
+npx tsc -p tsconfig.json --noEmit   → 0
+pnpm run build                      → 0（408 桩 + 80 功能包）
+node scripts/package-tests.mjs      → 92 包 / 141 用例 / 1,721 断言 / 0 失败
+node scripts/style-check.mjs        → 0（1,486 个文件）
+pnpm run check:plugin               → 0（换包 e2e 17 PASS / 0 FAIL）
+三条 e2e                            → 28/28、26/26、29/29
+```
+
+提交：`238d4899`（对齐）+ `333be0b2`、`8698062c`、`756595b4`、`bdfcf63a`（复审修复轮）。

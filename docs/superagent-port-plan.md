@@ -196,8 +196,11 @@
 | W7 | 完成 | `5eaabed3` | `app/{store,store-read,versions,migration}` 逐字；`kv.ts` 四类键接真类型 |
 | W8 | 完成 | `5eaabed3` | `executor/{dsh,background}`、`app/{sessions,delivery,tools/*,resources,assessment}`、`app/views/*`、`app/runtime` |
 | W11 | 完成 | 本轮 | 复审修复：旧库旁置、旧配置键告警、快照补 `settingsHistory`/`recent`、删候选收件箱与发布 `base`、三条 e2e 按新架构重写、Windows `prepare` 引号修正 |
+| W12 | 完成 | `238d4899` | 上游对齐轮：79 个可对照文件归一化比对（47 个逐行相同）；工具出口回 `Tool[]`、时钟可选、共享常量去重、`Key`/`Family` 缝消除；差异分类与验收见设计文档 §18.8 |
 
 **逐字审计（r1，2026-11-16）**：38 个 A 类路径里 26 个归一后 0 差异、9 个只差「上游首行注释」——已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块、`skill-files.ts` 的包根解析）；`as unknown as` 4 处全是上游原文继承（`migration.ts:356/383`、`effects.ts:81/122`）。`@deepseek-ai/*` import 0 处、残留 `.ts` import 0 处。
+
+**逐字审计（r2，2026-11-17 对齐轮）**：范围扩到全部 79 个可对照文件（排除不移植的 client / http / navigation / paths / 入口 / 上游 api），归一化后 **47 个逐行相同**。4 处结构漂移已修（工具出口 `Tool[]`、时钟可选、`sameName`/`WORKER_COMMANDS` 去重、`Key`/`Family` 改从 `kv.ts` 取）；其余差异全是宿主 API 替换或设计文档 §18.3 已登记的取舍。明细见设计文档 §18.8。
 
 **已知偏差（要在 W9 收口）**：
 1. ~~`app/tools/executor.ts` 不是逐字~~：**已收口**（2026-11-17 对齐轮）。`mainTools` / `executorTools` 回到上游的 `Tool[]` 出口，`ToolEntry` 转换（schema JSON 化、risk 分级、`image` 附件转 data URL）挪到 `app/sessions.ts` 的 `toolDirectory`，与上游 `Sessions.registerTool` 同一位置。
@@ -206,7 +209,7 @@
 
 ---
 
-## 8 最终验收（2026-11-16）
+## 8 最终验收（2026-11-16；复审修复与上游对齐后 2026-11-17 复跑）
 
 ```
 npx tsc -p tsconfig.json --noEmit   → 0
@@ -220,6 +223,6 @@ node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-tes
 node src/packages/superagent-webhook/tests/webhook.test.mjs → 0（通过 6）
 ```
 
-提交：`e77e43b7`（W1–W4）、`5ddf7524`（W5–W8）、`fe1473c3`（W1–W2 测试迁移）、`1bf3f53e`（设置字段 rows/fact）、`5eaabed3`（W9/W10：删旧树、入口切换、测试移植、webhook 切片、门禁放行）、`0f29215f`（行表草稿式编辑）、本文档与设计文档 §18。
+提交：`e77e43b7`（W1–W4）、`5ddf7524`（W5–W8）、`fe1473c3`（W1–W2 测试迁移）、`1bf3f53e`（设置字段 rows/fact）、`5eaabed3`（W9/W10：删旧树、入口切换、测试移植、webhook 切片、门禁放行）、`0f29215f`（行表草稿式编辑）、`bdfcf63a`（文档 §18）、`333be0b2` + `8698062c` + `756595b4`（W11 复审修复：快照补数据、旧库旁置、探针重写）、`238d4899`（W12 上游对齐轮）。
 
 剩余差异与不移植清单见 [superagent-design.md §18](superagent-design.md)。
