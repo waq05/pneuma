@@ -41,6 +41,7 @@ import { after, test } from 'node:test'
 
 const { mainTools } = await import('../../../../lib/packages/superagent/app/tools/main.js')
 const { executorTools } = await import('../../../../lib/packages/superagent/app/tools/executor.js')
+const { toolEntries } = await import('../../../../lib/packages/superagent/app/sessions.js')
 const { tool, readTool, AcknowledgementSchema } = await import('../../../../lib/packages/superagent/app/tools/tool.js')
 const { defaultPrompts } = await import('../../../../lib/packages/superagent/app/prompts.js')
 const { RESOURCES } = await import('../../../../lib/packages/superagent/app/resources.js')
@@ -182,7 +183,7 @@ function mainHost(options = {}) {
 /** 造主会话工具表：按名字索引，`run` 统一把 JSON 文本解析回对象。 */
 function mainToolsOf(options = {}) {
   const { host, calls, tickets, triggers } = mainHost(options)
-  const entries = mainTools(host, AGENT)
+  const entries = toolEntries('orchestrator', mainTools(host, AGENT))
   const tools = Object.fromEntries(entries.map(entry => [entry.name, entry]))
   const run = async (name, args) => JSON.parse(await tools[name].run(args, ctxOf()))
   return { tools, entries, calls, tickets, triggers, run, host }
@@ -211,7 +212,7 @@ function executorHost(options = {}) {
     github: { deployment: { github: { login: 'agent-bot' } } },
     sendReplies: async () => { calls.sendReplies += 1 },
   }
-  const entries = executorTools(host, ticket)
+  const entries = toolEntries('worker', executorTools(host, ticket))
   const tools = Object.fromEntries(entries.map(entry => [entry.name, entry]))
   const run = async (name, args) => JSON.parse(await tools[name].run(args, ctxOf()))
   return { host, entries, tools, run, calls, ticket }

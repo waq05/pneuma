@@ -8,19 +8,8 @@ import { key } from './ids.js'
 import { LIMITS } from './limits.js'
 import type { ActorRef, Mandate, PolicyEffect, Strength, Thread, Ticket, Trigger } from './model.js'
 import type { AssessmentOutcome, GateResult, Policy, SourceScope } from './ports.js'
-
-/**
- * Case-insensitive comparison of two identities, for GitHub logins and repository names.
- * Upstream kept this in `infra/text.ts`, a module of message-formatting helpers the core never used; only this one function is
- * a gate input, so the port keeps it here rather than dragging that module's unrelated surface into the core.
- */
-const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
-/**
- * Commands a worker needs and that `blockedCommands` cannot block: the shims and git.
- * Upstream read this from `infra/environment.ts`, which sets up the worker's shell; the core only needs the list to validate
- * executor settings, so it is a constant here until a DSC executor adapter supplies its own worker commands.
- */
-const WORKER_COMMANDS: readonly string[] = ['gh', 'git', 'lark-cli']
+import { WORKER_COMMANDS } from '../infra/environment.js'
+import { sameName } from '../infra/text.js'
 
 export const RuleIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/)
 export const RuleMatchSchema = z.object({ rule_id: RuleIdSchema, reason: z.string().trim().min(1).max(500) }).strict()

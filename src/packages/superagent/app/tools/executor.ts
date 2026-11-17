@@ -7,18 +7,16 @@
  *      `../../sources/github-pull.js`、`../../sources/host.js`、`../resources.js`、`../store.js`、`../notices.js`、
  *      `../sessions.js`、`./tool.js`。
  *   ② 宿主侧那一步：上游返回 `Tool[]`，由 `Sessions.registerTool`（`app/sessions.ts:205-219`）注册进 DSH 的
- *      `agent.ctx.tools`（`z.toJSONSchema(schema)` / `schema.parse(args)` / 返回值串成 JSON 文本）。本仓没有 DSH 的
- *      per-agent 工具表，`SessionsHost.tools` 直接收 `ToolEntry[]`（`app/sessions.ts:469-480`），所以文件末尾的
- *      `entryOf` 做同样三步、把出口换成 `ToolEntry[]`；工具定义本身仍是上游的 `tool()` / `readTool()` 形状。
+ *      `agent.ctx.tools`（`z.toJSONSchema(schema)` / `schema.parse(args)` / 返回值串成 JSON 文本）。本仓这一步同样
+ *      落在 `Sessions` 一侧（`app/sessions.ts` 的 `toolDirectory`），本文件只按上游返回 `Tool[]`。
  *      执行者的六个工具都只读写编排库、不碰工作区（旧 `tools.ts` 同样全标 `risk: 'read'`，免得审批卡挡住
- *      worker 自主干活），故风险分级统一 `read`。
+ *      worker 自主干活），`toolDirectory` 对 worker 会话统一按 `read` 处理。
  *
  * 执行者会话工具：读工单上下文、回执、管理线程、把越权触发交回、报告状态。
  *
  * @module dsc/packages/superagent/app/tools/executor
  */
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
-import type { ToolContext, ToolEntry, ToolOutput } from '@pneuma/runtime/core/tools.js'
 import { z } from 'zod'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.js'
 import { IM_WORDS } from '../../infra/text.js'
@@ -40,7 +38,7 @@ export interface ExecutorToolsHost {
   sendReplies(): Promise<void>
 }
 
-export function executorTools(host: ExecutorToolsHost, ticket: Ticket): ToolEntry[] {
+export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
   return [
     readTool('Read one page of a resource of this ticket that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
@@ -121,23 +119,5 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): ToolEntr
         })
       },
     }),
-  ].map(entryOf)
-}
-
-/**
- * 上游 `Sessions.registerTool`（`app/sessions.ts:205-219`）的宿主侧三步：参数 schema 用 `z.toJSONSchema`；执行前
- * `schema.parse(args)`；返回值串成 JSON 文本。执行者工具不返回图片，所以不需要上游 `output.render` 的图片分支。
- */
-function entryOf(definition: Tool): ToolEntry {
-  return {
-    name: definition.name,
-    description: definition.description,
-    parameters: z.toJSONSchema(definition.schema) as Record<string, unknown>,
-    // 执行者工具只读写编排库，给 worker 自主干活用；与旧 `tools.ts` 一律 `risk: 'read'` 的口径一致。
-    risk: 'read',
-    run: async (args: Record<string, unknown>, context: ToolContext): Promise<string | ToolOutput> => {
-      const value = await definition.execute(definition.schema.parse(args), context.signal)
-      return JSON.stringify(value) ?? String(value)
-    },
-  }
+  ]
 }

@@ -7,7 +7,7 @@
  * | 上游（DSH） | 本仓原生 | 依据 |
  * | --- | --- | --- |
  * | `type { Agent } from '@deepseek-ai/dsh-agent'`（主会话句柄，用于 `agent.id` 隔离 prompt-preview 资源，并交给 `MasterAssessor.read` 读图） | `app/sessions.ts` 的 `SessionHandle`；本仓没有 DSH 的 per-agent 工具表，句柄由 `Sessions.ensure` 返回、`SessionsHost.tools` 回调直接给到本函数 | 与 `executor/dsh.ts` 文件头「`Agent` → `Sessions.ensure` 句柄」同一条取舍 |
- * | 上游 `Sessions.registerTool`（`app/sessions.ts:205-219`）把 `Tool` 注册进 DSH 的 `agent.ctx.tools`：`z.toJSONSchema(schema)` 出参数 schema、`output.render` 把返回值串成 JSON 文本并把 `image` 挂成图片块、执行前 `schema.parse(args)` | 本仓工具进的是会话工具目录（`ToolEntry[]`，`app/sessions.ts:469-480` 的 `toolDirectory`），所以文件末尾的 `entryOf` 把同样的四步落在本文件：`z.toJSONSchema` / `render` / `schema.parse` / 风险分级 | `src/core/tools.ts:116-165` 的 `ToolEntry` 契约；`src/packages/tools/index.ts:49-79` 的注册表按 `ToolEntry` 收工具 |
+ * | 上游 `Sessions.registerTool`（`app/sessions.ts:205-219`）把 `Tool` 注册进 DSH 的 `agent.ctx.tools`：`z.toJSONSchema(schema)` 出参数 schema、`output.render` 把返回值串成 JSON 文本并把 `image` 挂成图片块、执行前 `schema.parse(args)` | 本仓工具进的是会话工具目录（`ToolEntry[]`），转换同样落在 `Sessions` 那一侧：`app/sessions.ts` 的 `toolDirectory` 做 `z.toJSONSchema` / `render` / `schema.parse` / 风险分级；本文件只按上游返回 `Tool[]` | `src/core/tools.ts:116-165` 的 `ToolEntry` 契约；`src/packages/tools/index.ts:49-79` 的注册表按 `ToolEntry` 收工具 |
  *
  * 其余 import 只改路径（目录按上游镜像，只差 NodeNext 的 `.js` 扩展名）。
  *
@@ -17,9 +17,7 @@
  */
 /** Main Session tools for routing triggers, assessing candidates, sending replies, and updating settings and prompts. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolContext, ToolEntry, ToolOutput, ToolRisk } from '@pneuma/runtime/core/tools.js'
 import { z } from 'zod'
-import { resolveImageForRequest } from '../../../../core/attachments.js'
 import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
   from '../../core/index.js'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.js'
@@ -173,7 +171,7 @@ function routeTool(host: MainToolsHost): Tool {
   })
 }
 /** The main Session's tools in upstream's `Tool[]` shape; `agent` scopes prompt preview resources to that Session. */
-function definitions(host: MainToolsHost, agent: Agent): Tool[] {
+export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
   const resources: MainResourceHost = { ...host.resources, sessions: host.sessions, settings: host.settings }
   return [
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
@@ -319,41 +317,4 @@ function definitions(host: MainToolsHost, agent: Agent): Tool[] {
       },
     }),
   ]
-}
-
-/**
- * 主会话工具的风险分级，与旧 `main-tools.ts` 同一口径（纯读的四个标 `read`，其余按会改库 / 发消息标 `write`）。
- * 上游 DSH 没有 `risk` 这一位，`ToolEntry` 需要它来过守卫链（`src/core/tools.ts:10`、`:116-165`）。
- */
-const RISK: Readonly<Record<string, ToolRisk>> = {
-  orchestrator_read: 'read', orchestrator_ticket_request_status: 'read', orchestrator_eval: 'read', orchestrator_eval_read: 'read',
-}
-/**
- * 上游 `Sessions.registerTool`（`app/sessions.ts:205-219`）的宿主侧四步，见文件头对应表：
- * 参数 schema 用 `z.toJSONSchema`；执行前 `schema.parse`；返回值串成 JSON 文本，带 `image` 附件时同时给图片
- * （`ToolOutput.images` 要 data URL，所以用 `resolveImageForRequest` 把附件引用读成 data URL）。
- */
-function entryOf(definition: Tool, risk: ToolRisk): ToolEntry {
-  return {
-    name: definition.name,
-    description: definition.description,
-    parameters: z.toJSONSchema(definition.schema) as Record<string, unknown>,
-    risk,
-    run: async (args: Record<string, unknown>, context: ToolContext): Promise<string | ToolOutput> => {
-      const value = await definition.execute(definition.schema.parse(args), context.signal)
-      const text = JSON.stringify(value) ?? String(value)
-      const image = value !== null && typeof value === 'object' && 'image' in value ? (value as { image?: { url?: unknown } }).image : undefined
-      const url = image !== null && typeof image === 'object' && typeof image.url === 'string' ? image.url : undefined
-      return url === undefined ? text : { text, images: [resolveImageForRequest(url)] }
-    },
-  }
-}
-
-/**
- * Builds the main Session's tools; `agent` scopes prompt preview resources to that Session.
- * 上游返回交给 `agent.ctx.tools` 的 `Tool[]`；本仓没有 per-agent 工具表（`SessionsHost.tools` 直接收 `ToolEntry[]`），
- * 所以出口在这里换成 `ToolEntry[]`（工具定义、顺序与判定逻辑一行未改，见文件头对应表）。
- */
-export function mainTools(host: MainToolsHost, agent: Agent): ToolEntry[] {
-  return definitions(host, agent).map(definition => entryOf(definition, RISK[definition.name] ?? 'write'))
 }

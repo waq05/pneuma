@@ -1556,7 +1556,7 @@ src/packages/superagent/
   locale/ tests/ cordis.patch.yml package.json
 ```
 
-对照上游 `src/` 的 77 个非 core `.ts`（10,093 行）：本仓镜像树 85 个 `.ts`（13,896 行）。多出来的约 3,800 行是三类：DSC 宿主专有（`host/` 1,078 + `app/api.ts` 421 + `index.ts` 165）、原生重写替 DSH 服务写的等价实现（`sessions` 680→352 上游等）、以及逐文件的中文来源头。
+对照上游 `src/` 的 77 个非 core `.ts`（10,093 行）：本仓镜像树 85 个 `.ts`（14,420 行）。多出来的约 4,300 行是三类：DSC 宿主专有（`host/` 1,138 + `app/api.ts` 563 + `index.ts` 195）、原生重写替 DSH 服务写的等价实现（`sessions` 680→352 上游等）、以及逐文件的中文来源头。
 
 ### 18.2 两类移植的审计结论
 
@@ -1577,6 +1577,8 @@ src/packages/superagent/
 | `sources/feishu-image.ts` 缺「模型不支持图片」前置拒绝 | 改为下载后由投影链剥图，用户看到的是替换说明 | `SourceAgent` 只有宿主类型，本层拿不到模型路由 |
 | `sources/github.ts`/`feishu.ts` 的 disposer 不同步等循环结束 | 停用瞬间注册表仍列该 kind | 本仓 cordis disposer 签名要求同步 |
 | `executor/background.ts` 用轮询替代作业事件、`stopping` 状态不存在 | 后台作业收尾最坏多等一个轮询周期 | 本仓 `JobsService` 只有 `running/completed/failed/killed` |
+| `executor/dsh.ts` 在 `untilQuiet` 报静默、且此前确有后台活时，自己投一句「你的后台作业/队友结束了」叫醒 worker | worker 多一轮「后台活结束」回合，能读 `job_output` 再报状态 | DSH 的作业登记表与子智能体服务负责这次唤醒；本仓完成通知只投给常驻 agent，worker 会话不在名册里，收不到（`executor/dsh.ts` 文件头第 1 条） |
+| `sources/host.ts` 的 `SourceAgent = unknown`（上游是 dsh 的 `Agent`） | 读图钩子签名与上游同形，但拿不到会话；`feishu-image.ts` 因此不做「模型不支持图片」的前置拒绝（见下面一行） | 本仓附件服务是全局的，钩子不用 agent；会话句柄类型在 `app/sessions.ts`，sources 不能反向依赖 app |
 | 执行器不自建 git worktree，也不建 `agent/<name>` 分支；工单目录是普通目录，`clean` 只删目录 | 默认 `executor.prepare` 为空时 worker 在空目录里开工；要分支与 PR 自动绑定，得在 prepare 里检出（`$DSH_SUPERAGENT_DIR` / `%DSH_SUPERAGENT_DIR%`） | 上游就是这一模型（上游 `client/locales.ts` 的 `prepareCommandHint`：目录由 prepare 命令创建、例如 `git worktree`）；宿主建树会与上游语义分叉，旧 `adapters/worktree.ts` 随之删除 |
 | Windows 上 `prepare` 以 `cmd.exe /d /s /c` 执行，且参数按 verbatim 传给 cmd（`runAsWorker` 的第 5 个参数） | 含引号的路径（`"C:\a b"`）能原样到达命令；POSIX 仍走 `sh -c` | 上游只跑 POSIX；node 默认的 Windows 参数转义会把命令里的 `"` 变成 `\"`，cmd 原样保留，导致带空格的路径解析失败（2026-11-17 实测） |
 | `surface().recent` 从已结束工单投影（`ended.at` + 结局词 + 报告摘要），最多 20 条 | 「最近动态」只含工单结束，不含开工 / 出站等旧窗口条目 | 上游没有旧 DSC 的内存通知窗口；用库里真实字段拼，不另造内存状态 |

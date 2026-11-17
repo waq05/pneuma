@@ -24,11 +24,11 @@
 
 **过渡缝**（新树里暂时借位的类型/函数，最终必须消掉）：
 
-| 缝 | 位置 | 消除批次 |
-| --- | --- | --- |
-| `SourceAgent = unknown`（上游是 dsh 的 `Agent`） | `sources/host.ts` | P9-G/J |
-| `Key`/`Family` 本地别名（上游在 `kv.ts`） | `sources/host.ts` | P9-C |
-| `workerSessionId` 暂借旧 `adapters/executor.ts` | `app/cards.ts` 等 | P9-J |
+| 缝 | 位置 | 消除批次 | 状态 |
+| --- | --- | --- | --- |
+| `SourceAgent = unknown`（上游是 dsh 的 `Agent`） | `sources/host.ts` | P9-G/J | 保留，已写进设计文档 §18.3（读图钩子拿不到会话句柄） |
+| `Key`/`Family` 本地别名（上游在 `kv.ts`） | `sources/host.ts` | P9-C | **已消**（2026-11-17 对齐轮：改为 `import type { Family, Key } from '../kv.js'`） |
+| `workerSessionId` 暂借旧 `adapters/executor.ts` | `app/cards.ts` 等 | P9-J | 已随旧树删除迁到 `executor/dsh.ts` |
 
 ---
 
@@ -200,7 +200,7 @@
 **逐字审计（r1，2026-11-16）**：38 个 A 类路径里 26 个归一后 0 差异、9 个只差「上游首行注释」——已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块、`skill-files.ts` 的包根解析）；`as unknown as` 4 处全是上游原文继承（`migration.ts:356/383`、`effects.ts:81/122`）。`@deepseek-ai/*` import 0 处、残留 `.ts` import 0 处。
 
 **已知偏差（要在 W9 收口）**：
-1. `app/tools/executor.ts` 不是逐字：为了让工具进本仓 `ctx.tools`，文件里多了 `entryOf` 映射（`Tool[]`→`ToolEntry[]`）。W9 时把这段映射挪到注册点，文件回归逐字。
+1. ~~`app/tools/executor.ts` 不是逐字~~：**已收口**（2026-11-17 对齐轮）。`mainTools` / `executorTools` 回到上游的 `Tool[]` 出口，`ToolEntry` 转换（schema JSON 化、risk 分级、`image` 附件转 data URL）挪到 `app/sessions.ts` 的 `toolDirectory`，与上游 `Sessions.registerTool` 同一位置。
 2. `shared.md`/`worker.md` 仍是本仓两卷中文版，W9 换上游英文版，`app/context.ts` 的 `sharedPrompt`/`workerPrompt` 随之对齐。
 3. `app/runtime.ts` 不含上游 HTTP 段（`app/http.ts` 不移植），面板能力由 W9 入口按 `INVOKABLE_METHODS` 提供。
 
