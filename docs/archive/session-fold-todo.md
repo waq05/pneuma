@@ -9,7 +9,7 @@
 | 怎么装、怎么跑、怎么配 | [README.md](../../README.md) |
 | 代码怎么分层、往哪改、怎么验证 | [development.md](../development.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](../development-log.md) |
-| 对标 codex / hermes / dsh 的宏观差距 | [harness-benchmark-roadmap.md](../harness-benchmark-roadmap.md) |
+| 对标 codex / hermes / dsh 的宏观差距 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
 | **折叠这一块的改动证据与验收数据** | [step-report.md](shots/step-report.md) |
 | **本文档** | **折叠这一块还剩哪些活、先做哪个** |
 
@@ -51,7 +51,7 @@
   `color-mix` 按主题与密度算出来的，写死颜色在浅色主题下会露馅。dsh 同样用 mask。
 - **计划卡的界面验证走了一次「重新打开会话」**：因为冷启动恢复历史会话那条路不发
   `dsc/session-open`（`src/host/kernel.ts:363-366` 只重放历史），而计划卡靠那个事件回到会话流。
-  这个不一致已登记进 [harness-benchmark-roadmap.md](../harness-benchmark-roadmap.md) §3.2，本批不动内核。
+  这个不一致已登记进 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §3.2，本批不动内核。
 
 ---
 

@@ -258,7 +258,7 @@ DOM 里带 `hidden`（它们负责 Ctrl+F 能命中）；`step-live` 里 27 次�
    迁移要额外引入一个存档版本位，代价大于收益。
 2. **冷启动看不到计划卡**：启动恢复历史会话这条路不发 `dsc/session-open`
    （`src/host/kernel.ts:363-366` 只重放历史），而计划卡靠那个事件回到会话流。要让两条路一致得改内核，
-   已登记在 `docs/harness-benchmark-roadmap.md` §3.2。
+   已登记在 `docs/archive/harness-benchmark-roadmap.md` §3.2。
 3. **`prefers-reduced-motion` 验的是规则在场**，不是渲染结果：让媒体查询真的命中要改主进程加
    `--force-prefers-reduced-motion` 启动开关。真要验得动产品代码，本批没动。
 4. **Chromium 把 `hidden="until-found"` 实现成 `content-visibility: hidden`**：被跳过的内容在
@@ -334,7 +334,7 @@ push 条目，而 `entries` 永远把已定稿列表排在直播尾之前——�
 **类别图标不改**：dsh 的图标来自它自己的设计系统包，dsc 拿不到那些 SVG；而且 dsh 把 `commands`
 画成抽象的 API 方块图标，语义上不如 dsc 的终端图标贴切。真正值得对齐的是「哪一类用哪一类
 图标」的映射，那条已经对齐。这条与「运行指示保留 dsc 两行」「子调用计数不做」一起登记在
-`docs/harness-benchmark-roadmap.md` §3.3 的「明确不做」里。
+`docs/archive/harness-benchmark-roadmap.md` §3.3 的「明确不做」里。
 
 | 网 | 条数 | 新增覆盖 |
 | --- | --- | --- |

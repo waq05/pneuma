@@ -15,7 +15,7 @@
 | 交付前跑什么 | **§5 验证清单** |
 | 明确不支持哪些、别绕 | **§6 边界** |
 | 这套兼容层是怎么一步步长出来的 | **§7 历史存根** |
-| dsh 的请求组装/上下文管理内部机制（源码级） | [dsh-request-assembly.md](dsh-request-assembly.md) |
+| dsh 的请求组装/上下文管理内部机制（源码级） | [archive/dsh-request-assembly.md](archive/dsh-request-assembly.md) |
 
 ## 1. 判定流程：先看结局，再决定要不要改代码
 
