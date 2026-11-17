@@ -47,13 +47,20 @@ import {
   BOARDS_DIR,
   boardCreate,
   boardUpdate,
+  boardViewOf,
   inboxAppend,
+  inboxRead,
   isReady,
   readBoard,
+  recordBoardActivity,
   resetBoard,
   REVIEW_FINDINGS_OPEN,
   TEAMMATE_REPORT_OPEN,
   type BoardAction,
+  type BoardUpdatePayload,
+  type TeamActivity,
+  type TeamBoard,
+  type TeamTask,
 } from '@pneuma/runtime/core/team-board.js'
 import type {
   EffortLevel,
@@ -121,12 +128,19 @@ interface SubagentConfig {
    */
   roleTurns: Record<string, number>
   /**
-   * 共享任务板：true = 注册 `team_task` 并注入板子提示段。
+   * 共享任务板：true = 注册 `team_task` / `team_message` 并注入板子提示段。
    *
-   * 关掉只是模型看不到这块板；名册、派活、汇报都不受影响——留着「只想要一块共享
+   * 关掉只是模型看不到这两块；名册、派活、汇报都不受影响——留着「只想要一块共享
    * 待办」的用法。板子按会话各一块，数据在 `~/.dsc/team/boards/<会话 id>.json`。
    */
   board: boolean
+  /**
+   * 团队模式：允许二层派活（PM 可以再派人），并推荐 pm/architect/developer/tester/ops 角色。
+   *
+   * 实现口径：打开时把 `maxDepth` 抬到至少 2（`maxDepth` 的语义不变，仍是「允许几层」）；
+   * 关闭只改这一项、不回退 `maxDepth`，避免替用户猜他想不想保留二层能力。
+   */
+  teamMode: boolean
 }
 
 const CONFIG_KEY = 'subagent'
@@ -139,14 +153,29 @@ const CONFIG_KEY = 'subagent'
  * `migrateBuiltinRoleMaxTurns` 迁移。
  */
 export const DEFAULT_ROLE_TURNS: Readonly<Record<string, number>> = {
+  pm: 48,
+  architect: 32,
+  developer: 128,
+  tester: 64,
+  ops: 32,
   critic: 16,
   reviewer: 64,
   writer: 128,
   explorer: 0,
 }
 
-/** 设置页「默认最大轮次」列出的角色：先列有上限的，不限的那个垫底。 */
-const TURN_ROLES: readonly string[] = ['critic', 'reviewer', 'writer', 'explorer']
+/** 设置页「默认最大轮次」列出的角色：先列团队职能角色，再列通用角色，不限的垫底。 */
+const TURN_ROLES: readonly string[] = [
+  'pm',
+  'architect',
+  'developer',
+  'tester',
+  'ops',
+  'critic',
+  'reviewer',
+  'writer',
+  'explorer',
+]
 
 const DEFAULTS: SubagentConfig = {
   allowDelegation: true,
@@ -160,6 +189,7 @@ const DEFAULTS: SubagentConfig = {
   maxTurns: 0,
   roleTurns: { ...DEFAULT_ROLE_TURNS },
   board: true,
+  teamMode: false,
 }
 
 const APPROVAL_RANK: Record<TeammateApproval, number> = { forbid: 0, foreground: 1, ask: 2 }
@@ -364,6 +394,8 @@ interface Teammate {
   name: string
   role: string
   task: string
+  /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；undefined = 没绑定。 */
+  taskId?: string
   /** 冻结的工牌。 */
   badge: {
     tools: string[] | null
@@ -449,7 +481,46 @@ interface Caller {
  * 2026-11-08 报障：explorer 队友回「本次会话给我的可用工具只有 read、glob、grep」，
  * 领不到任务——根因就在 `toolsFor` 拿白名单把 team_task 一起筛掉了。
  */
-export const COLLAB_TOOL_NAMES: readonly string[] = ['team_task']
+export const COLLAB_TOOL_NAMES: readonly string[] = ['team_task', 'team_message']
+
+/**
+ * 每个队友每轮最多发几条 `team_message`。
+ *
+ * 为什么要有：队友互发消息后彼此会被叫醒，两个队友完全可以「你一句我一句」把轮次预算
+ * 烧光。额度按「轮次」清零（`emit` 里 rounds +1 就是一轮），超了让它们改用任务板 note。
+ */
+const TEAM_MESSAGES_PER_ROUND = 3
+
+/** 一条 team_message 的正文长度上限（与信箱单条上限一致）。 */
+const MAX_TEAM_MESSAGE_CHARS = 8000
+
+/**
+ * 一行任务摘要（队友提示词、Lead 板子提示段、team_task list 共用）。
+ *
+ * 格式刻意压成一行：两条提示词都要塞「全部任务 + 最新进展」，多行会让系统提示膨胀。
+ * @param noteChars - 最新进展截断长度（0 = 不显示进展）
+ */
+export function taskDigestLine(board: TeamBoard, task: TeamTask, noteChars = 80): string {
+  const flags = [
+    isReady(board, task) ? '可开工' : '',
+    task.assignee === null ? '' : `绑定 ${task.assignee}`,
+    task.blockedReason === null ? '' : `卡住：${task.blockedReason.replace(/\s+/g, ' ').slice(0, 80)}`,
+  ].filter((part) => part !== '')
+  const note = task.notes[0]
+  const latest =
+    note === undefined || noteChars <= 0
+      ? ''
+      : `｜最新进展（${note.by}）：${note.text.replace(/\s+/g, ' ').slice(0, noteChars)}`
+  return `- ${task.id} [${task.status}${flags.length === 0 ? '' : ` · ${flags.join(' · ')}`}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${latest}`
+}
+
+/** 一行活动摘要（队友提示词与 Lead 板子提示段共用）。 */
+export function activityDigestLine(entry: TeamActivity): string {
+  const clock = new Date(entry.at)
+  const hh = String(clock.getHours()).padStart(2, '0')
+  const mm = String(clock.getMinutes()).padStart(2, '0')
+  return `- ${hh}:${mm} ${entry.by} ${entry.kind}${entry.taskId === undefined ? '' : ` ${entry.taskId}`}：${entry.text}`
+}
 
 /** 记录在案的一个队友（`~/.dsc/team/roster.json`，重启后侧栏仍能看到收工的队友）。 */
 interface RosterRecord {
@@ -474,6 +545,8 @@ interface RosterRecord {
    * 「它是从哪个会话派出去的」。老记录没有这一项，读档时按 undefined 处理。
    */
   sessionId?: string
+  /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；老记录没有这一项。 */
+  taskId?: string
 }
 
 /** 名字合法字符，跟角色名同一套。 */
@@ -544,6 +617,7 @@ export const subagentPlugin: Plugin.Object = {
         maxTurns: clamp(raw.maxTurns, 0, 200, DEFAULTS.maxTurns),
         roleTurns: readRoleTurns(raw.roleTurns),
         board: raw.board !== false && raw.board !== 'false',
+        teamMode: raw.teamMode === true || raw.teamMode === 'true',
       }
     }
     let config = readConfig()
@@ -637,6 +711,7 @@ export const subagentPlugin: Plugin.Object = {
         mode: teammate.mode,
         // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
         sessionId: teammate.parentSession.meta.id,
+        ...(teammate.taskId === undefined ? {} : { taskId: teammate.taskId }),
         ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
       }
       const rest = readRoster().filter((entry) => entry.name !== teammate.name)
@@ -656,6 +731,30 @@ export const subagentPlugin: Plugin.Object = {
         ? Promise.resolve()
         : new Promise<void>((resolve) => teammate.waiters.push(resolve))
 
+    /**
+     * 绑定任务在队友**成功收工**时自动结项。
+     *
+     * 只认「任务仍是 in_progress 且负责人就是它」：中途被重新指派、被别人改过、或队友是
+     * 被打断/失败收工的，都留给 Lead 在板上处理。CAS 失败只吞掉——板子被并发改过时，
+     * 不能因为自动结项把队友的收工流程打断。
+     */
+    const finishBoundTask = (teammate: Teammate): void => {
+      if (teammate.taskId === undefined || teammate.state !== 'idle') return
+      const sessionId = teammate.parentSession.meta.id
+      try {
+        const board = readBoard(sessionId)
+        const task = board.tasks.find((entry) => entry.id === teammate.taskId)
+        if (task === undefined || task.status !== 'in_progress' || task.owner !== teammate.name) return
+        const summary =
+          teammate.lastText.trim() === ''
+            ? '（队友没有留下文字结论，按收工自动结项）'
+            : teammate.lastText.trim().slice(0, 800)
+        boardUpdate(sessionId, task.id, board.revision, 'complete', { by: teammate.name, text: summary })
+      } catch {
+        // 板子被并发改过 / 写不进去：不阻断收工，Lead 还能在板上手动 complete
+      }
+    }
+
     const settle = (teammate: Teammate, reason: 'completed' | 'aborted' | 'error', error?: string): void => {
       // 预算最后一轮还欠着（提醒已排队、那一轮还没跑）：这一拍是自然收口，不算收工
       if (teammate.finalRoundPending === true && reason === 'completed' && teammate.rounds < teammate.badge.maxTurns) return
@@ -674,6 +773,8 @@ export const subagentPlugin: Plugin.Object = {
         teammate.error = error
       }
       remember(teammate)
+      // 绑定任务自动结项：成功收工时把终稿摘要写进任务 note，Lead 不用再猜它做完没有
+      finishBoundTask(teammate)
       // T21：队友状态进了快照的跨会话状态面，动一下要跟着失效
       ctx.transcript.touch()
       const waiters = teammate.waiters.splice(0)
@@ -715,7 +816,8 @@ export const subagentPlugin: Plugin.Object = {
           // 嵌套派活：子队友的父会话是这个队友自己的会话，不是用户正看着的那条。
           return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => runSubagent(args, runCtx, self(), teammate.session) }
         }
-        if (entry.name === 'team_task') {
+        if (entry.name === 'team_task' || entry.name === 'team_message') {
+          // 协作工具：署自己的名字、归属派它的那个会话（板子/消息都不落「当前查看的会话」）
           return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => entry.run(args, { ...runCtx, caller: self() }) }
         }
         return entry
@@ -912,6 +1014,44 @@ export const subagentPlugin: Plugin.Object = {
     }
     ctx.effect(() => ctx.guards.register(teammateApprovalGuard), 'subagent: guards.register (teammate-approval)')
 
+    /**
+     * 队友系统提示里的「团队协作」段（每次渲染现读磁盘与内存，天然最新）。
+     *
+     * 为什么要在**每个队友**的提示里写队伍与任务板：用户要求「任何队友都能看到板上进展
+     * 与其他队友进展」。只靠 Lead 转述时，队友连板子长什么样都不知道，更谈不上自己认领、
+     * 写进展、找别人协商。这里只塞摘要（最多 20 条任务、10 条活动），不是整份板子。
+     */
+    const teamCollabText = (teammate: Teammate): string => {
+      const sessionId = teammate.parentSession.meta.id
+      const board = readBoard(sessionId)
+      const mates = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === sessionId)
+      const mateLines = mates.map(
+        (entry) =>
+          `- ${entry.name}（${entry.role}，${entry.state}${entry.taskId === undefined ? '' : `，绑定 ${entry.taskId}`}）`,
+      )
+      const boardBlock = config.board
+        ? `
+
+任务板（第 ${board.revision} 版，队友和 Lead 共用同一块）：
+${board.tasks.slice(0, 20).map((task) => taskDigestLine(board, task)).join('\n') || '- （板上还没有任务）'}
+
+最近活动（新的在前）：
+${board.activity.slice(0, 10).map(activityDigestLine).join('\n') || '- （暂无）'}`
+        : ''
+      const rules = config.board
+        ? `
+协作规则：
+1. 动手前先 team_task list 与 action=activity，看板上已有什么、别人做到哪一步，别重复别人正在做的事。
+2. 进展写进任务：team_task action=note（做了什么、验证结果、下一步）；卡住用 action=block 写原因，解除用 unblock。
+3. 要问人、要协调用 team_message：send 点对点（队友名或 lead）、broadcast 广播；同一轮最多发 ${TEAM_MESSAGES_PER_ROUND} 条。
+4. 写作用域和别人的任务重叠时先 team_message 协商，不要同时改同一批文件。
+5. 你绑定的任务在成功收工时会自动结项并写入你的最终结论；有遗留问题就写进结论里。`
+        : '\n协作规则：本会话任务板未开启；需要找人时用可用的消息工具，重要结论写进你的最终回复。'
+      return `# 团队协作
+你所在队伍的队友（本会话）：
+${mateLines.join('\n') || '- （只有你）'}${boardBlock}${rules}`
+    }
+
     function startTeammate(input: {
       name: string
       role: AgentRole
@@ -926,6 +1066,8 @@ export const subagentPlugin: Plugin.Object = {
       model?: string | null
       /** spawn 显式指定的思考强度；不填看角色文件。 */
       effort?: EffortLevel | null
+      /** spawn 带 `task_id` 时绑定的任务板任务 id（认领与绑定已在 runSubagent 里做完）。 */
+      taskId?: string
     }): Teammate {
       const cwd = input.parentSession.meta.cwd
       const file = join(teammateRoot(), cwdSlug(cwd), `${randomUUID()}.jsonl`)
@@ -947,6 +1089,7 @@ export const subagentPlugin: Plugin.Object = {
         name: input.name,
         role: input.role.name,
         task: input.task,
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
         // 工牌在此刻冻结：此后改角色文件不影响它
         badge: {
           tools: input.role.tools,
@@ -1017,6 +1160,7 @@ ${
 ${teammateModelNote(teammate.badge.model ?? ctx.llm.model, teammate.badge.effort, config.allowModelSelection)}
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
+${teamCollabText(teammate)}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`
             // 队友的提示词不在段注册表里（它是几块直接拼的），给「系统提示」卡一条合成段：
             // 卡片至少能显示体量与来源，不至于空着一张段清单（队友的日志只在只读浮层里看）。
@@ -1232,6 +1376,7 @@ ${body}
           const finishedAt = live?.finishedAt ?? record.finishedAt
           // 出生会话同理：在队的问内存里那个会话对象，收工的问名册（老记录没有这一项）
           const sessionId = live?.parentSession.meta.id ?? record.sessionId
+          const taskId = live?.taskId ?? record.taskId
           views.push({
             name: record.name,
             role: record.role,
@@ -1249,26 +1394,15 @@ ${body}
             startedAt: record.startedAt,
             ...(finishedAt === undefined ? {} : { finishedAt }),
             ...(sessionId === undefined ? {} : { sessionId }),
+            ...(taskId === undefined ? {} : { taskId }),
           })
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
       },
       board: (sessionId: string): TeamBoardView => {
-        // 只读投影：界面只画「有哪些事、谁负责、可不可以开工」，改任务仍旧只走模型的 team_task。
-        const board = readBoard(sessionId)
-        return {
-          revision: board.revision,
-          tasks: board.tasks.map((task) => ({
-            id: task.id,
-            subject: task.subject,
-            description: task.description,
-            status: task.status,
-            owner: task.owner,
-            blockedBy: task.blockedBy,
-            writeScopes: task.writeScopes,
-            ready: isReady(board, task),
-          })),
-        }
+        // 只读投影：界面只画「有哪些事、谁负责、可不可以开工」与最新进展/活动，
+        // 改任务仍旧只走模型的 team_task。投影与提示词共用 boardViewOf，口径只有一份。
+        return boardViewOf(readBoard(sessionId))
       },
       peek: async (file: string): Promise<TranscriptEntry[]> => {
         const resolved = resolve(file)
@@ -1568,6 +1702,35 @@ ${body}
       const name = requested === '' ? uniqueName(role.name) : requested
       if (teammates.has(name)) return `队友名 ${name} 已经在用，换一个`
 
+      // 任务绑定：带 task_id 就顺手认领并绑定（一次 CAS 里做完 owner + assignee）。
+      // 认领前必须满足「没完成、没被别人认领、依赖都完成」——不满足就给明确原因，
+      // 不要悄悄派出去（队友干到一半才发现板子上不归它）。
+      const taskId = String(args.task_id ?? '').trim()
+      if (taskId !== '') {
+        const board = readBoard(currentId)
+        const target = board.tasks.find((entry) => entry.id === taskId)
+        if (target === undefined) {
+          return `任务板上没有 ${taskId}。先 team_task action=list 确认 id，或去掉 task_id 直接派`
+        }
+        if (target.status === 'completed') return `${taskId} 已经完成了，不用再派队友去做`
+        if (target.owner !== null && target.owner !== name) {
+          return `${taskId} 已经被 ${target.owner} 认领了，换一条任务或先让它 release`
+        }
+        if (!isReady(board, target)) {
+          const pending = target.blockedBy.filter(
+            (dep) => board.tasks.find((entry) => entry.id === dep)?.status !== 'completed',
+          )
+          return pending.length > 0
+            ? `${taskId} 还在等依赖完成：${pending.join('、')}，现在派出去它也只能干等`
+            : `${taskId} 现在不能开工（状态 ${target.status}${target.owner === null ? '' : `，负责人 ${target.owner}`}）`
+        }
+        try {
+          boardUpdate(currentId, taskId, board.revision, 'claim', { owner: name, assignee: name, by: caller.name })
+        } catch (error) {
+          return `认领 ${taskId} 失败：${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+
       const context = String(args.context ?? 'fresh')
       let seed: string[] | null = null
       if (context === 'fork') {
@@ -1594,6 +1757,7 @@ ${body}
         mode,
         model: overrides.model,
         effort: overrides.effort,
+        ...(taskId === '' ? {} : { taskId }),
       })
 
       if (!background) {
@@ -1613,11 +1777,12 @@ ${body}
       }
 
       void waitForIdle(teammate).then(() => reportHome(teammate))
+      const bound = taskId === '' ? '' : `已认领并绑定任务 ${taskId}（它成功收工后会自动结项并写入最终结论）。`
       const tail =
         teammate.mode === 'one-shot'
           ? '它是一次性的：干完这次就结束，之后不能再传话，只在名册里留一条运行记录。'
           : '它在后台干，不用等也不用问：干完我会把汇报接进来。你现在可以继续做别的，或者再派一个。'
-      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。${tail}`
+      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。${bound}${tail}`
     }
 
     const subagentTool = (): ToolEntry => ({
@@ -1627,7 +1792,8 @@ ${body}
         'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。' +
         'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。' +
         'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。' +
-        'spawn 时可以带 model / effort 给新队友指定模型与思考强度，但只有用户打开「允许 Agent 为子队友选择模型」后才可用，且模型只能挑授权清单里的；这些只影响新队友。',
+        'spawn 时可以带 model / effort 给新队友指定模型与思考强度，但只有用户打开「允许 Agent 为子队友选择模型」后才可用，且模型只能挑授权清单里的；这些只影响新队友。' +
+        '带 task_id 会把新队友绑定到共享任务板上的某条任务（顺手认领），它成功收工后自动结项。',
       parameters: {
         type: 'object',
         properties: {
@@ -1640,6 +1806,7 @@ ${body}
           keep: { type: 'boolean', description: 'spawn 可选：false = 一次性的，干完就结束、不再接传话（只留一条运行记录）；不填 = 寻常队友，收工后传话还能接着干' },
           model: { type: 'string', description: 'spawn 可选：队友模型，写「端点/模型」（或模型名）。只能在设置 → 子智能体 → 队友模型 授权的清单里挑；开关没开时不许带。只影响这个新队友' },
           effort: { type: 'string', enum: [...EFFORT_LEVELS], description: 'spawn 可选：思考强度；不填用角色文件的 effort，再否则跟随默认' },
+          task_id: { type: 'string', description: 'spawn 可选：绑定到共享任务板上的某条任务（先 team_task list 看 id）。会顺手认领并绑定负责人，队友成功收工后自动结项' },
           text: { type: 'string', description: 'message 必填：要传的话' },
         },
         required: ['action'],
@@ -1686,7 +1853,18 @@ ${body}
       const revision = Number(args.expected_revision)
       // 改状态必须带版本号：不传就默认「当前版本」等于把并发冲突检测关掉，
       // 两个队友同时认领同一条时后到的会悄悄覆盖先到的。
-      const MUTATING_ACTIONS = new Set(['claim', 'release', 'complete', 'reopen', 'delete', 'set_dependencies'])
+      const MUTATING_ACTIONS = new Set([
+        'claim',
+        'release',
+        'complete',
+        'reopen',
+        'delete',
+        'set_dependencies',
+        'note',
+        'block',
+        'unblock',
+        'assign',
+      ])
       if (MUTATING_ACTIONS.has(action) && !Number.isInteger(revision)) {
         return `改任务板状态要带 expected_revision（你上次 list/create 看到的版本号，当前第 ${board.revision} 版）。`
       }
@@ -1701,12 +1879,19 @@ ${body}
               description: String(args.description ?? ''),
               blockedBy: blocked,
               writeScopes: scopes,
+              actor: ownerDefault,
             })
-            const warnings = created.warnings.length === 0 ? '' : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
+            const warnings =
+              created.warnings.length === 0
+                ? ''
+                : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
             if (args.claim_now !== true) return `已建 ${created.task.id}：${created.task.subject}${warnings}`
             // 认领走正常的 claim：依赖没做完一样会被拦下，正好复用同一套校验
             try {
-              boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', { owner: ownerDefault })
+              boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', {
+                owner: ownerDefault,
+                by: ownerDefault,
+              })
             } catch (error) {
               return `已建 ${created.task.id}：${created.task.subject}，但没能认领：${error instanceof Error ? error.message : String(error)}${warnings}`
             }
@@ -1714,61 +1899,236 @@ ${body}
           }
           case 'list': {
             if (board.tasks.length === 0) return '本会话的任务板是空的（team_task action=create 建第一条）'
-            const lines = board.tasks.map((task) => {
-              const ready = isReady(board, task)
-              return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${task.blockedBy.length === 0 ? '' : ` 依赖 ${task.blockedBy.join('、')}`}${task.writeScopes.length === 0 ? '' : ` 作用域 ${task.writeScopes.join(', ')}`}`
-            })
-            return `本会话任务板第 ${board.revision} 版：\n${lines.join('\n')}\n（改状态要带 expected_revision=${board.revision}）`
+            // 摘要行里带负责人、绑定、卡住原因与最新进展：队友看这一行就知道该不该插手
+            const lines = board.tasks.map((task) => taskDigestLine(board, task, 60))
+            const recent = board.activity.slice(0, 5).map(activityDigestLine)
+            return `本会话任务板第 ${board.revision} 版：\n${lines.join('\n')}\n\n最近活动：\n${recent.join('\n') || '- （暂无）'}\n（改状态要带 expected_revision=${board.revision}）`
           }
           case 'get': {
             const task = board.tasks.find((entry) => entry.id === id)
             if (task === undefined) return `任务板上没有 ${id}`
-            return `第 ${board.revision} 版里的 ${task.id}：\n标题：${task.subject}\n说明：${task.description || '（空）'}\n状态：${task.status}，认领人 ${task.owner ?? '（无）'}\n依赖：${task.blockedBy.join('、') || '（无）'}\n作用域：${task.writeScopes.join(', ') || '（未声明）'}`
+            const notes =
+              task.notes.length === 0
+                ? '（还没有进展记录）'
+                : task.notes
+                    .map((note) => `- ${new Date(note.at).toLocaleString()} ${note.by}：${note.text}`)
+                    .join('\n')
+            const related = board.activity
+              .filter((entry) => entry.taskId === task.id)
+              .slice(0, 5)
+              .map(activityDigestLine)
+            return [
+              `第 ${board.revision} 版里的 ${task.id}：`,
+              `标题：${task.subject}`,
+              `说明：${task.description || '（空）'}`,
+              `状态：${task.status}${isReady(board, task) ? ' · 可开工' : ''}，负责人 ${task.owner ?? '（无）'}`,
+              `绑定队友：${task.assignee ?? '（未绑定）'}`,
+              `卡住：${task.blockedReason ?? '（没卡）'}`,
+              `依赖：${task.blockedBy.join('、') || '（无）'}`,
+              `作用域：${task.writeScopes.join(', ') || '（未声明）'}`,
+              `进展（${task.notes.length} 条，新的在前）：`,
+              notes,
+              `最近活动：\n${related.join('\n') || '（暂无）'}`,
+            ].join('\n')
           }
+          case 'activity': {
+            const limit = clamp(args.limit, 1, 50, 20)
+            const lines = board.activity.slice(0, limit).map(activityDigestLine)
+            return lines.length === 0
+              ? '任务板还没有活动记录（别人认领/写进展/完成任务、互发消息都会记进来）'
+              : `任务板第 ${board.revision} 版最近 ${lines.length} 条活动（新的在前）：\n${lines.join('\n')}`
+          }
+          case 'note':
+          case 'block':
+          case 'unblock':
+          case 'assign':
           case 'claim':
           case 'release':
           case 'complete':
           case 'reopen':
           case 'delete':
           case 'set_dependencies': {
-            const payload: { owner?: string; blockedBy?: string[] } = {}
+            const payload: BoardUpdatePayload = { by: caller }
             if (action === 'claim') payload.owner = String(args.owner ?? ownerDefault)
             if (action === 'set_dependencies') {
               payload.blockedBy = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
             }
+            if (action === 'note' || action === 'block' || action === 'unblock' || action === 'complete') {
+              payload.text = String(args.text ?? '')
+            }
+            if (action === 'assign') payload.assignee = args.assignee === null ? null : String(args.assignee ?? '')
             const result = boardUpdate(sessionId, id, revision, action as BoardAction, payload)
             const ready = result.board.tasks.filter((task) => isReady(result.board, task)).map((task) => task.id)
-            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。现在可开工：${ready.join('、') || '（无）'}`
+            const latest = result.task.notes[0]
+            const extraParts: string[] = []
+            if (latest !== undefined && (action === 'note' || action === 'block' || action === 'complete')) {
+              extraParts.push(`最新进展（${latest.by}）：${latest.text.slice(0, 100)}`)
+            }
+            if (action === 'assign') extraParts.push(`绑定：${result.task.assignee ?? '（已解绑）'}`)
+            if (action === 'block' || action === 'unblock') {
+              extraParts.push(`卡住原因：${result.task.blockedReason ?? '（没卡）'}`)
+            }
+            const extra = extraParts.length === 0 ? '' : `\n${extraParts.join('\n')}`
+            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。${extra}\n现在可开工：${ready.join('、') || '（无）'}`
           }
           default:
-            return `不认识的 action「${action}」。要用的值：create / list / get / claim / release / complete / reopen / set_dependencies / delete`
+            return `不认识的 action「${action}」。要用的值：create / list / get / activity / claim / release / complete / reopen / note / block / unblock / assign / set_dependencies / delete`
         }
       } catch (error) {
         return `任务板操作没做成：${error instanceof Error ? error.message : String(error)}`
       }
     }
 
+    // ── 队友互通消息（P1 横向通道）─────────────────────────────────────────
+    /**
+     * 消息额度：key = 队友名，记录它在第几轮发了几条。轮次一变自动清零
+     * （`emit` 里每轮 rounds +1），所以「每轮最多 3 条」是真实的按轮计数。
+     * Lead 不在表里、也不受额度限制。
+     */
+    const messageQuota = new Map<string, { round: number; used: number }>()
+
+    /** 给 Lead（派活方会话）投一条队友消息：常驻会话走 followup，收摊会话写进文件。 */
+    const deliverToLead = (text: string, from: string, sessionId: string): string => {
+      const wrapped = `<team-message from="${from}" to="lead"> ${text} </team-message>`
+      const session = ctx.agent.sessionById(sessionId) ?? ctx.session.current()
+      if (ctx.agent.hasAgent(session.meta.id)) {
+        ctx.agent.followup(wrapped, undefined, session.meta.id, 'notice')
+        return 'lead（已并入它的下一轮）'
+      }
+      session.appendUser(wrapped)
+      return 'lead（写入会话，下次对话时模型可见）'
+    }
+
+    async function runTeamMessage(args: Record<string, unknown>, runCtx: ToolContext): Promise<string> {
+      // 归属会话与署名同 team_task：队友转发时 caller 是它自己，主会话是 lead
+      const sessionId = runCtx.caller?.sessionId ?? runCtx.sessionId
+      const from = runCtx.caller?.name ?? LEAD
+      const action = String(args.action ?? '')
+      if (action === 'inbox') {
+        const limit = clamp(args.limit, 1, 20, 10)
+        const all = inboxRead(from)
+        if (all.length === 0) return '你的信箱是空的（别人用 team_message 发给你的话会出现在这里）'
+        const tail = all.slice(-limit)
+        return `你的信箱最近 ${tail.length} 条（共 ${all.length} 条；信箱没有已读状态，按写入顺序）：\n${tail.map((line) => `- ${line}`).join('\n')}`
+      }
+      if (action !== 'send' && action !== 'broadcast') {
+        return `不认识的 action「${action}」。要用的值：send / broadcast / inbox`
+      }
+      const text = String(args.text ?? '').trim()
+      if (text === '') return '要带上 text（想说的话）'
+      if (text.length > MAX_TEAM_MESSAGE_CHARS) {
+        return `一条消息最长 ${MAX_TEAM_MESSAGE_CHARS} 字，这条有 ${text.length} 字；长内容写进任务 note 或文件里`
+      }
+
+      // 防轰炸：只对队友计额度（Lead 是派活方，不由这条闸管）
+      const me = teammates.get(from)
+      let quotaNote = ''
+      if (me !== undefined) {
+        const used = messageQuota.get(from)?.round === me.rounds ? messageQuota.get(from)!.used : 0
+        if (used >= TEAM_MESSAGES_PER_ROUND) {
+          return `本轮已经发了 ${used} 条消息（每轮上限 ${TEAM_MESSAGES_PER_ROUND} 条）；剩下的话写进任务 note，或者等下一轮再说`
+        }
+        messageQuota.set(from, { round: me.rounds, used: used + 1 })
+        quotaNote = `（本轮还剩 ${TEAM_MESSAGES_PER_ROUND - used - 1} 条额度）`
+      }
+
+      const wrap = (body: string, to: string): string => `<team-message from="${from}" to="${to}"> ${body} </team-message>`
+      // 「lead」投到最上层会话：嵌套队友（PM 派的人）的 parentSession 是 PM 的会话，
+      // 而用户真正看的是再上一层——用 ownerSession 才不会把话投进中间层没人看的文件。
+      const leadSessionId = me?.ownerSession.meta.id ?? sessionId
+      const delivered: string[] = []
+      const missed: string[] = []
+      const targets: string[] = []
+      if (action === 'send') {
+        const to = String(args.to ?? '').trim()
+        if (to === '') return 'send 要带上 to（队友名或 lead）'
+        if (to === from) return `收件人就是你自己（${from}），换个人发`
+        targets.push(to)
+      } else {
+        // 广播：同会话在队队友 + Lead（不含自己）
+        for (const mate of teammates.values()) {
+          if (mate.name === from) continue
+          if (mate.parentSession.meta.id !== sessionId) continue
+          targets.push(mate.name)
+        }
+        if (from !== LEAD) targets.push(LEAD)
+        if (targets.length === 0) return '现在没有可发的对象：本会话没有其他在队队友，也没有可投的 Lead 会话'
+      }
+
+      for (const to of targets) {
+        if (to === LEAD || to === 'lead') {
+          delivered.push(deliverToLead(text, from, leadSessionId))
+          continue
+        }
+        const mate = teammates.get(to)
+        const wrapped = wrap(text, to)
+        inboxAppend(to, wrapped)
+        if (mate !== undefined) {
+          // 叫醒目标：跑动中排在它当前回合之后，闲置的唤起一轮
+          mate.agent.followup(wrapped)
+          delivered.push(`${to}${mate.state === 'working' ? '（正在干，这一轮之后看到）' : '（已叫醒）'}`)
+        } else {
+          missed.push(`${to}（不在队：收工或一次性，话写进了信箱但没人会读）`)
+        }
+      }
+
+      // 消息也进板子活动（kind=message，不写 notes）：Lead 与队友从活动时间线看得到协作过程
+      try {
+        recordBoardActivity(sessionId, {
+          by: from,
+          kind: 'message',
+          text: `${from} → ${targets.join('、')}：${text.replace(/\s+/g, ' ').slice(0, 120)}`,
+        })
+      } catch {
+        // 板子写不进去不影响消息本身已经投递
+      }
+
+      const head =
+        action === 'broadcast' ? `已广播给 ${delivered.length} 个对象` : delivered.length > 0 ? '已送达' : '没送达'
+      const parts = [head, ...delivered.map((line) => `- ${line}`), ...missed.map((line) => `- ${line}`)]
+      return `${parts.join('\n')}${quotaNote}`
+    }
+
     const teamTaskTool = (): ToolEntry => ({
       name: 'team_task',
       description:
-        '共享任务板（本会话）：登记要做的事、看谁在做什么、认领和结项。' +
-        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。',
+        '共享任务板（本会话）：登记要做的事、看谁在做什么、认领和结项，并写进展/标阻塞/绑定队友。' +
+        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。' +
+        '动手前先 list + activity 看别人做到哪一步；进展用 note 写，卡住用 block，队友互相对话用 team_message。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['create', 'list', 'get', 'claim', 'release', 'complete', 'reopen', 'set_dependencies', 'delete'],
+            enum: [
+              'create',
+              'list',
+              'get',
+              'activity',
+              'claim',
+              'release',
+              'complete',
+              'reopen',
+              'note',
+              'block',
+              'unblock',
+              'assign',
+              'set_dependencies',
+              'delete',
+            ],
             description: '要做什么',
           },
           subject: { type: 'string', description: 'create 必填：任务标题' },
           description: { type: 'string', description: 'create：任务的详细说明（背景、验收口径）' },
-          id: { type: 'string', description: '除 create/list 外必填：任务 id，例如 t3' },
-          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies）必填：你上次 list/create 看到的版本号' },
+          id: { type: 'string', description: '除 create/list/activity 外必填：任务 id，例如 t3' },
+          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies/note/block/unblock/assign）必填：你上次 list/create 看到的版本号' },
           owner: { type: 'string', description: 'claim 时的认领人；不填就是你自己' },
           claim_now: { type: 'boolean', description: 'create：true = 建完直接算你认领（状态直接进 in_progress）' },
           write_scopes: { type: 'array', items: { type: 'string' }, description: 'create：这个任务打算改的路径前缀，用于提醒别人别撞车' },
           blocked_by: { type: 'array', items: { type: 'string' }, description: 'create/set_dependencies：依赖哪些任务 id' },
+          text: { type: 'string', description: 'note/block/unblock 必填（complete 可选）：进展内容 / 卡住原因 / 解除说明 / 终稿摘要' },
+          assignee: { type: 'string', description: 'assign：绑定哪个队友；空串表示解绑' },
+          limit: { type: 'number', description: 'activity：返回最近多少条（默认 20，上限 50）' },
         },
         required: ['action'],
       },
@@ -1776,27 +2136,61 @@ ${body}
       run: (args, runCtx) => runTeamTask(args, runCtx),
     })
 
+    const teamMessageTool = (): ToolEntry => ({
+      name: 'team_message',
+      description:
+        '队友之间直接交流（本会话）：点对点 send、广播 broadcast、看自己收到的 inbox。' +
+        '消息会写进对方信箱并叫醒它，同时记进任务板活动；每个队友每轮最多发 3 条。' +
+        '重要结论仍以任务板 note 为准——消息是协调用的，不是台账。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['send', 'broadcast', 'inbox'], description: '要做什么' },
+          to: { type: 'string', description: 'send 必填：队友名或 lead' },
+          text: { type: 'string', description: 'send/broadcast 必填：要说的话（最长 8000 字）' },
+          limit: { type: 'number', description: 'inbox：读最近多少条（默认 10，上限 20）' },
+        },
+        required: ['action'],
+      },
+      risk: 'read',
+      run: (args, runCtx) => runTeamMessage(args, runCtx),
+    })
+
     /** 板子提示段：只有板上真开了才注册；关掉时模型不该看到这个工具的任何说明。 */
     const boardPromptText = (): string => {
-      const board = readBoard(ctx.session.current().meta.id)
-      const lines = board.tasks.slice(0, 20).map((task) => {
-        const ready = isReady(board, task)
-        return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}`
-      })
+      const sessionId = ctx.session.current().meta.id
+      const board = readBoard(sessionId)
+      const taskLines = board.tasks.slice(0, 20).map((task) => taskDigestLine(board, task))
+      const activityLines = board.activity.slice(0, 10).map(activityDigestLine)
+      const mates = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === sessionId)
+      const mateLines = mates.map(
+        (entry) =>
+          `- ${entry.name}（${entry.role}，${entry.state}${entry.taskId === undefined ? '' : `，绑定 ${entry.taskId}`}）`,
+      )
       return `# 共享任务板
-本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项；队友和你看到的是同一块板。
-${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines.join('\n')}`}
+本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项、写进展、标阻塞；队友和你看到的是同一块板。
+${taskLines.length === 0 ? '板上还没有任务。' : `板上的任务（含负责人与最新进展）：\n${taskLines.join('\n')}`}
+
+在队队友与绑定任务：
+${mateLines.join('\n') || '- （当前没有在队队友）'}
+
+最近活动（新的在前）：
+${activityLines.join('\n') || '- （暂无）'}
 
 任务板的规矩：
-1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径），别人 claim 时才抢不过你；改状态要带 expected_revision。
-2. 认领前先 list：依赖没完成的任务开不了工；完成一条，等它的人就能开工。`
+1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径）与依赖，别人 claim 时才抢不过你；改状态要带 expected_revision。
+2. 认领前先 list / activity：依赖没完成的任务开不了工；完成一条，等它的人就能开工。
+3. 派活时优先用 subagent 的 task_id 把队友绑定到它负责的任务：认领会一起做掉，队友成功收工自动结项。
+4. 队友之间可以直接用 team_message 交流（点对点或广播），不必都经你转述；重要结论以任务板 note 为准。
+5. 进展用 note 写、卡住用 block 标，别只写在汇报里——汇报只给你看，板子是全队看的。`
     }
 
     /**
-     * 两个开关各管一半：
-     * - `allowDelegation` 管 `subagent` 工具与名册提示；
-     * - `board` 管 `team_task` 与板子提示段。
-     * 两边独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
+     * 三个开关各管一段：
+     * - `allowDelegation` 管 `subagent` 工具、`team_message` 与名册提示；
+     * - `board` 管 `team_task` 与板子提示段；
+     * - `teamMode` 只影响提示与 `maxDepth` 的默认值（见 settings 保存逻辑）。
+     * 前两个独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
      */
     let disposers: Array<() => void> = []
     const syncTools = (): void => {
@@ -1804,6 +2198,8 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
       disposers = []
       if (config.allowDelegation) {
         disposers.push(ctx.effect(() => ctx.tools.register(subagentTool()), 'subagent: tools.register'))
+        // 横向通道跟着「有没有队友」走：没有队友时它没有收件人，注册了只会白占一个工具位
+        disposers.push(ctx.effect(() => ctx.tools.register(teamMessageTool()), 'subagent: team_message.register'))
         disposers.push(
           ctx.effect(() => ctx.prompt.register('subagent', () => {
             const roles = listRoles().filter((role) => role.enabled)
@@ -1815,14 +2211,20 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
             // 板子与派活是同一层的协作：分开成两个包时，子智能体提示里不提板子，
             // 模型就永远不会用 team_task（旧决策见 docs/development-log.md:848）；
             // 现在同一包里，必须提一句，否则板子等于没有。
-            // 规则用数组拼：板子与模型说明各自可选，编号才不会跳号或重号。
+            // 规则用数组拼：板子、模型说明、团队模式各自可选，编号才不会跳号或重号。
             const rules = [
               '队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。',
               `本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。`,
-              '只读角色改不了文件；要落地代码用 writer 或者你自己动手。',
+              '只读角色改不了文件；要落地代码用 developer / writer 或者你自己动手。',
               '派完活自己接着干别的，别闲着等。',
+              '分工协议：按真实团队流程派活——需求不清先派 pm（确认需求与验收口径、拆任务上板），方案与契约派 architect，实现按 write_scopes 并行派 developer，独立验证派 tester，构建发布与环境检查派 ops，最后由你汇总向用户交付。派活时用 task_id 绑定它负责的任务。',
               ...(config.board
-                ? ['多人协作还有一块共享任务板：用 team_task 登记、认领、结项，队友看到的是同一块板；改状态要带 expected_revision。']
+                ? [
+                    '多人协作还有一块共享任务板：用 team_task 登记、认领、结项、写进展，队友看到的是同一块板；队友之间可以直接用 team_message 交流，重要结论以任务板 note 为准。',
+                  ]
+                : []),
+              ...(config.teamMode
+                ? ['团队模式已开：maxDepth 允许到 2（pm 可以自己再派人）；放开后仍受 maxTeammates 与各角色轮次预算约束。']
                 : []),
               modelRuleText(),
             ]
@@ -1870,6 +2272,12 @@ ${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
       },
       { type: 'number', key: 'maxTeammates', label: t('field.maxTeammates.label'), min: 1, max: 8, step: 1, help: t('field.maxTeammates.help') },
       { type: 'number', key: 'maxDepth', label: t('field.maxDepth.label'), min: 0, max: 2, step: 1, help: t('field.maxDepth.help') },
+      {
+        type: 'switch',
+        key: 'teamMode',
+        label: t('field.teamMode.label'),
+        help: t('field.teamMode.help'),
+      },
       {
         type: 'number',
         key: 'maxTurns',
@@ -1956,6 +2364,7 @@ ${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
           allowDelegation: config.allowDelegation,
           maxTeammates: config.maxTeammates,
           maxDepth: config.maxDepth,
+          teamMode: config.teamMode,
           maxTurns: config.maxTurns,
           approval: config.approval,
           notify: config.notify,
@@ -1992,6 +2401,13 @@ ${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
           case 'maxDepth':
             applyConfig({ maxDepth: Number(value) })
             break
+          case 'teamMode': {
+            const enabled = value === true || value === 'true'
+            // 团队模式 = 允许二层派活（PM 可以再派人）：打开时顺手把 maxDepth 抬到 2。
+            // 关闭只关这一项、不回退 maxDepth（用户可能自己就是想要二层，替他降级更意外）。
+            applyConfig(enabled ? { teamMode: true, maxDepth: Math.max(config.maxDepth, 2) } : { teamMode: false })
+            break
+          }
           case 'maxTurns':
             applyConfig({ maxTurns: Number(value) })
             break

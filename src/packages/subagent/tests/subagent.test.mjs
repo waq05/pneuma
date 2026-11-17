@@ -3,14 +3,14 @@
  * 为什么只钉这些：入口只有插件对象，派活要会话与模型；能便宜钉住的是装配面、包形态、入口、
  * 文档、agent-roles 里那张不落盘的出厂角色表、2026-11 起的轮次预算（角色文件 > 设置页按
  * 角色 > 全局上限，以及旧安装的角色文件迁移）、模型授权（开关 + 授权清单 + spawn 的
- * model/effort 校验与优先级），以及 2026-11-06 并入的共享任务板
- * （team_task 工具、板子提示段、设置分区里的 board 子开关）装配面。
+ * model/effort 校验与优先级）、T3 团队协作（任务板进展/活动/绑定、队友互发消息、
+ * 提示词摘要、角色扩充、团队模式），以及 2026-11-06 并入的共享任务板工具装配面。
  * @module @pneuma/subagent/tests
  */
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -27,6 +27,8 @@ mkdirSync(process.env.DSC_HOME, { recursive: true })
 const pkg = JSON.parse(read('../package.json'))
 const mod = await import('../../../../lib/packages/subagent/index.js')
 const roles = await import('../../../../lib/packages/subagent/agent-roles.js')
+// 任务板 v2（进展/活动/绑定）是内核模块，包测试直接钉它的数据面（T3a）
+const boardMod = await import('../../../../lib/core/team-board.js')
 
 // 假 ctx：apply 只用这几个面；effect 真跑回调、把返回的 disposer 收下，
 // 否则 syncTools 里的注册根本不会发生，断言无从谈起。
@@ -183,7 +185,17 @@ test('README 的 Model Experience 与 Known Limitations 两段都在', () => {
 
 // 出厂角色表：四个名字是写死的，explorer 的工牌只能是读类工具、且不许要授权。
 test('出厂角色：四个内置角色，explorer 只有读工具且不许要授权', () => {
-  assert.deepEqual(roles.builtinRoleNames(), ['critic', 'explorer', 'reviewer', 'writer'])
+  assert.deepEqual(roles.builtinRoleNames(), [
+    'architect',
+    'critic',
+    'developer',
+    'explorer',
+    'ops',
+    'pm',
+    'reviewer',
+    'tester',
+    'writer',
+  ])
   const explorer = roles.builtinRole('explorer')
   assert.notEqual(explorer, null)
   assert.equal(explorer.builtin, true)
@@ -262,6 +274,7 @@ test('提示段提 team_task，设置分区仍是 subagent 且带任务板分组
 // 所以 team_task 必须走这份豁免表，而不是挤进每个角色的 tools 白名单。
 test('协作工具豁免表包含 team_task，且不夹带文件类工具', () => {
   assert.ok(mod.COLLAB_TOOL_NAMES.includes('team_task'), 'team_task 必须在协作工具豁免表里')
+  assert.ok(mod.COLLAB_TOOL_NAMES.includes('team_message'), 'team_message 必须在协作工具豁免表里')
   for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
     assert.equal(mod.COLLAB_TOOL_NAMES.includes(name), false, `${name} 不该进协作工具豁免表`)
   }
@@ -621,6 +634,380 @@ test('队友系统提示的模型句：写冻结值与仅影响新队友，不�
   const following = mod.teammateModelNote('current-model', null, false)
   assert.ok(following.includes('思考强度跟随默认'))
   assert.ok(following.includes('不能指定模型'))
+  passed += 1
+})
+
+// ── T3a：任务板 v2（进展/活动/绑定）＋ 队友互通 ＋ 角色扩充 ──────────────────
+
+// 老文件兼容：缺 notes/activity/blockedReason/assignee 的板子照常读，补默认值、不报错。
+test('team-board：老文件缺新字段时补默认值（向后兼容）', () => {
+  const sid = 'legacy-board-session'
+  const file = boardMod.boardFile(sid)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      revision: 3,
+      tasks: [{ id: 't1', subject: '旧任务', status: 'pending', owner: null, blockedBy: [], writeScopes: [] }],
+    }),
+    'utf8',
+  )
+  const board = boardMod.readBoard(sid)
+  assert.equal(board.revision, 3, '老 revision 原样保留')
+  assert.deepEqual(board.activity, [], '缺 activity 补空数组')
+  assert.deepEqual(board.tasks[0].notes, [], '缺 notes 补空数组')
+  assert.equal(board.tasks[0].blockedReason, null)
+  assert.equal(board.tasks[0].assignee, null)
+  passed += 1
+})
+
+// 数据面全流程：create → claim（带绑定）→ note → block → unblock → assign → complete，
+// 每步都写活动、都走 CAS；最后投影出 latestNote/noteCount/活动。
+test('team-board：进展/阻塞/绑定/活动全流程与 CAS', () => {
+  const sid = 'board-lifecycle'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  const created = boardMod.boardCreate(sid, { subject: '实现登录', writeScopes: ['src/auth'], actor: 'lead' })
+  assert.equal(created.task.id, 't1')
+  assert.equal(created.board.revision, 1)
+  assert.deepEqual(created.board.activity.map((entry) => entry.kind), ['create'])
+
+  // CAS：拿过期版本改一定被拒
+  assert.throws(() => boardMod.boardUpdate(sid, 't1', 0, 'claim', { owner: 'dev-1' }), /第 0 版/)
+
+  let result = boardMod.boardUpdate(sid, 't1', created.board.revision, 'claim', {
+    owner: 'dev-1',
+    assignee: 'dev-1',
+    by: 'dev-1',
+  })
+  assert.equal(result.task.status, 'in_progress')
+  assert.equal(result.task.owner, 'dev-1')
+  assert.equal(result.task.assignee, 'dev-1', 'spawn 绑定与认领一次 CAS 做完')
+  assert.equal(result.board.activity[0].kind, 'claim')
+
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'note', { text: '读完 auth 模块，开始改 login', by: 'dev-1' })
+  assert.equal(result.task.notes.length, 1)
+  assert.equal(result.task.notes[0].by, 'dev-1')
+  assert.equal(result.board.activity[0].kind, 'note')
+
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'block', { text: '等待接口契约', by: 'dev-1' })
+  assert.equal(result.task.blockedReason, '等待接口契约')
+  assert.equal(result.task.notes[0].text, '[卡住] 等待接口契约', '卡住也留一条进展（历史可追溯）')
+
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'unblock', { text: '契约已定', by: 'lead' })
+  assert.equal(result.task.blockedReason, null)
+  assert.equal(result.task.notes[0].text, '[解除] 契约已定')
+
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'assign', { assignee: 'dev-2', by: 'lead' })
+  assert.equal(result.task.assignee, 'dev-2')
+  assert.equal(result.board.activity[0].kind, 'claim', '指派记成 claim 类活动')
+
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'complete', { text: '已实现并自测通过', by: 'dev-2' })
+  assert.equal(result.task.status, 'completed')
+  assert.equal(result.task.notes[0].text, '已实现并自测通过', 'complete 的正文作为终稿摘要进 notes')
+  assert.deepEqual(result.board.activity[0].kind, 'complete')
+
+  const view = boardMod.boardViewOf(result.board)
+  assert.equal(view.tasks[0].latestNote.text, '已实现并自测通过')
+  assert.equal(view.tasks[0].noteCount, 4)
+  assert.equal(view.tasks[0].assignee, 'dev-2')
+  assert.equal(view.tasks[0].blockedReason, null)
+  assert.equal(view.activity.length, result.board.activity.length)
+  assert.equal(view.activity[0].kind, 'complete')
+  passed += 1
+})
+
+// 截断纪律：每任务最多 20 条进展、活动时间线最多 200 条；纯活动追加不动 revision。
+test('team-board：进展 20 条 / 活动 200 条上限，活动追加不动 revision', () => {
+  const sid = 'board-caps'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  let result = boardMod.boardCreate(sid, { subject: '压测截断' })
+  for (let index = 0; index < 25; index += 1) {
+    result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'note', { text: `进展 ${index}`, by: 'dev' })
+  }
+  const board = boardMod.readBoard(sid)
+  assert.equal(board.tasks[0].notes.length, boardMod.MAX_NOTES_PER_TASK)
+  assert.equal(board.tasks[0].notes[0].text, '进展 24', '新的在前，旧的被截掉')
+
+  for (let index = 0; index < 205; index += 1) {
+    boardMod.recordBoardActivity(sid, { by: 'dev', kind: 'message', text: `消息 ${index}` })
+  }
+  const after = boardMod.readBoard(sid)
+  assert.equal(after.activity.length, boardMod.MAX_ACTIVITY)
+  assert.equal(after.activity[0].text, '消息 204')
+  assert.equal(after.revision, board.revision, '纯活动追加不动 revision（不把改任务的队友 CAS 打回）')
+  passed += 1
+})
+
+// 角色扩充：九内置角色 + 各自工具白名单/审批档；默认轮次进 DEFAULT_ROLE_TURNS 与设置页。
+test('内置角色扩到九个，新角色有各自白名单/审批/默认轮次', () => {
+  assert.deepEqual(roles.builtinRoleNames(), [
+    'architect',
+    'critic',
+    'developer',
+    'explorer',
+    'ops',
+    'pm',
+    'reviewer',
+    'tester',
+    'writer',
+  ])
+  const expected = {
+    pm: { approval: 'forbid', tools: ['read', 'glob', 'grep', 'subagent'] },
+    architect: { approval: 'forbid', tools: ['read', 'glob', 'grep'] },
+    developer: { approval: 'ask', tools: ['read', 'write', 'edit', 'glob', 'grep', 'bash'] },
+    tester: { approval: 'ask', tools: ['read', 'glob', 'grep', 'bash', 'write'] },
+    ops: { approval: 'ask', tools: ['read', 'bash', 'glob', 'grep'] },
+  }
+  for (const [name, spec] of Object.entries(expected)) {
+    const role = roles.builtinRole(name)
+    assert.notEqual(role, null, `内置角色 ${name} 缺失`)
+    assert.deepEqual(role.tools, spec.tools, `${name} 的工具白名单`)
+    assert.equal(role.approval, spec.approval, `${name} 的审批档`)
+    assert.ok(role.prompt.length > 50, `${name} 的提示词不能是空壳`)
+  }
+  assert.equal(mod.DEFAULT_ROLE_TURNS.pm, 48)
+  assert.equal(mod.DEFAULT_ROLE_TURNS.architect, 32)
+  assert.equal(mod.DEFAULT_ROLE_TURNS.developer, 128)
+  assert.equal(mod.DEFAULT_ROLE_TURNS.tester, 64)
+  assert.equal(mod.DEFAULT_ROLE_TURNS.ops, 32)
+  assert.equal(mod.DEFAULT_ROLE_TURNS.explorer, 0)
+
+  writeSubagentConfig({ roleTurns: undefined })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const values = captured.sections.values()
+  for (const [name, turns] of [
+    ['pm', 48],
+    ['architect', 32],
+    ['developer', 128],
+    ['tester', 64],
+    ['ops', 32],
+  ]) {
+    assert.equal(values[`roleTurns.${name}`], turns, `设置页要列出 ${name} 的默认轮次`)
+  }
+  passed += 1
+})
+
+// 团队模式：打开自动把 maxDepth 抬到 2，关闭不回退；设置项是个开关。
+test('团队模式开关：打开抬到二层，关闭不回退', () => {
+  writeSubagentConfig({ teamMode: false, maxDepth: 1 })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const section = captured.sections
+  assert.equal(section.values().teamMode, false)
+  assert.equal(section.values().maxDepth, 1)
+  assert.equal(section.fields().find((field) => field.key === 'teamMode')?.type, 'switch')
+
+  assert.equal(section.save('teamMode', true), undefined)
+  assert.equal(section.values().teamMode, true)
+  assert.equal(section.values().maxDepth, 2, '团队模式 = 允许二层派活')
+
+  assert.equal(section.save('teamMode', false), undefined)
+  assert.equal(section.values().teamMode, false)
+  assert.equal(section.values().maxDepth, 2, '关闭不替用户降级 maxDepth')
+  passed += 1
+})
+
+// 横向通道跟着派活开关走：关掉 board 只撤 team_task，team_message 还在；
+// 关掉 allowDelegation 则两个工具一起撤。
+test('team_message 注册跟着 allowDelegation，不跟着 board', () => {
+  writeSubagentConfig({ board: false, allowDelegation: true })
+  let fake = fakeContext()
+  mod.subagentPlugin.apply(fake.ctx)
+  assert.equal(fake.captured.tools.some((entry) => entry.name === 'team_task'), false, 'board 关掉不该有 team_task')
+  assert.equal(fake.captured.tools.some((entry) => entry.name === 'team_message'), true, 'team_message 跟派活走')
+
+  writeSubagentConfig({ board: true, allowDelegation: false })
+  fake = fakeContext()
+  mod.subagentPlugin.apply(fake.ctx)
+  assert.equal(fake.captured.tools.some((entry) => entry.name === 'team_message'), false, '不允许派活时没有收件人')
+  assert.equal(fake.captured.tools.some((entry) => entry.name === 'team_task'), true, 'board 仍开，板子还在')
+  passed += 1
+})
+
+// team_message：点对点投递到信箱 + 记板子活动；目标不在队时如实说「没人会读」。
+test('team_message：send 投信箱、写活动；目标不在队如实说明', async () => {
+  writeSubagentConfig({ board: true, allowDelegation: true })
+  const sid = 'msg-session'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const tool = captured.tools.find((entry) => entry.name === 'team_message')
+  assert.notEqual(tool, undefined, '缺 team_message 工具')
+  assert.deepEqual(tool.parameters.properties.action.enum, ['send', 'broadcast', 'inbox'])
+  const runCtx = { cwd: process.cwd(), sessionId: sid, sessionPath: join(home, 'msg.jsonl'), signal: new AbortController().signal }
+
+  const out = await tool.run({ action: 'send', to: 'ghost-1', text: '在吗，接口契约定了吗' }, runCtx)
+  assert.match(out, /不在队/, '目标不在队要如实说明')
+  const inbox = boardMod.inboxRead('ghost-1')
+  assert.equal(inbox.length, 1, '话要写进信箱')
+  assert.ok(inbox[0].includes('接口契约'))
+  assert.ok(inbox[0].includes('from="lead"'), '带 from 署名')
+
+  const board = boardMod.readBoard(sid)
+  assert.equal(board.activity[0].kind, 'message', '消息记进板子活动')
+  assert.ok(board.activity[0].text.includes('ghost-1'))
+
+  // inbox 读最近消息
+  boardMod.inboxAppend('lead', '<team-message from="dev-1" to="lead"> 我这边完成了 </team-message>')
+  const inboxOut = await tool.run({ action: 'inbox', limit: 5 }, runCtx)
+  assert.match(inboxOut, /我这边完成了/)
+  passed += 1
+})
+
+// team_task 工具面：note / assign / get / activity 都能用，输出带最新进展与活动。
+test('team_task 工具：note/assign/get/activity 覆盖新动作', async () => {
+  writeSubagentConfig({ board: true, allowDelegation: true })
+  const sid = 'tool-board'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const tool = captured.tools.find((entry) => entry.name === 'team_task')
+  const runCtx = { cwd: process.cwd(), sessionId: sid, sessionPath: join(home, 'tool-board.jsonl'), signal: new AbortController().signal }
+
+  let out = await tool.run({ action: 'create', subject: '写协作文档', write_scopes: ['docs/'] }, runCtx)
+  assert.match(out, /已建 t1/)
+  out = await tool.run({ action: 'claim', id: 't1', expected_revision: 1, owner: 'lead' }, runCtx)
+  assert.match(out, /in_progress/)
+  out = await tool.run({ action: 'note', id: 't1', expected_revision: 2, text: '大纲写好了' }, runCtx)
+  assert.match(out, /大纲写好了/, 'note 回执要带最新进展')
+  out = await tool.run({ action: 'assign', id: 't1', expected_revision: 3, assignee: 'writer-1' }, runCtx)
+  assert.match(out, /绑定：writer-1/)
+  out = await tool.run({ action: 'get', id: 't1' }, runCtx)
+  assert.match(out, /进展（1 条/)
+  assert.match(out, /绑定队友：writer-1/)
+  out = await tool.run({ action: 'activity', limit: 5 }, runCtx)
+  assert.match(out, /最近 \d 条活动/)
+
+  const board = boardMod.readBoard(sid)
+  assert.equal(board.tasks[0].notes[0].text, '大纲写好了')
+  assert.equal(board.tasks[0].assignee, 'writer-1')
+  passed += 1
+})
+
+// spawn 的 task_id：不存在 / 已被别人认领 / 依赖没完成，都要给明确原因而不是硬派。
+test('spawn 带 task_id：不存在/被认领/依赖未完成都明确拒绝', async () => {
+  writeSubagentConfig({ board: true, allowDelegation: true })
+  const sid = 'spawn-task'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  let created = boardMod.boardCreate(sid, { subject: '实现登录接口' })
+  boardMod.boardUpdate(sid, created.task.id, created.board.revision, 'claim', { owner: 'someone-else', by: 'lead' })
+  created = boardMod.boardCreate(sid, { subject: '登录后的跳转', blockedBy: ['t1'] })
+  assert.equal(created.task.id, 't2')
+
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  ctx.agent.sessionById = (sessionId) => ({ meta: { id: sessionId } })
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')
+  const runCtx = { cwd: process.cwd(), sessionId: sid, sessionPath: join(home, 'spawn-task.jsonl'), signal: new AbortController().signal }
+  const base = { action: 'spawn', role: 'developer', task: '实现登录接口并补一条测试' }
+
+  let out = await tool.run({ ...base, task_id: 't99' }, runCtx)
+  assert.match(out, /没有 t99/)
+  out = await tool.run({ ...base, task_id: 't1' }, runCtx)
+  assert.match(out, /已经被 someone-else 认领/)
+  out = await tool.run({ ...base, task_id: 't2' }, runCtx)
+  assert.match(out, /还在等依赖完成/)
+
+  // 板子上没有认领/绑定副作用：两条任务状态没被这次失败的 spawn 改掉
+  const board = boardMod.readBoard(sid)
+  assert.equal(board.tasks.find((task) => task.id === 't1')?.owner, 'someone-else')
+  assert.equal(board.tasks.find((task) => task.id === 't2')?.owner, null)
+  passed += 1
+})
+
+// 提示词摘要：一行任务要带负责人/绑定/卡住/最新进展；活动行带时间与动作。
+test('提示词摘要行：任务带负责人/绑定/卡住/最新进展，活动带时间', () => {
+  const sid = 'digest-session'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  const created = boardMod.boardCreate(sid, { subject: '拆分验收任务' })
+  let result = boardMod.boardUpdate(sid, 't1', created.board.revision, 'claim', { owner: 'dev-1', assignee: 'dev-1', by: 'dev-1' })
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'note', { text: '已完成接口层', by: 'dev-1' })
+  result = boardMod.boardUpdate(sid, 't1', result.board.revision, 'block', { text: '等测试环境', by: 'dev-1' })
+  const line = mod.taskDigestLine(result.board, result.board.tasks[0])
+  assert.ok(line.includes('t1'))
+  assert.ok(line.includes('@dev-1'))
+  assert.ok(line.includes('绑定 dev-1'))
+  assert.ok(line.includes('卡住：等测试环境'))
+  // notes 新的在前：最新的那条是刚才的 block 记录
+  assert.ok(line.includes('最新进展（dev-1）：[卡住] 等测试环境'))
+  const activity = mod.activityDigestLine(result.board.activity[0])
+  assert.match(activity, /^\- \d{2}:\d{2} dev-1 note t1：/)
+  passed += 1
+})
+
+// Lead 板子提示段：带最新进展、最近活动、在队队友与 task_id 绑定规矩；子智能体提示带分工协议。
+test('Lead 提示段与分工协议：进展/活动/绑定规矩/团队分工都在', () => {
+  writeSubagentConfig({ board: true, allowDelegation: true, teamMode: false })
+  const sid = 'package-test'
+  rmSync(boardMod.boardFile(sid), { force: true })
+  const created = boardMod.boardCreate(sid, { subject: '给队友的任务' })
+  let result = boardMod.boardUpdate(sid, 't1', created.board.revision, 'claim', { owner: 'dev-1', assignee: 'dev-1', by: 'dev-1' })
+  boardMod.boardUpdate(sid, 't1', result.board.revision, 'note', { text: '第一版实现完成', by: 'dev-1' })
+
+  let { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const boardPrompt = captured.prompts.find((entry) => entry.id === 'team').render()
+  assert.ok(boardPrompt.includes('最新进展'), '板子提示要展示最新进展')
+  assert.ok(boardPrompt.includes('第一版实现完成'))
+  assert.ok(boardPrompt.includes('最近活动'))
+  assert.ok(boardPrompt.includes('在队队友与绑定任务'))
+  assert.ok(boardPrompt.includes('task_id'), '要提醒派活时用 task_id 绑定')
+  const subagentPrompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
+  assert.ok(subagentPrompt.includes('分工协议'), 'Lead 提示要有团队分工协议')
+  assert.ok(subagentPrompt.includes('pm'), '分工协议要点名 pm')
+  assert.equal(subagentPrompt.includes('团队模式已开'), false, '团队模式关着时不该出现那句提示')
+
+  writeSubagentConfig({ teamMode: true, maxDepth: 2 })
+  ;({ ctx, captured } = fakeContext())
+  mod.subagentPlugin.apply(ctx)
+  const modePrompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
+  assert.ok(modePrompt.includes('团队模式已开'))
+
+  // 队友系统提示里的模型句仍有；团队协作段由 teamCollabText 拼（同用摘要行，上面已钉）
+  assert.ok(modePrompt.includes('# 子智能体'))
+  passed += 1
+})
+
+// host 服务投影：team.board 走 boardViewOf（新字段全在）；team.list 带 taskId，老名册缺省 undefined。
+test('team.board / team.list 投影带新字段（含老名册兼容）', () => {
+  writeSubagentConfig({ board: true, allowDelegation: true })
+  const boardSession = 'svc-board'
+  rmSync(boardMod.boardFile(boardSession), { force: true })
+  const created = boardMod.boardCreate(boardSession, { subject: '服务投影' })
+  let result = boardMod.boardUpdate(boardSession, 't1', created.board.revision, 'claim', {
+    owner: 'dev-x',
+    assignee: 'dev-x',
+    by: 'dev-x',
+  })
+  boardMod.boardUpdate(boardSession, 't1', result.board.revision, 'note', { text: '进展一', by: 'dev-x' })
+
+  const rosterFile = join(process.env.DSC_HOME, 'team', 'roster.json')
+  mkdirSync(dirname(rosterFile), { recursive: true })
+  writeFileSync(
+    rosterFile,
+    JSON.stringify({
+      teammates: [
+        { name: 'dev-1', role: 'developer', state: 'idle', task: '做 x', file: join(home, 'dev-1.jsonl'), cwd: home, parent: 'lead', depth: 1, rounds: 3, startedAt: 1, taskId: 't7' },
+        { name: 'old-1', role: 'writer', state: 'idle', task: '旧记录', file: join(home, 'old-1.jsonl'), cwd: home, parent: 'lead', depth: 1, rounds: 1, startedAt: 0 },
+      ],
+    }),
+    'utf8',
+  )
+
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const view = captured.provided.team.board(boardSession)
+  assert.equal(view.tasks[0].latestNote.text, '进展一')
+  assert.equal(view.tasks[0].noteCount, 1)
+  assert.equal(view.tasks[0].assignee, 'dev-x')
+  assert.equal(view.tasks[0].blockedReason, null)
+  assert.equal(view.activity[0].kind, 'note')
+
+  const views = captured.provided.team.list()
+  assert.equal(views.find((entry) => entry.name === 'dev-1')?.taskId, 't7')
+  assert.equal(views.find((entry) => entry.name === 'old-1')?.taskId, undefined, '老名册没有 taskId 时不报错')
   passed += 1
 })
 
