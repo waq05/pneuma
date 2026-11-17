@@ -33,6 +33,7 @@ import {
   acquireRunLock,
   clearStaleRunFailures,
   hasRunFailure,
+  listDscTempDirs,
   otherRunActive,
   releaseRunLock,
   sweepRunTempDirs,
@@ -73,7 +74,13 @@ export default function globalSetup(): () => void {
     // 只读不消费：teardown 可能在 workspace 与 project 两级各跑一次，消费掉会让第二次
     // 误判成全绿、把失败现场删掉。旧标记由下一轮 setup 的 clearStaleRunFailures 清。
     if (hasRunFailure(runPid)) {
-      console.warn('[测试临时目录] 本轮有用例失败，临时目录全部保留（路径见上方的失败输出）')
+      // 保留归保留，得告诉人去哪看：不打印路径的话「失败现场」等于没留。
+      const kept = listDscTempDirs()
+        .filter((entry) => entry.createdMs >= startedAt)
+        .map((entry) => entry.path)
+      console.warn(
+        `[测试临时目录] 本轮有用例失败，保留 ${String(kept.length)} 个目录（DSC_KEEP_TMP=1 亦会走到这里）：\n  ${kept.join('\n  ')}`,
+      )
       return
     }
     if (otherRunActive(runPid)) {
