@@ -140,6 +140,11 @@ export interface TeammateView {
    * roster.json 是跨重启的台账，字段后加；老记录没有这一项，读档时按 undefined 处理。
    */
   sessionId?: string
+  /**
+   * 绑定的任务板任务 id（spawn 时带 `task_id` 才有）；undefined = 没绑定。
+   * 界面据此把「队友」与「共享任务」两处对起来。
+   */
+  taskId?: string
 }
 
 /**
@@ -161,6 +166,34 @@ export interface TeamTaskView {
   writeScopes: string[]
   /** 依赖都完成了，可以开工。 */
   ready: boolean
+  /**
+   * 最新一条进展（`team_task action=note` 追加的）；null = 还没人写过。
+   * 「谁、什么时候、做到哪一步」——队友互相看进展就靠这一条。
+   */
+  latestNote?: TeamTaskNoteView | null
+  /** 进展条数（完整记录在宿主侧，界面只需要知道有几条）。 */
+  noteCount?: number
+  /** 卡住的原因；null = 没卡。 */
+  blockedReason?: string | null
+  /** 绑定的队友名；null = 没绑定。 */
+  assignee?: string | null
+}
+
+/** 一条任务进展（只读投影）。 */
+export interface TeamTaskNoteView {
+  at: number
+  by: string
+  text: string
+}
+
+/** 任务板上的一条活动（谁在什么时候做了什么）。 */
+export interface TeamActivityView {
+  at: number
+  by: string
+  /** 关联的任务 id；没关联（例如纯消息广播）时 undefined。 */
+  taskId?: string
+  kind: 'create' | 'claim' | 'note' | 'complete' | 'release' | 'message'
+  text: string
 }
 
 /** 一个会话的共享任务板（每个会话一块，切会话就是另一块）。 */
@@ -168,6 +201,11 @@ export interface TeamBoardView {
   /** 板子版本号；模型改状态要带的 expected_revision 就是它。 */
   revision: number
   tasks: TeamTaskView[]
+  /**
+   * 全板活动时间线（新的在前，宿主侧最多保留 200 条）：谁在什么时候认领/写了进展/完成了任务。
+   * 队友的提示词与状态面板都读这一份，看「别人刚做了什么」不用挨个去问。
+   */
+  activity?: TeamActivityView[]
 }
 
 /** 可切换的模型（/model 补全与校验的数据源）。 */
