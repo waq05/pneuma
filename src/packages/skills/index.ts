@@ -256,8 +256,27 @@ export const skillsPlugin: Plugin.Object = {
       return market.browse(refreshEntries)
     }
 
-    /** 内置 HTTP 源的条目缓存（安装时按名字回查取文件清单）。 */
-    const entriesCache = new Map<string, MarketEntry[]>()
+    /**
+     * 内置 HTTP 源的条目缓存（安装时按名字回查取文件清单）。
+     *
+     * 存 `{ at, entries }` 而不是裸数组：条目要按 1 小时判过期（与磁盘缓存
+     * `config-core/market.ts` 的 CACHE_TTL_MS 同口径），否则同一个宿主进程里市场
+     * 会「冻结一辈子」——新发布的技能不重启就永远看不见。
+     *
+     * 键里带源地址：同名源改了 URL 之后，不能继续拿旧地址的清单（同一进程里
+     * 改设置里的源地址是很常见的操作）。
+     */
+    const entriesCache = new Map<string, { at: number; entries: MarketEntry[] }>()
+    /** 内存条目缓存的新鲜期：与磁盘缓存同一口径（1 小时）。 */
+    const ENTRIES_TTL_MS = 60 * 60 * 1000
+    /**
+     * 内存里最多留几条源结果（兜底上限）。
+     *
+     * 主要回收靠「命中到过期条目就删」——搜索型源每换一个关键词就是一条新键，
+     * 不删就只涨不落。这条上限管的是「1 小时内自己不断换词/刷新」那种极端：
+     * 到顶就按 `at` 最旧的淘汰一条，不做 LRU（够用，且一眼能看懂）。
+     */
+    const ENTRIES_CACHE_MAX = 32
     /**
      * 每个源最近一次浏览用的搜索词。
      *
@@ -331,12 +350,25 @@ export const skillsPlugin: Plugin.Object = {
         const sourceViews = sources.map((item) => ({ ...item.source, ok: true }))
         const installed = new Set(service.list().map((item) => item.name))
         try {
-          const items =
-            target.plugin !== undefined
-              ? await browsePluginEntries(target.source.name, refreshEntries === true)
-              : (await browseRemote(target.source, refreshEntries === true)).map((entry) =>
-                  toMarketSkillView(entry, installed),
-                )
+          if (target.plugin !== undefined) {
+            const items = await browsePluginEntries(target.source.name, refreshEntries === true)
+            return { sources: sourceViews, source: target.source.name, items }
+          }
+          // 关键词必须传下去：skills.sh 是搜索型源，拿不到词就必抛「只提供搜索」；
+          // browseRemote 的缓存键也靠它区分「同一个源的两次不同搜索」。
+          const remote = await browseRemote(target.source, refreshEntries === true, needle)
+          const items = remote.entries.map((entry) => toMarketSkillView(entry, installed))
+          // 回退旧缓存要让人看得见：契约没有 stale 字段，就复用现成的 error 装**原因**
+          // （items 非空 + error 存在 = 软提示）。前缀「这次没取到新结果，先显示上次的：」
+          // 由界面的市场文案模板加（`market.softFailed`），宿主只给原因，免得两层前缀叠一起。
+          if (remote.fallbackReason !== '') {
+            return {
+              sources: sourceViews,
+              source: target.source.name,
+              items,
+              error: remote.fallbackReason,
+            }
+          }
           return { sources: sourceViews, source: target.source.name, items }
         } catch (error) {
           return {
@@ -360,7 +392,7 @@ export const skillsPlugin: Plugin.Object = {
         if (configured === undefined) return { ok: false, error: `没有名为 ${source} 的市场源` }
         try {
           // 搜索型源（skills.sh）要带着上次的搜索词回查，否则条目列表是空的
-          const entries = await browseRemote(configured, false, lastQuery.get(source) ?? '')
+          const { entries } = await browseRemote(configured, false, lastQuery.get(source) ?? '')
           const entry = entries.find((item) => item.name === name)
           if (entry === undefined) return { ok: false, error: `${source} 里没有 ${name}` }
           const result = await installMarketEntry(entry, DSC_SKILLS_DIR)
@@ -375,19 +407,71 @@ export const skillsPlugin: Plugin.Object = {
       },
     }
 
-    /** 浏览内置 HTTP 源（结果按源名缓存，安装时按名字回查）。 */
-    async function browseRemote(source: MarketSource, force: boolean, query = ''): Promise<MarketEntry[]> {
-      // 搜索型源的缓存键要带关键词：换个词查的是另一批条目
-      const key = isSkillsShSource(source.url) ? `${source.name}\u0000${query}` : source.name
-      const cached = entriesCache.get(key)
-      if (cached !== undefined && !force) return cached
-      const entries = await browseMarketSource(source, { refresh: force, query })
+    /**
+     * 浏览内置 HTTP 源（结果按「源名 + 源地址」缓存，安装时按名字回查）。
+     *
+     * 三层缓存，越靠前越快，也越不该被一次失败清掉：
+     *   1. 非刷新请求命中 `entriesCache` 直接返回——离开技能页再进来是**秒开**的根本，
+     *      这条路径一次网络都不碰（命中要过 1 小时新鲜期，过期按 miss 处理）；
+     *   2. 刷新/首次请求走 `browseMarketSource`，它自己会先读磁盘缓存、联网失败再回退旧缓存；
+     *   3. 万一连磁盘缓存都没了（用户清过 `~/.dsc/cache`），这里再兜一层内存里的旧列表。
+     * 只有三层全空才把错误抛给界面——绝不拿空数组冒充成功。
+     *
+     * 返回值带 `fallbackReason`：这份列表是回退来的（磁盘回退或内存兜底）时非空，
+     * 调用方把**原因原文**放进结果的 `error`；界面模板（`market.softFailed`）负责加
+     * 「这次没取到新结果，先显示上次的：」前缀，宿主不再自己拼前缀（免得两层叠一起）。
+     */
+    async function browseRemote(
+      source: MarketSource,
+      force: boolean,
+      query = '',
+    ): Promise<{ entries: MarketEntry[]; fallbackReason: string }> {
+      // 键 = 源名 + 源地址（同名换地址不能串旧清单）；搜索型源再加关键词
+      const base = `${source.name}\u0000${source.url}`
+      const key = isSkillsShSource(source.url) ? `${base}\u0000${query}` : base
+      let cached = entriesCache.get(key)
+      // 过期条目当场删掉再按 miss 处理：不删的话搜索型源每换一个关键词就多一条、
+      // 永不回收（每条最多 100 项带描述），进程开久了内存只涨不落。
+      // 联网与否交给 browseMarketSource 判（它自己还有磁盘缓存那一层）。
+      if (cached !== undefined && Date.now() - cached.at >= ENTRIES_TTL_MS) {
+        entriesCache.delete(key)
+        cached = undefined
+      }
+      // 命中新鲜值（且不是强制刷新）才直接返回
+      if (cached !== undefined && !force) return { entries: cached.entries, fallbackReason: '' }
+      let fallbackReason = ''
+      let entries: MarketEntry[]
+      try {
+        entries = await browseMarketSource(source, {
+          refresh: force,
+          query,
+          onFallback: (reason) => {
+            fallbackReason = reason
+          },
+        })
+      } catch (error) {
+        // 联网失败但内存里还有上次的列表：交旧列表（refresh 也一样），不清缓存
+        if (cached !== undefined) return { entries: cached.entries, fallbackReason: err(error) }
+        throw error
+      }
       // 缓存文件按 URL 存（改名字还是同一份），条目里会烙着**上次读时的源名**——
       // 出缓存一律按当前源名重新盖章：改名后浏览列出的行、点安装回查的键
       // 才与清单里的名字对得上（否则安装会报「没有名为 X 的市场源」）。
       const stamped = entries.map((entry) => ({ ...entry, source: source.name }))
-      entriesCache.set(key, stamped)
-      return stamped
+      // 到上限先按 at 最旧淘汰一条（键已存在时是刷新，不腾地方）
+      if (!entriesCache.has(key) && entriesCache.size >= ENTRIES_CACHE_MAX) {
+        let oldestKey: string | undefined
+        let oldestAt = Number.POSITIVE_INFINITY
+        for (const [candidate, value] of entriesCache) {
+          if (value.at < oldestAt) {
+            oldestAt = value.at
+            oldestKey = candidate
+          }
+        }
+        if (oldestKey !== undefined) entriesCache.delete(oldestKey)
+      }
+      entriesCache.set(key, { at: Date.now(), entries: stamped })
+      return { entries: stamped, fallbackReason }
     }
 
     // ── `skill` 工具：模型按名字取正文 ──

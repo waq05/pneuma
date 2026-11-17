@@ -17457,3 +17457,51 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
 
 **留下的一句**：`textSizePx` 只到 22px、默认 14px；代码字号还没有独立档（`--dsc-fs-code` 仍按
 倍率跟随），要独立得再开一轮——`contract/fonts.ts` 里把基准与范围都收在一处，加一档只动那里。
+
+### 2026-11-17 技能市场秒开：进程内缓存、skills.sh 搜索态与刷新打通
+
+**报上来的三件事**（三张界面截图）：技能页「市场」每次点都要转很久、换源也要再等；skills.sh 源点开是一张
+红色错误条，那里应该留搜索框；市场按钮旁的数字没有意义。
+
+**根因三处**：
+1. 技能页是整页插件（`src/packages/ui-skills/ui/ui.tsx`）：离开这一页 `SkillsPage` 返回 null，`SkillsView`
+   整个卸载，市场 state 跟着丢；切回市场时 `market === null` 就立刻抓第一个源。换源 chip 也是每次直接联网，
+   客户端没有任何缓存。宿主默认 invoke 超时 30 秒（`ui-runtime/ui/host-channel.ts:42`），GitHub 源 trees
+   15 秒 + 补描述 6 秒叠起来会顶到它。
+2. 点 skills.sh 时立刻发请求，宿主对空查询直接抛「skills.sh 只提供搜索…」，界面把它当红条显示。宿主侧还有
+   一个前置 bug：`skills/index.ts` 调 `browseRemote` 时没把已算好的 `needle` 传进去，搜索词根本到不了宿主。
+3. 市场 tab 按钮里渲染 `market?.items.length`，那是「上一个源有多少条」，和页签语义无关。
+
+**参考实现怎么做到秒开**：DSH 的技能管理插件（`@michengai/dsh-skills-manager`）把仓库清单缓存在宿主
+（`lib/repositories.js` 的 `stateCache` + `repository-cache/`），打开发现页直接读缓存、只有点「刷新并检查更新」
+才联网；扫描/下载失败保留上次列表与缓存；skills.sh 源固定渲染搜索框，关键词为空只给空态、不发请求。本次按
+这条行为路径改，不搬代码。
+
+**改法（界面层 + 宿主与通道）**：
+- 界面层：模块级 `marketCache`（键=源名+关键词，24 条上限、1 小时新鲜期、读也挪队尾）、`marketInflight`
+  同键去重、`prefetchMarket` 进页后台串行预取；离开页面再回来从缓存还原（含上次页签）；过期先显示旧结果再
+  后台刷新，失败只留一行软提示；`browseToken`/`marketEpoch` 挡「换源后旧回包覆盖新视图」与「改源前的在途结果」。
+- skills.sh：点源不发请求、搜索框自动聚焦、<2 字符只显示中性提示、≥2 字符 350ms 防抖；只有市场 tab 里亲手
+  输入的关键词才自动搜（不会拿已安装 tab 的过滤词去打网络）。
+- 宿主与通道：四类源共用 15 秒总预算；联网失败回退磁盘旧清单（不限 TTL），回退原因经既有 `error` 字段做
+  软提示；宿主内存缓存加 1 小时 TTL 且键带源地址（同名换地址不串旧清单）；`browseMarket` 放行第三个可选
+  boolean，runtime 透传 refresh，界面「刷新」从此真的强制联网。
+- 市场 tab 的计数徽章删掉（已安装 tab 的保留）。
+
+**怎么验的**：
+- `pnpm run build`、`pnpm run build:ui`、`pnpm -C ui-shell typecheck`、`pnpm --dir desktop typecheck`
+  全部退出 0。
+- `node src/packages/config-core/tests/market-fallback.test.mjs` → 6 项通过（回退旧缓存、TTL 不挡回退、
+  `onFallback` 带原因、无缓存必抛、总预算收紧单请求超时）。
+- `node scripts/ui-skills-market-test.mjs` → 42 项源码级探针通过；对修复前基线 `--rev` 跑 8/42（exit 1），
+  证明闸门不是永远绿。已按 `ui-*-test.mjs` 命名自动进 `check:ui`。
+- `desktop/shots/skills-market-check.ps1`（隔离 HOME + 本地慢源：`/index.json` 延迟 800ms，命中次数由
+  PowerShell 侧按毫秒窗口读服务端日志）→ 30/30：首次进市场 542~1001ms 出条目；离开技能页再回来二次打开
+  **1ms** 出条目且窗口内 0 次源命中；skills.sh 点开只显示中性提示、无红条、搜索框聚焦、市场 tab 无计数徽章。
+  跑前跑后真实 `~/.dsc` 11313 个文件内容聚合一致（零污染）。
+
+**留下的取舍**：
+- 首源被配成 skills.sh 且源清单尚未加载时，第一次仍会发一次注定失败的请求（用户只看到中性提示，回包后转
+  中性路径）。
+- 回退到旧清单时按当前时间重新记新鲜期，想立刻拿新数据要点一次「刷新」（与 DSH「刷新才联网」同口径）；
+  磁盘层的旧清单仍保留，供下次失败兜底。
