@@ -17202,3 +17202,89 @@ TUI 接通后，桌面端的 @ 面板仍只从会话 cwd 懒递归——同一�
 
 
 
+
+## 2026-11-17：0.9.1 之后的合并内容，打包产物逐功能实机验收
+
+**为什么做**：11-16 把 387 个提交快进到 main（0.8.1 → 0.9.1 之后的那批），用户要求「重新打包，
+对新合进来的内容做实机测试」。测的不是 dev，是 `desktop/dist/win-unpacked/Pneuma.exe`。
+
+**怎么测**：新加了一个共用壳 `desktop/shots/_pkg-harness.mjs`（一次性 HOME + 本地假 OpenAI 端点
++ CDP + 截图），场景写成它的 body。打包产物与 dev 的区别是 `resources/dsc-core` 里另一批文件，
+dev 过不代表包里过。
+
+| 功能 | 判据 | 结果 |
+| --- | --- | --- |
+| 首屏问候 | h1 = 当前时段那一句、副行 = Codex 式引导、四张卡 | 5/5 通过 |
+| 核心闭环 | 发一句话 → 用户气泡 + 助手回复 + 无错误条目 | 5/5 通过 |
+| 思考正文 Markdown | `.think-block` 里有 `<pre>/<code>`、`<li>`、`<strong>` | 4/4 通过 |
+| 命令调用的终端块 | `$ echo …` 终端样式 + 退出码 | **失败**（见下） |
+| 设置页 | 打开、九个分区在 | 通过；但没有「运行日志」分组 |
+| 插件 / 技能页 | 点了主区换页 | **失败**（见下） |
+
+**问题一：`bash` 工具在全新 HOME 下第一次调用就失败。**
+界面原话：`沙箱：受限令牌后端已降级为策略围栏（不再换执行体）：给可写根
+[…\\.dsc\\sandbox\\tmp\\<hash>]（能力 SID S-1-4-…）打 ACL 失败：GetNamedSecurityInfoW(三件套)
+失败（Win32 错误码 2）：系统找不到指定的文件。` 结果：命令没执行，界面没有 `$ 命令` 与退出码，
+只剩一行说明。预建 `sandbox/tmp` 后同样失败（`_diag-bash-sandbox.mjs` 的 A/B 两轮），所以不是
+「目录晚一步建」这么简单，是打 ACL 的那个路径本身没被创建。待修。
+
+**问题二：侧栏「插件 / 技能」点了不换页。** 三个入口按钮本身正常（`BUTTON.nav-item`、不 disabled），
+element click、CDP 真实鼠标、点父节点三种方式都点过，主区仍是首屏。代码指向
+`src/packages/ui-sessions/ui/ui.tsx:220` 的守卫：当前页在页面注册表里查不到就 `setShellPage(null)`
+踢回对话页。dev 版（`desktop/out`）用 `DIAG_DEV=1 node desktop/shots/_diag-plugins.mjs` 复现同一现象，
+所以不是打包漏包（`lib/ui/plugins/` 下 22 个包齐全，含 `plugins`、`skills`）。待查。
+
+**没覆盖**：superagent（用户要求先留着）；归档的 OS 锁（要两个进程同时抢，另开）；
+「编辑重发后折叠复位」（时序成本高）；`/doctor`、`/log`、`/doctor --bundle`——壳的
+`shell: true` 白名单只有七条，这三条在应用里跑不了（`commands-core/commands-completion.ts`
+的 `shellHelpText`），要验得走终端。
+
+**这一批新增的探针**（都在 `desktop/shots/`，不进 CI）：`_pkg-harness.mjs`、
+`_verify-welcome-packaged.mjs`、`_verify-core-loop-packaged.mjs`、`_verify-features-packaged.mjs`、
+`_verify-pages-packaged.mjs`、`_diag-plugins.mjs`、`_diag-bash-sandbox.mjs`。
+
+**登记**：上面三条已写进 [docs/bugs.md](bugs.md)——BUG-0001（沙箱打 ACL 失败，bash 不可用）、BUG-0002（侧栏「技能/插件」点了不换页）、BUG-0003（设置里没有「运行日志」分区）。修完在那条 issue 下面补验收命令与提交号。
+
+
+## 2026-11-17：三条缺陷修完（沙箱建目录 / 切页守卫 / 运行日志分区）
+
+**为什么做**：上一节验收挑了三条缺陷（BUG-0001/0002/0003）。用户要求「先核实、再修、修完起子代理复核」。
+三条的结论都写在 [docs/bugs.md](bugs.md)，这里只记「根因—改法—怎么验」和踩到的坑。
+
+**BUG-0001（P0，P0 是真的）：第一次跑命令沙箱必降级。**
+根因不是「目录晚一步建」，是**两处算的不是同一个目录**：宿主建的是 `sandbox/tmp/<会话 id>`
+（`src/packages/sandbox/index.ts:224`），受限令牌后端要授权的是 `sandbox/tmp/<工作区哈希>`
+（`src/packages/sandbox/win/backend.ts:206`，不带会话 id）。后者谁都没建 → `GetNamedSecurityInfoW`
+返 Win32 错误 2 → 整条后端作废。自检一直绿，是因为 `scripts/sandbox-win-token-test.mjs` 里替它建好了，
+注释还写着「真实宿主里由插件建」，那句话是错的。
+改法：`ensureAuthorized` 打 ACL 前对每个可写根 `mkdirSync(path, { recursive: true })`，建不出来才降级。
+验收：自检 **90 通过 / 0 失败**（新增 3 条回归判据）；打包版实跑一条命令，会话 jsonl 里工具结果是
+`CWD=D:\dsc INSIDE_OK OUTSIDE_DENIED EPERM`——写根内真落盘、写根外被系统层拒。
+
+**BUG-0002（P1）：侧栏技能/插件点了不换页。**
+文档里记的两条候选（槽条目 id 与页键不一致、点击没进 React）**都被实验排掉了**：`/api/events` 的
+plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reactProps$` 里取出来直接调用，
+效果与真实点击一致，且点完侧栏那一行确实重渲染过。
+真因在第三处：`usePageEntryAvailable` 把「这页在不在」缓存成**布尔**。停在对话页时传的 entryId 是 `''`
+（恒 false），切页那一帧 entryId 变了、state 还是旧答案 false，守卫
+`if (page !== null && !pageEntry) setShellPage(null)` 就把「答案没更新」当成「插件被停用」踢回对话页。
+改法：state 存**启动图帧**，每次渲染现算。验收：新加闸门 `scripts/ui-page-switch-test.mjs` **15/15**
+（含「脏副本必须红」），`check:ui` **80/80**，打包版真实鼠标点技能 `aria-pressed=true`、主区换成技能页。
+
+**BUG-0003（P2）：设置里没有「运行日志」。**
+分区其实推上来了，是设置页过滤掉了：`src/packages/settings/index.ts:551` 的
+`builtin: section.inSettings === true || builtinIds.has(id)`，而 `log` 注册时没声明 `{ inSettings: true }`。
+改法：补声明（`src/packages/log/index.ts:346`）。验收：左栏 9 项 → 10 项，多出「运行日志」。
+
+**踩到的两个坑（都写进探针注释了）**
+
+1. 探针 HOME 原来落在仓库里（D 盘）。这台机器的 **D 盘不许给新建目录设完整性标签**
+   （`icacls /setintegritylevel` 直接 Access is denied），于是每个沙箱用例都撞 ACL 失败——
+   看着像产品坏了，其实是探针位置。`_pkg-harness.mjs` 的 HOME 已挪到系统临时目录（C 盘），
+   与真实用户的 `%USERPROFILE%` 同一条路。
+2. 验沙箱写边界时，「命令原文」也会被画进界面，用 `text.includes('OUTSIDE_WRITTEN')`
+   会把**命令里出现的词**当成**命令跑出来的结果**（第一版就这么假通过了）。改成读会话 jsonl 里
+   `type:"tool"` 的真实结果，标记串在运行时拼，界面文本只用来判「有没有降级提示」。
+
+**没修的**：`/doctor`、`/log`、`/doctor --bundle` 在桌面输入框里本来就不执行（壳只转 7 条
+`shell: true` 命令），探针里已从 FAIL 改成 SKIP 并写清原因，要验得走终端。
