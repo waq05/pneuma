@@ -503,8 +503,12 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.skills.setEnabled(name, enabled)
       },
 
-      browseMarket(source, query) {
-        return ctx.skills.browseMarket(source ?? '', false, query)
+      // 第三参 refresh 由界面「刷新」按钮传入（ui-methods 的 browseMarket 规格已放行
+      // 一个可选 boolean）：true = 跳过缓存强制联网；省略/false = 先用新鲜缓存。
+      // 显式标注类型：契约里这条只声明了两个可选参数，第三个由这里补成可选，
+      // 让实现在类型上仍能赋给 DscRuntime（多一个可选参数不算加宽调用面）。
+      browseMarket(source: string | undefined, query: string | undefined, refresh?: boolean) {
+        return ctx.skills.browseMarket(source ?? '', refresh === true, query)
       },
 
       installMarketSkill(source, name) {

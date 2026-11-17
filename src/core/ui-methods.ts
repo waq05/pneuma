@@ -396,6 +396,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   browseMarket: [
     { shape: { kind: 'string', max: MAX_NAME }, optional: true },
     { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+    // 第三参 = 强制联网（界面「刷新」按钮）。true 时宿主跳过新鲜缓存与内存缓存，
+    // 到市场源重拉一遍；拉失败仍交旧缓存，但回退原因会写进结果的 error 做软提示。
+    // 不登记这一条的话页面传第三个实参会因为「最多收 2 个实参」被当场拒。
+    { shape: { kind: 'boolean' }, optional: true },
   ],
   // ── 模式（预设） ──────────────────────────────────────────────────────────
   listPresets: [],
