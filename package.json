@@ -44,7 +44,7 @@
     "test:int": "pnpm run build && vitest run --project integration",
     "test:ui": "vitest run --project ui",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "test:snapshot": "vitest run --project snapshot --passWithNoTests",
+    "test:snapshot": "vitest run --project snapshot",
     "test:snapshot:record": "vitest run --project snapshot",
     "test:built": "vitest run --config vitest.built.config.ts",
     "test:coverage": "vitest run --coverage --project unit --project integration --project ui --project snapshot --project tui --hookTimeout=20000 --testTimeout=20000",
