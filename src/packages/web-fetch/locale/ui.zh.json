@@ -1,0 +1,14 @@
+{
+  "section.title": "网页抓取",
+  "section.subtitle": "模型读某个具体网页时用这里的上限；抓取不发送任何登录凭据",
+  "field.maxChars.label": "单次正文字数上限",
+  "field.maxChars.help": "抓回来转成 Markdown 之后的字数上限，超出部分截断。默认 10 万字，约占两万多个 token。",
+  "field.timeoutSec.label": "单次抓取超时（秒）",
+  "field.timeoutSec.help": "超时就放弃这次抓取并告诉模型「太慢」，不会一直挂着。",
+  "field.test.label": "测试抓取 example.com",
+  "field.test.help": "真的去抓一次 example.com，回执会显示状态码与正文长度，或失败原因。",
+  "save.badChars": "字数上限要填数字",
+  "save.badTimeout": "超时要填数字",
+  "save.unknownKey": "这个分区没有这项：{key}",
+  "action.ok": "通了：HTTP {code}，正文转出来 {chars} 字。"
+}

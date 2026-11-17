@@ -1,0 +1,14 @@
+{
+  "section.title": "Web fetch",
+  "section.subtitle": "Limits for reading one specific page; fetches carry no sign-in credentials",
+  "field.maxChars.label": "Body limit per fetch (characters)",
+  "field.maxChars.help": "Upper bound on the Markdown body handed to the model; anything past it is cut. The default 100,000 characters is roughly 25,000 tokens.",
+  "field.timeoutSec.label": "Timeout per fetch (seconds)",
+  "field.timeoutSec.help": "When it expires the fetch is abandoned and the model is told the site was too slow.",
+  "field.test.label": "Test fetch of example.com",
+  "field.test.help": "Runs one real fetch of example.com; the reply shows the status code and body length, or why it failed.",
+  "save.badChars": "The body limit must be a number.",
+  "save.badTimeout": "The timeout must be a number.",
+  "save.unknownKey": "This section has no such setting: {key}",
+  "action.ok": "It works: HTTP {code}, body converted to {chars} characters."
+}
