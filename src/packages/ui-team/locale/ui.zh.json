@@ -32,6 +32,8 @@
   "team.reader.back": "返回原会话",
   "team.reader.backTip": "关掉这层只读视图，回到原会话",
   "team.reader.oneShotBody": "只读：一次性任务不支持后续消息，可在这里看完整执行记录",
+  "team.reader.task": "任务 {id}",
+  "team.reader.taskTip": "这个队友绑定的共享任务：{id}（在状态面板「共享任务」里能看它的进展）",
   "team.reader.parentFallback": "原会话",
   "team.tab.roundsTip": "它已经发起的模型请求轮数",
   "team.tab.readonly": "只读运行记录"

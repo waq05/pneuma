@@ -32,6 +32,8 @@
   "team.reader.back": "Back to the session",
   "team.reader.backTip": "Close this read-only view and return to the session",
   "team.reader.oneShotBody": "Read-only: one-shot tasks do not accept follow-ups; the full record stays here",
+  "team.reader.task": "Task {id}",
+  "team.reader.taskTip": "The shared task this teammate is bound to: {id} (its progress shows in the status panel's Shared tasks section)",
   "team.reader.parentFallback": "Original session",
   "team.tab.roundsTip": "Model request rounds it has started",
   "team.tab.readonly": "Read-only run log"

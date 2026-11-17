@@ -443,6 +443,15 @@ function sameMateList(left: readonly TeammateView[], right: readonly TeammateVie
 function sameBoard(left: TeamBoardView | null, right: TeamBoardView): boolean {
   if (left === null) return false
   if (left.revision !== right.revision) return false
+  // 进展 / 活动变了也要重画：队友写一条 note 不改 revision 之外的判据时，行内显示会停在旧值。
+  const leftActivity = left.activity ?? []
+  const rightActivity = right.activity ?? []
+  if (leftActivity.length !== rightActivity.length) return false
+  const latestActivity = (list: TeamBoardView['activity']): string => {
+    const first = list?.[0]
+    return first === undefined ? '' : `${String(first.at)}|${first.by}|${first.text}|${first.kind}`
+  }
+  if (latestActivity(leftActivity) !== latestActivity(rightActivity)) return false
   if (left.tasks.length !== right.tasks.length) return false
   return left.tasks.every((task, index) => {
     const other = right.tasks[index]
@@ -452,7 +461,12 @@ function sameBoard(left: TeamBoardView | null, right: TeamBoardView): boolean {
       task.subject === other.subject &&
       task.status === other.status &&
       task.owner === other.owner &&
-      task.ready === other.ready
+      task.ready === other.ready &&
+      task.blockedReason === other.blockedReason &&
+      task.assignee === other.assignee &&
+      task.noteCount === other.noteCount &&
+      task.latestNote?.text === other.latestNote?.text &&
+      task.latestNote?.at === other.latestNote?.at
     )
   })
 }
@@ -1804,6 +1818,11 @@ function AgentSection({
                 {mate.name}
               </span>
               <span className="sp-row-note">{mate.role}</span>
+              {mate.taskId === undefined ? null : (
+                <span className="sp-row-note" data-sp-agent-task={mate.taskId} title={t('status.agent.taskRefTip', { id: mate.taskId })}>
+                  {t('status.agent.taskRef', { id: mate.taskId })}
+                </span>
+              )}
               {mate.mode === 'one-shot' ? (
                 <span className="sp-row-mode">{t('status.agent.modeOneShot')}</span>
               ) : null}
@@ -1867,6 +1886,9 @@ function TeamBoardSection({
 }): ReactNode {
   // 一次只展开一条（展开另一条时自动收起上一条），与 dsh 的任务详情同一条规矩。
   const [expanded, setExpanded] = useState<string | null>(null)
+  // 「最近活动」默认收起：板子经常有几十条活动，全摊开会把任务列表挤出可视区。
+  const [activityOpen, setActivityOpen] = useState(false)
+  const activity = board.activity ?? []
   const openCount = board.tasks.filter((task) => task.status !== 'completed').length
   const trail =
     openCount === 0
@@ -1908,6 +1930,24 @@ function TeamBoardSection({
               {detailOpen ? (
                 <div className="sp-task-detail">
                   <p>{task.description === '' ? t('status.team.noDetail') : task.description}</p>
+                  {task.assignee === undefined || task.assignee === null ? null : (
+                    <p className="sp-task-meta">{t('status.team.assignee', { name: task.assignee })}</p>
+                  )}
+                  {task.blockedReason === undefined || task.blockedReason === null || task.blockedReason === '' ? null : (
+                    <p className="sp-task-meta sp-task-blocked">{t('status.team.blockedReason', { reason: task.blockedReason })}</p>
+                  )}
+                  {task.latestNote === undefined || task.latestNote === null ? null : (
+                    <p className="sp-task-note" data-sp-task-note={task.id}>
+                      {t('status.team.latestNote', {
+                        by: task.latestNote.by,
+                        ago: formatAgo(task.latestNote.at, Date.now()) ?? '',
+                        text: task.latestNote.text,
+                      })}
+                      {typeof task.noteCount === 'number' && task.noteCount > 1
+                        ? ` ${t('status.team.noteCount', { n: task.noteCount })}`
+                        : ''}
+                    </p>
+                  )}
                   {task.blockedBy.length === 0 ? null : (
                     <p className="sp-task-meta">{t('status.team.blockedBy', { ids: task.blockedBy.join('、') })}</p>
                   )}
@@ -1920,6 +1960,44 @@ function TeamBoardSection({
           )
         })}
       </ul>
+      {activity.length === 0 ? null : (
+        <div className="sp-task-activity" data-sp-team-activity={String(activity.length)}>
+          <button
+            type="button"
+            className="sp-row-open"
+            aria-expanded={activityOpen}
+            aria-label={t('status.team.activity')}
+            onClick={() => {
+              setActivityOpen((current) => !current)
+            }}
+          >
+            <span className="sp-row-text">{t('status.team.activity')}</span>
+            <span className="sp-row-note">{t('status.team.activityTrail', { n: activity.length })}</span>
+            <span className="sp-row-time" data-tone="plain">
+              {activityOpen ? t('status.team.collapse') : t('status.team.expand')}
+            </span>
+          </button>
+          {activityOpen ? (
+            <ul className="sp-list">
+              {activity.slice(0, 10).map((entry, index) => (
+                <li
+                  className="sp-row sp-row-task"
+                  data-sp-activity={entry.kind}
+                  key={`${String(entry.at)}-${String(index)}`}
+                >
+                  <span className="sp-row-text" title={entry.text}>
+                    {entry.taskId === undefined ? entry.text : `[${entry.taskId}] ${entry.text}`}
+                  </span>
+                  <span className="sp-row-note">@{entry.by}</span>
+                  <span className="sp-row-time" data-tone="plain">
+                    {formatAgo(entry.at, Date.now()) ?? ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      )}
     </StatusSectionBlock>
   )
 }

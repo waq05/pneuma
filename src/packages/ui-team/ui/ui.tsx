@@ -367,6 +367,11 @@ function TeammateReader({ mates }: { mates: readonly TeammateView[] }): ReactNod
         <IconTree size={13} />
         <span className="team-reader-name">{mate.name}</span>
         <span className="team-reader-role">{mate.role}</span>
+        {mate.taskId === undefined ? null : (
+          <span className="team-reader-role" data-sp-agent-task={mate.taskId} data-tip={t('team.reader.taskTip', { id: mate.taskId })}>
+            {t('team.reader.task', { id: mate.taskId })}
+          </span>
+        )}
         <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
         {/* 耗时跟着名册走：在跑时每秒跳，收工换成总耗时（`UsedTime` 自己判 `working`）。
             同一个组件右栏的子智能体页签也在用，两处口径一致。 */}
