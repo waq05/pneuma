@@ -18,12 +18,12 @@
  * @module dsc/tests/integration/env-facts.int.spec
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
 import { ptcResultBody } from '@pneuma/runtime/core/ptc.js'
 import { environmentText } from '@pneuma/runtime/packages/session-core/prompt.js'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 本文件建的临时仓库，跑完统一删（临时 HOME 由 integration setup 管，这里只删自己建的）。 */
 const trees: string[] = []
@@ -44,7 +44,9 @@ function gitIn(dir: string, args: string[]): void {
 
 /** 建一个空仓库，提交一个 `base.txt` 当基线；返回仓库目录。 */
 function repoWithBaseline(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  // 原来直接 mkdtempSync：只靠本文件 afterAll 的 rmSync 删，删不掉就没人兜底。
+  // 改走 createTempDir：目录名带 `dsc-` 前缀，teardown 扫临时根顶层时按前缀认领（前缀本来就是 dsc-）。
+  const dir = createTempDir(prefix)
   trees.push(dir)
   gitIn(dir, ['init', '-q'])
   writeFileSync(join(dir, 'base.txt'), 'base\n', 'utf8')

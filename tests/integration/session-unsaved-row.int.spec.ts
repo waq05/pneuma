@@ -16,10 +16,9 @@
  *
  * @module dsc/tests/integration/session-unsaved-row.int.spec
  */
-import { mkdirSync, mkdtempSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { bootKernel, fakeLLM, type BootedKernel, type FakeLLM } from '../harness.js'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 会话列表里的一行（只声明本文件用到的成员）。 */
 interface SummaryRow {
@@ -78,8 +77,9 @@ describe('点新会话要看得见一行', () => {
 
   test('再点一次新会话：回执只补当前这一条，已落盘的那行不受影响', async () => {
     const previous = session.current().filePath
-    // 在临时 HOME 里开一个新工作区，给新会话一个合法目录。
-    const workspace = mkdtempSync(join(process.env.HOME ?? '.', 'unsaved-ws-'))
+    // 开一个新工作区，给新会话一个合法目录：系统临时根下、`dsc-` 前缀，由统一清理认领。
+    // 工作区只当 cwd 用、不依赖 HOME 位置。
+    const workspace = createTempDir('dsc-unsaved-ws-')
     await session.open(undefined, workspace)
     await session.refresh()
     const current = session.current().filePath
@@ -95,8 +95,8 @@ describe('点新会话要看得见一行', () => {
   })
 
   test('回执行的工作区与新建时指的目录一致（目录跟着会话走）', async () => {
-    const workspace = mkdtempSync(join(process.env.HOME ?? '.', 'unsaved-ws-'))
-    mkdirSync(workspace, { recursive: true })
+    // 同上：原前缀 `unsaved-ws-` 不在 `dsc-` 白名单里，改走 createTempDir 建在临时根顶层。
+    const workspace = createTempDir('dsc-unsaved-ws-')
     await session.open(undefined, workspace)
     await session.refresh()
     expect(session.sessions[0]?.cwd).toBe(workspace)

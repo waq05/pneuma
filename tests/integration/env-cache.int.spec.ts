@@ -32,7 +32,7 @@
  *
  * @module dsc/tests/integration/env-cache.int.spec
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
@@ -41,6 +41,7 @@ import { applyExplicitCache, serializeMessages } from '@pneuma/runtime/core/llm.
 import { DSC_HOME } from '@pneuma/runtime/core/path-policy.js'
 import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET } from '@pneuma/runtime/packages/session-core/prompt.js'
 import { bootKernel, fakeLLM, readSessionJsonl, type BootedKernel, type FakeLLM } from '../harness.js'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /**
  * 基础插件清单：关掉会在回合里多发请求 / 起子进程的四条。
@@ -111,7 +112,9 @@ let captured: CapturedRequest[]
 
 const tempDirs: string[] = []
 function makeTemp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  // 原来直接 mkdtempSync：目录只靠本文件 afterAll 的 rmSync 删，删不掉（Windows 子进程握着手柄）
+  // 就没人兜底。改走 createTempDir：目录名带 `dsc-` 前缀，teardown 扫临时根顶层时按前缀认领。
+  const dir = createTempDir(prefix)
   tempDirs.push(dir)
   return dir
 }

@@ -22,7 +22,7 @@
  *
  * @module dsc/tests/integration/tool-output-fixes.int.spec
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
@@ -33,13 +33,16 @@ import { parseSpillConfig, spillPreview } from '@pneuma/runtime/core/spill.js'
 import { createApprovalFloor, DEFAULT_FLOOR_CONFIG } from '@pneuma/runtime/packages/approval-floor/approval-floor.js'
 import { createBashTool } from '@pneuma/runtime/packages/tools-default/bash.js'
 import { expandBraces, globTool } from '@pneuma/runtime/packages/tools-default/search-tools.js'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 本文件建出来、跑完要删的临时目录（失败现场靠 vitest 的用例名定位，不留盘）。 */
 const tempDirs: string[] = []
 
 /** 建一个临时目录并登记清理。 */
 function makeTemp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  // 原来直接 mkdtempSync：只靠本文件 afterAll 的 rmSync 删，删不掉就没人兜底。
+  // 改走 createTempDir：目录名带 `dsc-` 前缀，teardown 扫临时根顶层时按前缀认领（前缀本来就是 dsc-）。
+  const dir = createTempDir(prefix)
   tempDirs.push(dir)
   return dir
 }

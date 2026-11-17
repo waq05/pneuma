@@ -22,13 +22,14 @@
  *
  * @module dsc/tests/integration/context-usage-restore.int.spec
  */
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { DscCoreConfig } from '@pneuma/runtime/core/config.js'
 import { emitStartupNotes } from '@pneuma/runtime/host/kernel.js'
 import { readSessionUsage, usageLogFile } from '@pneuma/runtime/core/usage-log.js'
 import { bootKernel, fakeLLM, type BootedKernel, type FakeLLM } from '../harness.js'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 两个会话 id：一个在用量日志里有行，一个没有。 */
 const SID_RESTORE = '11111111-1111-4111-8111-111111111111'
@@ -106,8 +107,13 @@ let startedEmpty: SnapshotView
 let restoreJsonl: string
 
 beforeAll(async () => {
-  // 工作目录与会话文件都建在本次的文件级临时 HOME 下（integration 的 setup 已经换过 HOME）。
-  const home = mkdtempSync(join(process.env.HOME ?? process.cwd(), 'usage-restore-'))
+  // 原来工作目录与会话文件建在本次文件级临时 HOME 下：`<tmpdir>/dsc-int-home-xxxx/usage-restore-yyyy`，
+  // 就在系统临时根下面（只嵌了一层）；父目录本身就是顶层 `dsc-` 目录，teardown 递归删父目录时会连带
+  // 删掉。真正的问题只有三条：没有独立的顶层目录、没有自己的创建时间、删不掉时没法单独重试。
+  // 这些目录只被当作会话 cwd 与 jsonl 存放处，不依赖「就在 HOME 里」（HOME 那份用法见下面
+  // `.dsc/usage` 的落盘，仍走 process.env.HOME），因此改到系统临时根顶层：目录名带 `dsc-`
+  // 前缀，teardown 扫临时根顶层时按前缀认领。
+  const home = createTempDir('dsc-usage-restore-')
   const dirRestore = join(home, 'ws-restore')
   const dirEmpty = join(home, 'ws-empty')
   const dirFresh = join(home, 'ws-fresh')
