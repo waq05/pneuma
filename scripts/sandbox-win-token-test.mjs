@@ -465,6 +465,7 @@ if (process.platform !== 'win32') {
     console.log(`  SKIP ${skipReason}`)
   } else {
     note(`探测结果：${probe.detail}`)
+    await runRelativeExtraRootCase(backend)
     await runMissingTempRootCase(backend)
     await runIntegration(backend)
     await runMultiWorkspaceCase(backend)
@@ -755,6 +756,105 @@ async function runMultiWorkspaceCase(backend) {
       }
     }
     if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
+  }
+}
+
+/**
+ * 回归（BUG-0004）：附加可写根写**相对路径**时，后端与策略层必须落在同一个绝对路径。
+ *
+ * 修前：策略层按会话 cwd 展开（`policy.ts` 的 `createPolicy`），后端照收原始串，
+ * `mkdir`/打 ACL 由宿主进程的 cwd 决定（打包版就是安装目录）——围栏放行、系统层仍拒。
+ *
+ * 判据三条：
+ *   1. `writeRootsFor(cwd, ['rel-out'])` 给出的路径 = 「cwd + rel-out」的绝对路径
+ *   2. 与 `createPolicy({ cwd, extraWritableRoots: ['rel-out'] })` 算出来的可写根一致
+ *   3. 不是宿主进程 cwd 旁边的那个 rel-out
+ *
+ * @param {{ createWindowsTokenRunner: Function, writeRootsFor: Function }} backend 编译产物里的后端导出。
+ */
+async function runRelativeExtraRootCase(backend) {
+  console.log('')
+  console.log('── 集成：附加根写相对路径时，后端与围栏算同一个绝对路径（BUG-0004 回归）')
+  const workspace = join(sandboxRoot, 'rel-workspace')
+  mkdirSync(workspace, { recursive: true })
+  const expected = join(realpathSync.native(workspace), 'rel-out')
+  const wrong = join(process.cwd(), 'rel-out')
+
+  const roots = backend.writeRootsFor(workspace, ['rel-out'])
+  const extra = roots.find((root) => root.side === 'root' && root.path.toLowerCase() !== workspace.toLowerCase())
+  check(
+    '相对附加根解析成「会话 cwd + rel-out」',
+    extra !== undefined && extra.path.toLowerCase() === expected.toLowerCase(),
+    `实际=${extra === undefined ? '(没有这条根)' : extra.path}；应为=${expected}`,
+  )
+  check(
+    '不是宿主进程 cwd 旁边的 rel-out（修前的落点）',
+    expected.toLowerCase() === wrong.toLowerCase() || extra === undefined || extra.path.toLowerCase() !== wrong.toLowerCase(),
+    `宿主 cwd=${process.cwd()}`,
+  )
+
+  const policyMod = await import(pathToFileURL(join(ROOT, 'lib/packages/sandbox/policy.js')).href)
+  const policy = policyMod.createPolicy({
+    mode: 'workspace-write',
+    cwd: workspace,
+    tmpDir: policyMod.sandboxTmpDir(join(sandboxRoot, '.dsc'), workspace),
+    extraWritableRoots: ['rel-out'],
+    readOnlySubpaths: [],
+    dscHome: join(sandboxRoot, '.dsc'),
+    networkAccess: false,
+  })
+  check(
+    '与策略层的可写根是同一条路径',
+    policy.roots.some((path) => path.toLowerCase() === expected.toLowerCase()),
+    `围栏可写根=${policy.roots.join('、')}`,
+  )
+
+  // 计划里的 --root 也要是这条绝对路径：runner 按 realpath 复算 SID，对不上会直接退 127。
+  // 先把目录建出来（root 侧不替用户建，见 BUG-0001 那段），否则授权会失败、执行器降级。
+  mkdirSync(expected, { recursive: true })
+  const handle = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    extraRoots: ['rel-out'],
+    networkAccess: () => false,
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle.runner.plan(run, base)
+    if (planned === null) {
+      note('执行器降级，--root 这条跳过')
+      return
+    }
+    const rootsArg = planned.args.filter((value, index) => planned.args[index - 1] === '--root')
+    check(
+      '--root 里带的是绝对路径（不是原始相对串）',
+      rootsArg.some((value) => value.toLowerCase().endsWith(expected.toLowerCase())),
+      rootsArg.join(' | '),
+    )
+
+    // 真写一次：受限令牌下往相对附加根里写文件，落盘才算「围栏与 ACL 真的同一个点」
+    const marker = join(expected, 'x.txt')
+    rmSync(marker, { force: true })
+    const plan2 = await handle.runner.plan(
+      { ...run, command: `cmd /c echo ok>${marker}` },
+      { file: 'cmd', args: ['/c', `echo ok>${marker}`], env: { ...process.env }, cwd: workspace },
+    )
+    const env2 = {}
+    if (plan2 !== null) for (const [key, value] of Object.entries(plan2.env)) if (value !== undefined) env2[key] = value
+    const spawned = plan2 === null ? { error: '已降级' } : await spawnPlan(plan2, env2)
+    check(
+      '受限令牌里往相对附加根写文件成功',
+      spawned.error === undefined && spawned.code === 0 && existsSync(marker),
+      `code=${String(spawned.code)}；stderr=${JSON.stringify(String(spawned.err ?? '').slice(0, 160))}`,
+    )
+  } finally {
+    handle.dispose()
   }
 }
 

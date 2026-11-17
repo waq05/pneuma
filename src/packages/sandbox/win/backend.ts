@@ -31,7 +31,7 @@ import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
 import { resolveRunnerInterpreter } from './interpreter.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
 import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
-import { sandboxTmpDir } from '../policy.js'
+import { canonicalizePath, sandboxTmpDir } from '../policy.js'
 import { errText as describeError } from '../../../core/err-text.js'
 
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
@@ -189,8 +189,14 @@ export interface SandboxWriteRoot {
  * 工作区反倒被永久授权。现在按 `run.cwd` 现算：工作区一个 root SID、它的私有临时目录
  * 一个 temp SID，附加可写根照配置带进来。
  *
+ * 附加根里的**相对路径按 `cwd` 解析**（2026-11-17 修 BUG-0004）：策略层
+ * （`policy.ts` 的 `createPolicy`）是拿同一个 `canonicalizePath(…, { cwd })` 展开的，
+ * 这一层要是照收原始串，`mkdir`/打 ACL 会落到**宿主进程的 cwd**（打包版就是安装目录）——
+ * 围栏说「可以写」、系统层仍然拒，还顺手在安装目录旁边造一个目录。两处必须用同一个函数、
+ * 同一个 cwd。
+ *
  * @param cwd - 这次调用所在会话的工作目录（realpath 后的绝对路径）。
- * @param extraRoots - 配置里的附加可写根。
+ * @param extraRoots - 配置里的附加可写根（允许相对路径，按 `cwd` 展开）。
  */
 export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): SandboxWriteRoot[] {
   const trim = (path: string): string => path.replace(/[\\/]+$/, '')
@@ -207,7 +213,10 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
   for (const extra of extraRoots) {
     const trimmed = trim(extra.trim())
     if (trimmed === '') continue
-    add(trimmed, 'root')
+    // 绝对路径也过一遍同一个函数：大小写、8.3 短名、符号链接拼法不同会派生出另一个 SID 身份，
+    // 而 runner 那边是按 realpath 复算的（`--root` 里 SID 与路径对不上会直接退 127）。
+    const resolved = canonicalizePath(trimmed, { win32: process.platform === 'win32', cwd: root })
+    add(trim(resolved.path), 'root')
   }
   return list
 }
