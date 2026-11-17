@@ -10,7 +10,7 @@
  * 只做旧 `service.ts` + `surface.ts` 那两件事：
  *
  *   1. `surface()`：把运行期读成一份 `SuperagentSurface` 快照（界面每帧读它）；
- *   2. 八个写动作：发布、停、重试、回答、清目录、看转录、接候选、忽略候选。
+ *   2. 六个写动作：发布、停、重试、回答、清目录、看转录。
  *
  * 快照的工单行来自新树的视图投影（`app/views/tickets.ts` 的 `ticketList`），动作走新树
  * 运行期的公开成员（`engine.stopTicket` / `receive` / `pump` 等）。旧 `service.ts` /
@@ -28,20 +28,27 @@
  *
  * 1. **候选收件箱取消**：新树没有「等人拍板的候选」这张表——候选的判定结果由主会话的
  *    `orchestrator_eval` / `orchestrator_route` 工具直接消费（`app/assessment.ts`、
- *    `app/tools/main.ts`），收件箱（backlog G1）是 DSC 旧树的机制。所以
- *    `acceptCandidate` / `ignoreCandidate` 在这里只剩一句「新架构没有这条路」的报错，
- *    快照面也不再给 `candidates` 那一格（界面按缺省不画）。
+ *    `app/tools/main.ts`），收件箱（backlog G1）是 DSC 旧树的机制。所以这里没有
+ *    `acceptCandidate` / `ignoreCandidate` 这两条 RPC（白名单里也不再有它们），快照面
+ *    也不再给 `candidates` 那一格（界面按 `undefined` 整块不画）。
  * 2. **发布是异步的**：旧 `publish` 同步判定完再取工单 id；新树里判定由主会话的模型回合
  *    完成（`MasterAssessor` → `Sessions.prompt` → 主会话调工具）。这里发完触发器后轮询
  *    到「有工单 / 有决策」或超时，尽量沿用旧契约「返回工单 id」的语义，但判定被 ignore
  *    时按旧实现同样抛错。
- * 3. **清理不再动 git 工作树**：新执行器给每张工单一个普通目录（`ticket.execution.directory`，
- *    `executor/dsh.ts:156`），不是 git worktree。这里只删这个目录，且必须先确认它落在
- *    设置里的执行根（`executionRoot`）之下，拒绝删任何别处的路径。
- * 4. **`recent` 为空**：旧快照的「最近动态」来自旧 `adapters/notify.ts` 的内存窗口，新树
- *    没有对应窗口（通知改走 `app/notices.ts` + Effects）。快照面先给空数组，界面按
- *    「暂无」画；不伪造数据。
- * 5. **手动来源的准入**：`manual` 不是新树的 Source kind（新树只有 github / feishu 两个
+ * 3. **清理只删普通目录**：新执行器给每张工单一个普通目录（`ticket.execution.directory`，
+ *    `executor/dsh.ts:156`），不是旧树的 git worktree，所以这里 `rmSync` 目录，不跑
+ *    `git worktree remove`、也不碰仓库工作树。删之前必须先确认路径落在设置里的执行根
+ *    （`executionRoot`）之下，越界的一律拒绝。
+ * 4. **`recent` 来自已结束工单**：旧快照的「最近动态」来自旧 `adapters/notify.ts` 的内存
+ *    窗口，新树没有那个窗口（通知改走 `app/notices.ts` + Effects）。但库里有每张工单的
+ *    `ended`（`core/model.ts:285`），所以这里把已结束工单按 `ended.at` 升序投影成
+ *    「工单「标题」结局：摘要」，最旧在前、上限 20 条；`at` 就是 `ended.at`，不拿读快照
+ *    的时刻冒充。
+ * 5. **`settingsHistory` 由设置历史投影**：新树每次保存设置都写一版整份 `Settings`
+ *    快照（`app/store.ts:254` 的 `saveSettings`，倒序读回见 `settingsHistory(30)`），不是
+ *    旧库那种「一行一字段」的记录。这里只跟**相邻** revision 比，把值变了的字段摊成点分
+ *    键（`eval.mode`、`executor.prepare`、`sources.github.enabled`）一行一个字段，最多 30 行。
+ * 6. **手动来源的准入**：`manual` 不是新树的 Source kind（新树只有 github / feishu 两个
  *    kind），但核心准入闸只读 `policy.sources.manual.allowed`（`core/policy.ts:181`）。
  *    DSC 的 `superagentPublish` 又要一条显式的人工触发器，所以这里在第一次发布前把
  *    `operator` 补进那份名单（旧 `adapters/settings.ts` 的 `defaultSettings` 做的是同一件事）。
@@ -56,6 +63,7 @@ import type {
   SuperagentAnswerInput,
   SuperagentPublishInput,
   SuperagentService,
+  SuperagentSettingsChangeView,
   SuperagentSourceView,
   SuperagentSurface,
   SuperagentTicketView,
@@ -69,6 +77,7 @@ import { workerSessionId } from '../executor/dsh.js'
 import { sessionsDir } from '../paths.js'
 import { executionRoot } from './execution-environment.js'
 import type { Runtime } from './runtime.js'
+import type { SettingsVersion } from './store.js'
 import { ticketList } from './views/tickets.js'
 import type { TicketSummaryView } from './views/records.js'
 
@@ -92,10 +101,131 @@ const MAX_TICKET_VIEWS = 10_000
 const PUBLISH_TIMEOUT_MS = 120_000
 /** 等待期间的复查间隔。 */
 const POLL_MS = 100
+/** 「最近变更」最多几行：契约注释写的是 30 条，界面自己再按屏截。 */
+const MAX_SETTINGS_CHANGES = 30
+/**
+ * 设置摊平的深度上限。
+ *
+ * 设置页能改的字段都在三段以内（`eval.mode`、`executor.prepare`、
+ * `sources.github.enabled`）；再深的结构（`policy.rules` 的数组、
+ * `policy.sources.github.admission` 的表）整块当一个值，免得一次保存刷出几十行。
+ */
+const SETTINGS_DEPTH = 3
+/** 「最近动态」窗口上限（契约注释：工单结束那类通知，最多 20 条）。 */
+const RECENT_LIMIT = 20
+/** 动态里附带的摘要上限：一句话够认出是哪一单，细节去工单页看。 */
+const RECENT_SUMMARY_MAX = 120
+/** 结局词（工单结束那类通知）：未知值原样用 `outcome`，旧库里的值也要能显示。 */
+const OUTCOME_TEXT: Readonly<Record<string, string | undefined>> = {
+  completed: '已完成',
+  merged: '已合并',
+  closed: '已关闭',
+  dropped: '已放弃',
+  stopped: '已停止',
+}
 
 const now = (): string => new Date().toISOString()
 const describe = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const sleep = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms) })
+
+/** 纯对象（排除数组与 null）：只有它继续往下摊，数组与其它值整块成一行。 */
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 把一份 `Settings` 摊成「点分键 → 原始值」。
+ *
+ * 只摊到 {@link SETTINGS_DEPTH} 层：到顶的对象整块当值（比较与显示都走 `JSON.stringify`）。
+ * 摊平是为了把「整份设置的快照」变成「这一次改了几个字段」，键名与设置分区的字段同名，
+ * 界面直接按 `field.<key>.label` 取词。
+ */
+function flattenSettings(value: unknown, prefix = '', depth = 0, into = new Map<string, unknown>()): Map<string, unknown> {
+  if (plainObject(value) && depth < SETTINGS_DEPTH) {
+    for (const [name, child] of Object.entries(value)) {
+      flattenSettings(child, prefix === '' ? name : `${prefix}.${name}`, depth + 1, into)
+    }
+    return into
+  }
+  if (prefix !== '') into.set(prefix, value)
+  return into
+}
+
+/** 一个值（可能是数组元素）的展示形态：数组逗号拼接，对象用 JSON，其余 `String()`。 */
+function shownItem(value: unknown): string {
+  return plainObject(value) || Array.isArray(value) ? JSON.stringify(value) : String(value)
+}
+
+/**
+ * 历史值 → 显示形态，与旧 `runtime.ts` 的 `shownValue` 同一口径：数组逗号分隔，其余 `String()`；
+ * 只有摊到深度上限才出现的对象才落成 JSON（旧库里没有这种值，没有旧口径可沿用）。
+ */
+function shownValue(value: unknown): string {
+  return Array.isArray(value) ? value.map(shownItem).join(', ') : shownItem(value)
+}
+
+/** 两个值算不算同一个：设置是纯 JSON，序列化比较够用（同旧 `settings-history.ts` 的 `same`）。 */
+const sameSettingValue = (before: unknown, after: unknown): boolean => JSON.stringify(before) === JSON.stringify(after)
+
+/**
+ * 设置修订历史 → 「最近变更」的一行一字段。
+ *
+ * 为什么只跟相邻 revision 比：一次保存改了几个字段就出几行；跨多版比会把中间改过又改回的
+ * 字段也列出来（用户看不见中间那一步）。历史被裁过、revision 断号时整对跳过——缺了中间
+ * 那一版，算出来的差异不是「这次保存改了什么」。数组顺序即新的在前，`version` 递减保证唯一
+ * （界面拿它当 React key），总数封顶 {@link MAX_SETTINGS_CHANGES}。
+ */
+function settingsChangeViews(versions: readonly SettingsVersion[]): SuperagentSettingsChangeView[] {
+  const rows: { at: string; key: string; from?: unknown; to?: unknown }[] = []
+  for (let index = 0; index < versions.length && rows.length < MAX_SETTINGS_CHANGES; index += 1) {
+    const current = versions[index]!
+    const previous: SettingsVersion | undefined = versions[index + 1]
+    if (previous === undefined || previous.revision !== current.revision - 1) continue
+    const before = flattenSettings(previous.settings)
+    const after = flattenSettings(current.settings)
+    for (const name of new Set([...before.keys(), ...after.keys()])) {
+      if (sameSettingValue(before.get(name), after.get(name))) continue
+      rows.push({
+        at: current.savedAt,
+        key: name,
+        ...(before.has(name) ? { from: before.get(name) } : {}),
+        ...(after.has(name) ? { to: after.get(name) } : {}),
+      })
+      if (rows.length >= MAX_SETTINGS_CHANGES) break
+    }
+  }
+  return rows.map((row, index) => ({
+    version: rows.length - index,
+    at: row.at,
+    key: row.key,
+    ...(row.from === undefined ? {} : { from: shownValue(row.from) }),
+    ...(row.to === undefined ? {} : { to: shownValue(row.to) }),
+  }))
+}
+
+/**
+ * 「最近动态」：把已结束的工单投影成通知那样的一句话。
+ *
+ * `at` 就是 `ended.at`，不取读快照的时刻——动态要说的是「这件事什么时候发生」。
+ * 最旧在前、最多 20 条，与旧 `adapters/notify.ts` 的内存窗口同一个口径（超了丢最旧的）。
+ */
+function recentViews(tickets: readonly Ticket[]): { at: string; text: string }[] {
+  return tickets
+    .flatMap(ticket => {
+      const ended = ticket.ended
+      if (ended === undefined || !ended.at) return []
+      const at = ended.at
+      const outcome = OUTCOME_TEXT[ended.outcome] ?? ended.outcome
+      const summary = (latestReport(ticket)?.summary ?? '').replace(/\s+/g, ' ').trim()
+      const clipped = summary.length > RECENT_SUMMARY_MAX ? `${summary.slice(0, RECENT_SUMMARY_MAX)}…` : summary
+      return [{ at, id: ticket.id, text: `工单「${ticket.title}」${outcome}${clipped === '' ? '' : `：${clipped}`}` }]
+    })
+    // 同一时刻按 id 定序：同一毫秒结束的两张单在窗口里也有稳定顺序。
+    // 直接比字符串（不 localeCompare）：`at` 是 ISO，字典序就是时间序，不受宿主语言影响。
+    .sort((a, b) => (a.at === b.at ? a.id.localeCompare(b.id) : a.at < b.at ? -1 : 1))
+    .slice(-RECENT_LIMIT)
+    .map(({ at, text }) => ({ at, text }))
+}
 
 /**
  * 把一条手动请求包成领域 `Trigger`。
@@ -207,10 +337,12 @@ export class PanelApi implements SuperagentService {
         ready: true,
         ...(problem === undefined ? {} : { problem: { code: problem.code, detail: problem.detail } }),
         counts,
-        // 「最近动态」窗口随旧通知适配器一起不移植（见文件头第 4 条）：给空数组，不伪造。
-        recent: [],
         tickets,
+        // 「最近动态」取自已结束工单（见文件头第 4 条）：最旧在前、上限 20 条，不伪造时刻。
+        recent: recentViews(runtime.store.tickets.list()),
         sources: sourceViews(runtime, settings),
+        // 无条件给（空数组 = 记起之后还没改过设置）：设置页「最近变更」块按 `undefined` 整块不画。
+        settingsHistory: settingsChangeViews(runtime.store.settingsHistory(30)),
       }
     } catch (error) {
       return {
@@ -331,22 +463,6 @@ export class PanelApi implements SuperagentService {
     } finally {
       session.close()
     }
-  }
-
-  /**
-   * 接一条等人拍板的推断候选。
-   *
-   * 新架构没有候选收件箱（见文件头第 1 条）：推断候选的判定结果直接进主会话的
-   * `orchestrator_eval` / `orchestrator_route`。面板不会显示候选卡片，也就走不到这里；
-   * 真被调到就给一句明确的话，不假装成功。
-   */
-  async acceptCandidate(_id: string, _title?: string): Promise<string> {
-    throw new Error('新架构没有等人拍板的候选：判定结果由主会话直接处理，面板不再收候选')
-  }
-
-  /** 忽略一条候选；理由同上（`acceptCandidate`）。 */
-  async ignoreCandidate(_id: string, _reason?: string): Promise<void> {
-    throw new Error('新架构没有等人拍板的候选：判定结果由主会话直接处理，面板不再收候选')
   }
 
   /**
