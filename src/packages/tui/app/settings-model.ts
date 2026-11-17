@@ -26,6 +26,10 @@ export interface SettingsGroupRef {
  * `rows` 字段（记录表）在行模型里摊成三种行：一行列头（`table-head`，不可聚焦）、
  * 每个单元格一行（`table-cell`，可聚焦、Enter 编辑/删除）、末尾一行「添加」（`table-add`）。
  * 为什么按单元格而不是按记录摊：本页的行高恒为 1，一行只放得下一个输入框/下拉。
+ *
+ * `checks` 字段（分组多选）同样摊成多行：一行标题（`checks-head`，带已选计数）、每组
+ * 一行组标题（`checks-group`）、每个可勾项一行（`checks-option`，可聚焦）。行高同样是 1：
+ * 复选行写成 `[✓] 模型名  provider/model`，副说明并到同一行的右侧，不换行。
  */
 export type SettingsRow =
   | { kind: 'card-top'; sectionId: string; title: string; subtitle?: string }
@@ -36,6 +40,9 @@ export type SettingsRow =
   | { kind: 'table-head'; sectionId: string; fieldIndex: number }
   | { kind: 'table-cell'; sectionId: string; fieldIndex: number; rowIndex: number; columnIndex: number }
   | { kind: 'table-add'; sectionId: string; fieldIndex: number }
+  | { kind: 'checks-head'; sectionId: string; fieldIndex: number }
+  | { kind: 'checks-group'; sectionId: string; fieldIndex: number; title: string; empty: boolean }
+  | { kind: 'checks-option'; sectionId: string; fieldIndex: number; value: string; label: string; detail?: string }
   | { kind: 'group'; sectionId: string; groupId: string; title: string; description?: string }
   | { kind: 'hint'; sectionId: string; text: string; jump?: 'model-picker' | 'usage' }
 
@@ -50,13 +57,27 @@ export function tableRecordsOf(values: SettingsValues | undefined, key: string):
   )
 }
 
+/**
+ * `checks` 字段的选中值：契约说好是 `string[]`，但旧宿主 / 手改过的值可能别的形状
+ * （没给、给了字符串、数组里混进非字符串）。统一收成安全的字符串数组：界面不崩，
+ * 非字符串元素丢掉——它们画不出来，也就没法在界面上取消。
+ *
+ * 与桌面端 `checkValuesOf`（ui-settings/ui/ui.tsx）同一条口径，两边的「未选」永远一致。
+ */
+export function checksSelected(values: SettingsValues | undefined, key: string): string[] {
+  const value = values?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
 /** 取某一行里的字段声明（下标越界返回 undefined）。 */
 function fieldAt(section: SettingsSectionView, fieldIndex: number): SettingsField | undefined {
   return section.fields[fieldIndex]
 }
 
 /**
- * 一个字段在行模型里占的行：普通字段一行；`rows` 字段摊成「列头 + 每格一行 + 添加行」。
+ * 一个字段在行模型里占的行：普通字段一行；`rows` 字段摊成「列头 + 每格一行 + 添加行」；
+ * `checks` 字段摊成「标题 + 每组标题 + 每个可勾项一行」。
  * values 还没装填到时按 0 条记录画（列头与添加行仍在，不会白屏）。
  */
 function fieldRows(
@@ -65,18 +86,53 @@ function fieldRows(
   values: Record<string, SettingsValues> | undefined,
 ): SettingsRow[] {
   const field = fieldAt(section, fieldIndex)
-  if (field === undefined || field.type !== 'rows') {
-    return [{ kind: 'field', sectionId: section.id, fieldIndex }]
-  }
-  const rows: SettingsRow[] = [{ kind: 'table-head', sectionId: section.id, fieldIndex }]
-  const records = tableRecordsOf(values?.[section.id], field.key)
-  records.forEach((_, rowIndex) => {
-    field.columns.forEach((__, columnIndex) => {
-      rows.push({ kind: 'table-cell', sectionId: section.id, fieldIndex, rowIndex, columnIndex })
+  if (field !== undefined && field.type === 'rows') {
+    const rows: SettingsRow[] = [{ kind: 'table-head', sectionId: section.id, fieldIndex }]
+    const records = tableRecordsOf(values?.[section.id], field.key)
+    records.forEach((_, rowIndex) => {
+      field.columns.forEach((__, columnIndex) => {
+        rows.push({ kind: 'table-cell', sectionId: section.id, fieldIndex, rowIndex, columnIndex })
+      })
     })
-  })
-  rows.push({ kind: 'table-add', sectionId: section.id, fieldIndex })
-  return rows
+    rows.push({ kind: 'table-add', sectionId: section.id, fieldIndex })
+    return rows
+  }
+  if (field !== undefined && field.type === 'checks') {
+    const rows: SettingsRow[] = [{ kind: 'checks-head', sectionId: section.id, fieldIndex }]
+    const selected = checksSelected(values?.[section.id], field.key)
+    const listed = new Set<string>()
+    for (const group of field.groups) {
+      for (const option of group.options) listed.add(option.value)
+      rows.push({
+        kind: 'checks-group',
+        sectionId: section.id,
+        fieldIndex,
+        title: group.title,
+        empty: group.options.length === 0,
+      })
+      for (const option of group.options) {
+        rows.push({
+          kind: 'checks-option',
+          sectionId: section.id,
+          fieldIndex,
+          value: option.value,
+          label: option.label,
+          ...(option.detail === undefined ? {} : { detail: option.detail }),
+        })
+      }
+    }
+    // 选了、但清单里没有的值（授权列表里的模型被删了 / 提供方改名）：单独收一行组标题，
+    // 让用户看得见也取消得掉——同 GUI 的「其他（不在清单里）」那一组。
+    const stray = selected.filter((value) => !listed.has(value))
+    if (stray.length > 0) {
+      rows.push({ kind: 'checks-group', sectionId: section.id, fieldIndex, title: '其他（不在清单里）', empty: false })
+      for (const value of stray) {
+        rows.push({ kind: 'checks-option', sectionId: section.id, fieldIndex, value, label: value })
+      }
+    }
+    return rows
+  }
+  return [{ kind: 'field', sectionId: section.id, fieldIndex }]
 }
 
 /**
@@ -128,7 +184,8 @@ function sectionBodyRows(
  *   两者都空               → 根页（每分区一行导航，不画卡片——名字本身就是入口）。
  * 分区/组没声明或没了就给空表（App 侧 Esc 兜底回上级，不会停在白屏）。
  *
- * `values` 只有 `rows` 字段用得到（记录表的行数决定几何）；没装填到时按 0 条记录画。
+ * `values` 只有 `rows` / `checks` 字段用得到（记录表的行数、多选项的选中态）；没装填到时
+ * 按「0 条记录 / 一个都没选」画。
  */
 export function buildSettingsRows(
   sections: SettingsSectionView[],
@@ -166,11 +223,12 @@ export function buildSettingsRows(
 
 /**
  * 该行能不能拿到焦点（有 Enter/←→ 动作才给焦点：`fact` 只读不聚焦，info 仅 copyable
- * 可聚焦，分区/组行恒可聚焦，记录表的单元格与「添加」行可聚焦）。
+ * 可聚焦，分区/组行恒可聚焦，记录表的单元格与「添加」行可聚焦，`checks` 的可勾项可聚焦）。
  */
 export function isFocusableRow(row: SettingsRow, fields: SettingsSectionView['fields']): boolean {
   if (row.kind === 'section' || row.kind === 'group') return true
   if (row.kind === 'table-cell' || row.kind === 'table-add') return true
+  if (row.kind === 'checks-option') return true
   if (row.kind === 'field') {
     const field = fields[row.fieldIndex]
     if (field === undefined) return false
@@ -189,7 +247,15 @@ export function focusableRows(rows: SettingsRow[], sections: SettingsSectionView
       result.push(index)
       return
     }
-    if (row.kind !== 'field' && row.kind !== 'hint' && row.kind !== 'table-cell' && row.kind !== 'table-add') return
+    if (
+      row.kind !== 'field' &&
+      row.kind !== 'hint' &&
+      row.kind !== 'table-cell' &&
+      row.kind !== 'table-add' &&
+      row.kind !== 'checks-option'
+    ) {
+      return
+    }
     const fields = byId.get(row.sectionId)?.fields ?? []
     if (isFocusableRow(row, fields)) result.push(index)
   })

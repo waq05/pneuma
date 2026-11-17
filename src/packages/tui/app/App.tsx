@@ -70,6 +70,7 @@ import { WHEEL_LINES, type TranscriptViewportApi } from './TranscriptViewport.js
 import { useCoalescedSnapshot } from './snapshot-subscribe.js'
 import {
   buildSettingsRows,
+  checksSelected,
   focusableRows,
   isFocusableRow,
   settingsWindowStart,
@@ -799,6 +800,34 @@ export function App({
     return { sectionId: row.sectionId, field, column, records, rowIndex: row.rowIndex }
   }
 
+  /**
+   * 多选项定位（行模型里的 `checks-option`）：这个分区里的那个 `checks` 字段 + 这一项的值。
+   * 定位不到（宿主换了字段表 / 值还没装填）返回 null，调用方按「没有这一行」处理。
+   */
+  const settingsCheckAt = (
+    row: SettingsRow | undefined,
+  ): { sectionId: string; field: Extract<SettingsField, { type: 'checks' }>; value: string } | null => {
+    if (row === undefined || row.kind !== 'checks-option') return null
+    const section = settingsSections.find((entry) => entry.id === row.sectionId)
+    const field = section?.fields[row.fieldIndex]
+    if (field === undefined || field.type !== 'checks') return null
+    return { sectionId: row.sectionId, field, value: row.value }
+  }
+
+  /**
+   * 翻转一个可勾项：勾上就追加、取消就过滤，整组数组走与开关同一条 `applySetting`
+   * （改了即保存，不另设「保存」按钮）。数组顺序按勾选先后，宿主存的是同一份值。
+   */
+  const toggleSettingsCheck = (row: SettingsRow | undefined): void => {
+    const hit = settingsCheckAt(row)
+    if (hit === null) return
+    const current = checksSelected(settingsValues[hit.sectionId], hit.field.key)
+    const next = current.includes(hit.value)
+      ? current.filter((value) => value !== hit.value)
+      : [...current, hit.value]
+    applySetting(hit.sectionId, hit.field.key, next)
+  }
+
   /** 行的主动作（Enter 与「点击该行」共用）：switch/select 改值即存，text/number 进编辑。 */
   const activateSettingsRow = (row: SettingsRow | undefined, direction: 1 | -1): void => {
     if (row?.kind === 'section') {
@@ -830,6 +859,11 @@ export function App({
           notice: setNotice,
         })
       }
+      return
+    }
+    if (row?.kind === 'checks-option') {
+      // 多选项：Enter / 空格都是「翻转这一项」，点一下也走这里（改了即保存）。
+      toggleSettingsCheck(row)
       return
     }
     if (row?.kind === 'table-add') {
@@ -1226,7 +1260,8 @@ export function App({
           target.kind !== 'group' &&
           target.kind !== 'section' &&
           target.kind !== 'table-cell' &&
-          target.kind !== 'table-add')
+          target.kind !== 'table-add' &&
+          target.kind !== 'checks-option')
       ) {
         return null
       }
@@ -1643,6 +1678,14 @@ export function App({
             cell.field.key,
             cell.records.filter((_, index) => index !== cell.rowIndex),
           )
+          return
+        }
+      }
+      if (input === ' ') {
+        // 多选项：空格翻转选中（dsh 同款）。其它行上没有空格动作，落到后面的分支吞掉即可。
+        const row = settingsRows[focusRow]
+        if (row?.kind === 'checks-option') {
+          toggleSettingsCheck(row)
           return
         }
       }

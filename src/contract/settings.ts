@@ -13,10 +13,13 @@ import type { EffortMap, Modality, ThinkingLevel, ThinkingParam } from './mode.j
 /**
  * 设置项的值类型（要过 IPC，必须可 JSON 序列化）。
  *
- * 前三种是标量控件（text / number / select / switch）的值；数组那一支只给 `rows`
- * 字段用——记录表的值就是一组记录，元素形状见 {@link SettingsRowValue}。
+ * 前三种是标量控件（text / number / select / switch）的值。数组有两支：
+ *   - {@link SettingsRowValue}`[]`：`rows` 字段的整张记录表（一组记录）；
+ *   - `string[]`：`checks` 字段选中的那一组值（元素就是选项声明的 `value`）。
+ * 两支都是普通数组、元素都是 JSON 能表达的东西，所以 `setSettingValue` 那个
+ * `kind: 'json'` 通道不用动，宿主存盘时也不必再编码一层。
  */
-export type SettingsValue = string | number | boolean | SettingsRowValue[]
+export type SettingsValue = string | number | boolean | SettingsRowValue[] | string[]
 
 /**
  * 记录表（`rows` 字段）的一行：列 key → 单元格文本。
@@ -30,6 +33,30 @@ export type SettingsRowValue = Record<string, string>
 export interface SettingsOption {
   value: string
   label: string
+}
+
+/**
+ * 分组多选（`checks` 字段）里的一个可勾选项。
+ *
+ * `detail` 是行内的灰色副说明（典型用法写 `provider/model` 路径，告诉用户
+ * 这个值指向哪个端点的哪个模型）；它只用于展示，回写给宿主的是 `value`。
+ */
+export interface SettingsCheckOption {
+  value: string
+  label: string
+  detail?: string
+}
+
+/**
+ * 一组可勾选项（`checks` 字段按它分块画）。
+ *
+ * 分组只为「一眼能找到」，不影响值：所有组的选中值仍然是同一个扁平的
+ * `string[]`（见 {@link SettingsValue}），组的边界不写进值里——不然宿主改动
+ * 分组（提供方改名、换一组模型）时，用户已存的选择就对不上了。
+ */
+export interface SettingsCheckGroup {
+  title: string
+  options: SettingsCheckOption[]
 }
 
 /**
@@ -80,6 +107,27 @@ export type SettingsField =
       group?: string
     }
   | { type: 'switch'; key: string; label: string; help?: string; group?: string }
+  /**
+   * 分组多选（`checks`）：一块按组排列的复选框清单，值是一组选中的 `value`。
+   *
+   * 为什么值是数组：勾选本来就是「一组值」，数组能原样过 IPC（JSON 可序列化，
+   * 见 {@link SettingsValue}），宿主存盘/读盘不必自己编码；不用对象或位掩码，
+   * 是因为那样既没有可读性，也没法把「没选」和「值缺失」写成同一种语义。
+   *
+   * 空数组 = 一个都没选（不是「用默认」）：宿主声明这个字段时就把默认值给全，
+   * 壳只负责把勾选状态读写回去——界面不猜缺省，猜了两次就会有两套缺省。
+   *
+   * 为什么分组在声明里（`groups`）：提供方 / 来源这类清单会越来越长，平铺一列
+   * 找不到东西；分组只影响画法，值仍是扁平的一组 `value`，分组改组了旧选择也还在。
+   */
+  | {
+      type: 'checks'
+      key: string
+      label: string
+      groups: SettingsCheckGroup[]
+      help?: string
+      group?: string
+    }
   /**
    * 只读事实行（`fact`）：值来自分区 `values()` 的 `values[key]`，没有就画占位。
    * 它不是输入框——用户改不了，宿主也不收它的写入（写不回时界面只展示）。

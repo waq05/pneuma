@@ -12,9 +12,10 @@
  * 宿主加一个内置分区、或某个插件声明 `inSettings`，导航里自动多一项。渲染分三类：
  *
  * - **声明式**（`fields` 非空）：走 {@link GenericFields}，text / number / select / switch /
- *   fact / rows / info / button 八种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
+ *   fact / rows / checks / info / button 九种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
  *   `fact` 是只读一行（值来自 values，没有就占位），`rows` 是记录表（每行按 columns
- *   出输入框/下拉、可增删行，值是一组 `Record<string,string>`）；
+ *   出输入框/下拉、可增删行，值是一组 `Record<string,string>`），`checks` 是分组多选
+ *   （带边框滚动列表，值是选中项的 `value` 数组）；
  * - **结构化**（`custom: true`）：模型 / 模式 / 技能 / 归档 / 用量这五个由桌面端手画。这一版
  *   搬了**模式（预设）**与**模型**（模型只做只读端点 + 选默认模型，增删端点与写 key 被
  *   有意排除），其余给一条**诚实的说明**（说清去哪做、为什么壳里没有），不假装有界面；
@@ -184,6 +185,19 @@ function rowValuesOf(value: SettingsValue | undefined): Record<string, string>[]
   if (!Array.isArray(value)) return []
   return value.filter((entry): entry is Record<string, string> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
 }
+
+/**
+ * `checks` 字段的选中值表：契约说好是 `string[]`，但旧宿主 / 手改过的值可能是别的形状
+ * （没给、给了字符串、混进非字符串）。这里统一收成安全的字符串数组——界面永远不崩，
+ * 也不把「没认出来的值」当成选中项画出来（它在界面上不可见，留着会让人以为选不上）。
+ */
+function checkValuesOf(value: SettingsValue | undefined): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
+/** `checks` 字段的声明形状（分组清单那一段），渲染时要往末尾追加一组「清单外的已选值」。 */
+type ChecksFieldSpec = Extract<SettingsField, { type: 'checks' }>
 
 /**
  * `fact` 行的展示文本：只读值只认标量；宿主塞了对象/数组就给空串（别画成 `[object Object]`）。
@@ -858,6 +872,110 @@ function GenericFields({
             >
               {t('settings.ui.rows.add')}
             </button>
+          </div>
+        </div>
+      )
+    }
+    if (field.type === 'checks') {
+      const selected = checkValuesOf(values[field.key])
+      // 已选、但不在声明清单里的值（支持列表里的模型被删了 / 提供方改了名）：单独收一组，
+      // 让用户看得见、也取消得掉。藏起来的话它们会一直躺在值里，界面找不到也去不掉。
+      const listed = new Set(field.groups.flatMap((group) => group.options.map((option) => option.value)))
+      const stray = selected.filter((value) => !listed.has(value))
+      const blocks: ChecksFieldSpec['groups'] = [
+        ...field.groups,
+        ...(stray.length === 0
+          ? []
+          : [
+              {
+                title: t('settings.ui.checks.strayGroup'),
+                options: stray.map((value) => ({ value, label: value })),
+              },
+            ]),
+      ]
+      const total = field.groups.reduce((count, group) => count + group.options.length, 0)
+      /**
+       * 翻转一个值：勾上就追加（顺序稳定，宿主读到的是同一份数组），取消就过滤掉，
+       * 整组数组走现有的 `commit(key, value)` 写回——与下拉/开关同一条提交链路。
+       */
+      const toggle = (value: string, on: boolean): void => {
+        if (on === selected.includes(value)) return
+        commit(field.key, on ? [...selected, value] : selected.filter((item) => item !== value))
+      }
+      return (
+        <div
+          className="setting-row"
+          key={field.key}
+          /* 这一行是「标题在上、清单在下」：模型名 + provider/model 路径需要整行宽度，
+             挤在右栏一半宽里会被截成两截。行内样式沿用这套 setting-* 版式的主题变量。 */
+          style={{ alignItems: 'stretch', flexDirection: 'column', gap: 8 }}
+        >
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+            <div className="setting-help">
+              {t('settings.ui.checks.count', { selected: String(selected.length), total: String(total) })}
+            </div>
+          </div>
+          {/* 带边框的可滚动清单：组标题 + 复选行（标题 + 灰色副说明）。 */}
+          <div
+            role="group"
+            aria-label={field.label}
+            style={{
+              background: 'var(--dsc-fill-quinary)',
+              border: '1px solid var(--dsc-stroke-2)',
+              borderRadius: 'var(--dsc-r-control)',
+              maxHeight: 260,
+              minWidth: 0,
+              overflowY: 'auto',
+              padding: '2px 0 4px',
+              width: '100%',
+            }}
+          >
+            {total === 0 && stray.length === 0 ? (
+              <div className="setting-help" style={{ padding: '6px 10px' }}>
+                {t('settings.ui.checks.empty')}
+              </div>
+            ) : null}
+            {blocks.map((block, blockIndex) => (
+              <div key={`${block.title}-${String(blockIndex)}`}>
+                <div className="settings-group-title" style={{ padding: '8px 10px 2px' }}>
+                  {block.title}
+                </div>
+                {block.options.length === 0 ? (
+                  <div className="setting-help" style={{ padding: '2px 10px' }}>
+                    {t('settings.ui.checks.emptyGroup')}
+                  </div>
+                ) : null}
+                {block.options.map((option) => {
+                  const checked = selected.includes(option.value)
+                  return (
+                    <label
+                      key={`${block.title}-${option.value}`}
+                      style={{ alignItems: 'flex-start', cursor: 'pointer', display: 'flex', gap: 8, padding: '5px 10px' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        aria-label={option.label}
+                        style={{ flex: '0 0 auto', marginTop: 3 }}
+                        onChange={(event) => {
+                          toggle(option.value, event.target.checked)
+                        }}
+                      />
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                        <span style={{ color: 'var(--dsc-text-primary)', fontSize: 'var(--dsc-fs-body)', lineHeight: 1.45 }}>
+                          {option.label}
+                        </span>
+                        {option.detail === undefined || option.detail === '' ? null : (
+                          <span className="setting-help">{option.detail}</span>
+                        )}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            ))}
           </div>
         </div>
       )
