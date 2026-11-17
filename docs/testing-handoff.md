@@ -91,10 +91,10 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 2. **快照层的会话回放已闭环**（B45，2026-11-17）：`tests/snapshots/session/basic-turn/`
    `session.jsonl` 已入库（2 行 / 496 字节，模型输出经人审），回放连跑两次各 4 passed；
    TUI 帧 30 与浏览器 11 是实跑的。夜跑设 `DSC_SNAPSHOT_STRICT=1`，缺录制即红。
-   **已知红**：浏览器 DOM 快照里 01 / 07 / 09 三条 golden 与当前 `lib/ui` 产物对不上
-   （少一个「更改」页签与 5 个按钮），`git diff HEAD -- ui-shell src lib` 为空，与本轮
-   改动无关，需 golden 负责人判断「重录」或「UI 真漏了页签」。
-3. **e2e / snapshot / coverage 只在夜跑跑**（B46 部分闭环）：`verify.yml` 已有 `snapshot`、
+    **已知红**：浏览器 DOM 快照里 01 / 02 / 04 / 05 / 07 / 09 / 10 七条 golden 与当前
+    运行时的界面对不上（少一个「更改」页签：`dom.buttons` 35→30、`dom.elements` 315→262），
+    TUI 30 条与会话回放 4 条全绿；`git diff HEAD -- ui-shell src lib` 为空、golden 未动，
+    与本轮 13 个提交无关（属 HEAD 自带红）。需 golden 负责人判断「重录」还是「UI 真漏了页签」；CI 上是否同样红要等夜跑/手动触发的实证。
    `e2e`、`coverage`、`probe` 四个夜跑 job，并由 `all-nightly-passed` 汇总；PR 门上刻意
    不跑这四道（进了 needs 会因为 skipped 把每个 PR 判红）。
 4. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
@@ -168,7 +168,7 @@ git status --porcelain          # 应为空
 git log --oneline -10           # 本阶段的提交（P3–P7 + 2026-11-16 审计修复）
 pnpm test                       # 295 文件 / 3251 条
 pnpm run test:int               # 先 build；integration 全量（114 / 1883 + 1 skip）
-pnpm run test:snapshot          # TUI 30 + 浏览器 11；会话回放默认 skip + warn（DSC_SNAPSHOT_STRICT=1 变红，B45）
+pnpm run test:snapshot          # TUI 30 + 浏览器 11 + 会话回放 4 条（已录制入库）；夜跑设 DSC_SNAPSHOT_STRICT=1，缺录制即红
 pnpm run test:cli               # 8 + 1 skip
 pnpm run test:e2e               # 8 文件 / 161 通过 + 1 skip
 pnpm run typecheck:spec && pnpm run check:style
