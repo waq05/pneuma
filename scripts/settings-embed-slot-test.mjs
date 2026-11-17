@@ -98,7 +98,7 @@ check('导航按 parent 链滤掉子分区（通用规则，不点名）', /\.fi
 check('父页按声明渲染子分区（pages.get(section.id)）', /\(pages\.get\(section\.id\) \?\? \[\]\)\.map/.test(shell))
 check('子分区那一块自带标题与说明', /<div className="settings-group-title">\{section\.title\}<\/div>/.test(shell))
 check('子分区控件复用同一个渲染器（GenericFields）', /<GenericFields section=\{section\} onChanged=\{onChanged\} \/>/.test(shell))
-check('写回成功后通知父页重取分区清单（两处：保存与按钮动作）', (shell.match(/onChanged\?\.\(\)/g) ?? []).length === 2, String((shell.match(/onChanged\?\.\(\)/g) ?? []).length))
+check('写回成功后通知父页重取分区清单（三处：两处保存与按钮动作）', (shell.match(/onChanged\?\.\(\)/g) ?? []).length === 3, String((shell.match(/onChanged\?\.\(\)/g) ?? []).length))
 const tools = read('src/packages/tools-default/index.ts')
 check('tools-default 自己声明 parent: general', /parent: 'general',/.test(tools))
 check('tools-default 的检测结果写「当前：…」', /field\.detected\.currentValue/.test(tools))
