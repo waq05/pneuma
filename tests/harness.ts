@@ -871,6 +871,24 @@ function assertIsolatedHome(): string {
  * 只在文件不存在时写：调用方预置的清单优先。
  */
 function prepareIsolatedHome(home: string): void {
+  /**
+   * 测试进程不得看到宿主的 `DSH_HOME` / `DSH_AGENTS_HOME`。
+   *
+   * `core/skills.ts:191-201` 的 `dshSkillsDir()` 读 `$DSH_HOME`（空白时回落 `~/.dsh/skills`），
+   * 而 `packages/prompt/index.ts:316` 把 `ctx.skills.catalogText()` 整段拼进系统提示。宿主
+   * 机器上 `DSH_HOME=C:\Users\waq\.dsh`，于是开发机 `~/.dsh/skills` 里的私人技能清单会进
+   * 系统提示——同一份快照换台机器、换个人、甚至同一台机器上技能目录一变，请求指纹就对不上
+   * （快照层实测过：本机 5 个宿主技能整段出现在 `<available_skills>` 里）。
+   *
+   * 删掉而不是改指临时目录：`dshSkillsDir()` 未设时回落 `homedir()/.dsh/skills`，而 `tempHome()`
+   * 已经把 `HOME` / `USERPROFILE` 指到临时目录，回落本身就是隔离的；`DSH_AGENTS_HOME`
+   * 走同一套回落（`~/.agents`）。**不还原**：worker 进程用完即退，同一文件里再起内核也该
+   * 继续隔离——还原回去等于把宿主目录又放进来。
+   *
+   * 这不是快照层专用：任何用 harness 起内核的用例，看到宿主技能清单都是泄漏。
+   */
+  delete process.env['DSH_HOME']
+  delete process.env['DSH_AGENTS_HOME']
   const dscHome = process.env.DSC_HOME ?? join(home, '.dsc')
   mkdirSync(dscHome, { recursive: true })
   const pluginsFile = join(dscHome, 'plugins.json')

@@ -18,19 +18,64 @@
  * 一个场景一个目录：`session.jsonl`（录制）+ 本文件（场景驱动）。断言钉的是
  * **持久化终态**（会话 jsonl 的记录序列），不是渲染帧——帧归 tui project。
  *
+ * ## 为什么把 cwd 钉到一个固定名字的空临时目录
+ *
+ * 系统提示里的「指令文件」段是**从 cwd 发现**的（`packages/session-core/prompt.ts:153-194`）：
+ * 跑在仓库里时它会读 `AGENTS.md`，并把本机绝对路径 `【D:\dsc\.worktrees\testing\AGENTS.md】`
+ * 连同整篇正文拼进系统提示。这条路径每台机器不同、仓库说明改一个字也会变，于是同一份录像
+ * 换机器必然 409——而本场景的断言与仓库说明无关（只问「回合跑完、会话落盘、正文非空、
+ * 记账非零」），所以钉一个空目录不改变场景本意：它把「不属于本场景的外部状态」摘出去。
+ *
+ * 名字固定（不是随机）是为了让「工作目录」这一行在两次录制之间也稳定；每次先删再建，
+ * 防止上一次被强杀的残留文件混进来。`afterAll` 切回原目录并删掉它。
+ *
  * @module dsc/tests/snapshots/session/basic-turn
  */
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { bootKernel, readSessionJsonl, replayLLM, tempHome, type BootedKernel, type FakeLLM } from '../../../harness.js'
 import { startRecordProxy } from '../../recorder.js'
 
-const RECORDING = new URL('./session.jsonl', import.meta.url)
+/**
+ * 录制文件的**原生路径**。
+ *
+ * 不能直接拿 `URL.pathname` 当文件路径：Windows 上它是 `/D:/...`，`writeFileSync` 会把它
+ * 解释成「当前盘根 + D:」拼成 `D:\D:\...`（实测 ENOENT，且只在 Windows 上炸）。统一在
+ * 模块顶层换一次，下面的读写都只用这一个是非 URL 的路径。
+ */
+const RECORDING = fileURLToPath(new URL('./session.jsonl', import.meta.url))
 const KEY = process.env['DSC_SNAPSHOT_RECORD_KEY'] ?? ''
 const BASE_URL = process.env['DSC_SNAPSHOT_BASE_URL'] ?? ''
 /** 录制与回放共用同一条会话根：tempHome 一个文件只能调一次。 */
 const home = tempHome('dsc-snapshot-basic-')
+
+/**
+ * 本场景的工作目录：固定名字、空目录、在系统临时区。
+ *
+ * 理由见文件头「为什么把 cwd 钉到一个固定名字的空临时目录」：不让仓库的 `AGENTS.md`
+ * 与它的绝对路径进系统提示。固定名字是为了两次录制之间「工作目录」这一行也一致。
+ */
+const SNAPSHOT_CWD = join(tmpdir(), 'dsc-snapshot-cwd')
+/** 切 cwd 前的原目录；空串表示还没切过（skip 模式或 chdir 之前就失败）。 */
+let originalCwd = ''
+
+/**
+ * 尽力删掉固定 cwd。删不掉**不判红**：Windows 上目录句柄释放有延迟（实测 `rmSync` 偶发 EPERM，
+ * 连目录本身都删不掉），而残留目录不影响请求形状——路径是常量，目录里没有 git 仓库、也没有
+ * 指令文件，env-facts 那一行只会是「工作目录：<常量>」。真残留由临时目录清扫兜底。
+ */
+function removeSnapshotCwd(): void {
+  try {
+    rmSync(SNAPSHOT_CWD, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  } catch (error) {
+    console.warn(
+      `[snapshot] 清不掉临时工作目录 ${SNAPSHOT_CWD}，留给临时目录清扫：${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
 
 const mode = existsSync(RECORDING) ? 'replay' : KEY !== '' && BASE_URL !== '' ? 'record' : 'skip'
 
@@ -50,7 +95,7 @@ const SKIP_REASON = (() => {
   const envPart = missing.length === 0 ? '' : `也没给 ${missing.join(' / ')}`
   return {
     short: envPart === '' ? '没有录制文件' : `没有录制文件，${envPart}`,
-    full: `没有录制文件 ${fileURLToPath(RECORDING)}` + (envPart === '' ? '' : `，${envPart}`),
+    full: `没有录制文件 ${RECORDING}` + (envPart === '' ? '' : `，${envPart}`),
   }
 })()
 
@@ -85,9 +130,40 @@ function sessionFile(): string {
   return surface.session.current().filePath
 }
 
+/**
+ * 读内核的 token 记账。
+ *
+ * 记账**不在会话 jsonl 里**：会话 jsonl 的五种记录是 meta / state / user / assistant（外加
+ * 工具条目），用量由 usage 服务单独追加到 `<DSC_HOME>/usage/usage.jsonl`。原来的断言在会话
+ * jsonl 里找 `type === "usage"`，录制模式因此恒红（实测 expected undefined to be defined）——
+ * 钉错了观察点，不是产品漏记。这里直接读真正的记账文件。
+ */
+function readUsage(): Array<Record<string, unknown>> {
+  const file = join(home.home, '.dsc', 'usage', 'usage.jsonl')
+  if (!existsSync(file)) return []
+  const records: Array<Record<string, unknown>> = []
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    if (line.trim() === '') continue
+    try {
+      const value: unknown = JSON.parse(line)
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        records.push(value as Record<string, unknown>)
+      }
+    } catch {
+      // 半截行（进程被杀时正常）跳过，与 readSessionJsonl 同口径。
+    }
+  }
+  return records
+}
+
 beforeAll(async () => {
   if (mode === 'skip') return
+  originalCwd = process.cwd()
   try {
+    // 先删再建：上一次被强杀留下的残留文件会让「工作目录」那一行（以及指令文件发现）不一样。
+    removeSnapshotCwd()
+    mkdirSync(SNAPSHOT_CWD, { recursive: true })
+    process.chdir(SNAPSHOT_CWD)
     if (mode === 'record') {
       proxy = await startRecordProxy(BASE_URL)
       llm = {
@@ -97,7 +173,7 @@ beforeAll(async () => {
         close: () => proxy!.close(),
       }
     } else {
-      llm = await replayLLM(new URL(RECORDING).pathname)
+      llm = await replayLLM(RECORDING)
     }
     kernel = await bootKernel({
       providerBaseUrl: llm.baseUrl,
@@ -137,12 +213,17 @@ afterAll(async () => {
   if (mode === 'record' && proxy !== null) {
     if (runError === undefined) {
       // 录制落盘后要人审再提交；这里只写文件，不进 git（产物进版本库是人的决定）。
-      proxy.save(new URL(RECORDING).pathname)
+      proxy.save(RECORDING)
     }
     await proxy.close().catch(() => {})
   }
   await llm?.close()
   home.restore()
+  // 切回原目录再删：目录被删时 cwd 还指着它的话，后续相对路径解析会落到一个不存在的目录。
+  if (originalCwd !== '') {
+    process.chdir(originalCwd)
+    removeSnapshotCwd()
+  }
 })
 
 d(`快照场景：单轮问答（${mode === 'skip' ? `skip：${SKIP_REASON.short}` : mode}）`, () => {
@@ -182,12 +263,13 @@ d(`快照场景：单轮问答（${mode === 'skip' ? `skip：${SKIP_REASON.short
   })
 
   test('用量计数非零（快照层顺手钉住 token 记账）', () => {
-    const usage = readSessionJsonl(sessionFile()).find((record) => record['type'] === 'usage')
-    if (mode === 'record') {
-      // 录制时真模型回了用量；没有就说明解析层漏记，当场红。
-      expect(usage).toBeDefined()
-    }
-    // 回放模式下 usage 来自录制的 usage 帧（replayLLM 会合成），存在性同样断言。
-    expect(usage === undefined || typeof usage).toBe('object')
+    // 录制与回放都走真内核、真记账：录制读真模型的 usage 帧，回放读 replayLLM 合成的
+    // usage 块（harness 的 sseBody 固定给 100 / 20）。两种模式都要求有一条非零记账。
+    const usage = readUsage()
+    expect(usage.length).toBeGreaterThan(0)
+    const first = usage[0]!
+    expect(first['provider']).toBe('real')
+    expect(Number(first['i'])).toBeGreaterThan(0)
+    expect(Number(first['o'])).toBeGreaterThan(0)
   })
 })
