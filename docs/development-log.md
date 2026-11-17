@@ -17180,6 +17180,62 @@ TUI 接通后，桌面端的 @ 面板仍只从会话 cwd 懒递归——同一�
 
 顺带补回上一批误删的行级复位：当时判断「全仓没有行级折叠键」，把行的复位一起带走了。反向验证：拆掉末帧复检与行存档复位这两处，同一支探针跑出 20 / 4（焦点掉回 BODY、行仍展开）；还原后 24 / 24 全绿。
 
+## 2026-11-17：侧栏工作区「建了新会话就整块跳顶」与「文件夹图标被三角顶掉」
+
+**报障原话**
+
+「1 工作区创建新会话后，目录会直接整体移到顶部。正常应该目录应该是不变位置的，排查原因。
+2 工作区目录文件夹图标，点击展开或关闭后，一直是灰色三角，正常应该是文件夹图标变成展开的样式。」
+
+**根因一：组间排序键选错了东西**
+
+`ui-sessions/ui/grouping.ts` 的手动档在 `workspaceOrder` 为空时，组间兜底用「组内最近一条会话的
+`updatedAt` 倒序」。新建会话的 `updatedAt` 就是「此刻」，于是那个工作区整块顶到第一位。同一个键
+还在第二处出现：`workspaceOrder` 非空、但参与比较的两组都在表外时，比较器会掉回同一套 `lastUsed`，
+于是「表外的工作区里新建会话」也会跳到表外第一。2026-11-13 那次只修了「活动组置顶」（`aFresh`
+守卫），没动这个兜底，所以走「建会话」这条路的位移一直坏着。
+
+**修法**：组间的键换成「工作区第一次出现的时间」＝组内最早一条 `createdAt`，降序（越新加入的
+越靠上）。`firstSeen` 对非有限的 `createdAt` 兜 `0`：`Math.min(Infinity, undefined)` 是 `NaN`，
+而 `NaN` 会让比较器失去全序、顺序随输入序漂。同键用 cwd 字符串兜底成全序。没有会话的空组
+（`recentCwds` 里切过去还没发消息的目录）取 `-Infinity` 排最后，「当前 cwd 的空组置顶」守卫
+（2026-11-13）原样保留；`recent` / `created` 两档与树的嵌套口径一行没动。
+
+**根因二：悬停换位用错了伪类**
+
+`ui-renderer/ui/styles/legacy/views.css` 的设计是「文件夹图标常显，指针进来整行换成实心三角」，
+触发条件写成了 `:focus-within`。工作区行是 `<div role="button" tabIndex={0}>`，鼠标点一下就有
+焦点、而且不会自己丢，于是 `:focus-within` 常成立：三角常显、文件夹图标被 `display: none` 藏掉，
+展开态该显示的 `IconFolderOpenColor` 用户根本看不到。
+
+**修法**：两条选择器都改成 `:focus-visible`（鼠标点击不算键盘焦点，Tab 过来才算），图标本身与
+展开态的 90° 旋转不动。产品口径由用户拍定：**悬停时仍然换三角（对齐参考实现），这次只修焦点
+卡住**，不是把三角整个取消。
+
+**验证**
+
+- `scripts/ui-sidebar-order-test.mjs` 扩到 26 条：新增 [7]~[11]，覆盖「在某个工作区新建会话组间
+  不位移」「表外组不位移」「空组排最后」「同键全序」。脏副本 A（摘掉空组守卫）与 B（把 manual
+  兜底换回 `lastUsed`）各自必须在对应判据上变红，红不了就报 FAIL——防判据空转。
+- `scripts/ui-group-folder-icon-test.mjs` 17 条：静态钉住「显示三角的选择器只许出现 `:hover` 与
+  `:focus-visible`」，并把旧 CSS、以及「两个图标写反」的 TSX 当脏副本喂进同一套判据，必须红。
+- `desktop/shots/_verify-sidebar-group-icons.mjs` 真机 26 条（CDP 发真鼠标事件，不是程序化
+  `.click()`）：点完并把指针移开之后 `.folder-icon` 是 `flex`、三角是 `none`；展开态 svg 子节点是
+  `rect/rect/path`（`IconFolderOpenColor`）、收起态 `rect/rect`；悬停仍换三角；键盘 Tab 仍出三角。
+  同一次运行里往 `document.head` 注入 `:focus-within` 的旧规则，判据当场变红，删掉注入又回到绿。
+- 门禁：`pnpm run build`、`pnpm run check:ui`（80/80，含两条新探针）、`style-check --changed`、
+  `tsc --noEmit`，退出码全 0。
+
+**踩到的坑（值得记住）**：`pnpm run build` 不重建界面包。改 `views.css` 之后不跑 `pnpm run build:ui`，
+真机加载的还是 `lib/ui/assets/style-<旧哈希>.css`；第一轮真机验收因此被旧 CSS 原样演了一遍报障
+（7 条红），差点被当成「没修好」。真机验收的命令一律是 `pnpm run build && pnpm run build:ui` 再跑探针。
+
+**这次没动的同根因残留**（要修就单开一轮）：手机远程页 `remote-web/src/pages/SessionsPage.tsx`
+与终端 `/resume` 选择器（`src/packages/tui/app/App.tsx`）各自手写了一份「当前组置顶 + 其余按最近
+写入」的工作区分组，症状同源；行尾 `+ / ⋯` 的 `:focus-within`（`views.css` 里
+`.group-row:focus-within .row-actions`）也是「点一次就常驻」，但它们属于纯追加的悬停钮，不在本次
+报障范围，按 `docs/ui-design.md` §9 的口径保留。
+
 
 
 

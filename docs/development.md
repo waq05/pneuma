@@ -845,9 +845,9 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:17` |
 | 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract/mode.ts:25`，映射在 `src/core/model-caps.ts:201` |
 | 输入类型 `Modality` | `text`（恒含）/ `image`（贴图、computer-use 截图）/ `video`（只作声明，目前没有发视频的通路） | `src/contract/mode.ts:28` |
-| 会话排序 `SessionSortKey` | `manual`（工作区按拖动顺序，没拖过就活动区置顶）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract/task.ts:89` |
-| 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract/task.ts:89` |
-| 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract/task.ts:89` |
+| 会话排序 `SessionSortKey` | `manual`（拖过按拖动顺序；没拖过按**工作区首次出现的时间**——组内最早一条会话的 `createdAt`，越新加入的越靠上，空组排最后，当前目录的空组置顶；会话活动不改变组位置）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract/session.ts:57`，组间比较在 `src/packages/ui-sessions/ui/grouping.ts:191-224` |
+| 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract/session.ts:60` |
+| 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract/session.ts:63` |
 | 队友审批 `TeammateApproval` | `forbid`（不允许）/ `foreground`（仅前台子允许）/ `ask`（允许并标注），从严到松按 `forbid < foreground < ask` 比较 | `src/packages/subagent/index.ts:75` |
 
 **默认值与硬编码数值**

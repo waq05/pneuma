@@ -175,29 +175,58 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
   const visible = [...map.entries()].filter(([dir, list]) => match(dir, list))
   const rank = (dir: string): number => order.indexOf(dir)
   const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)
-  const lastCreated = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.createdAt), 0)
+  const lastCreated = (list: SessionSummary[]): number =>
+    list.reduce((max, s) => Math.max(max, Number.isFinite(s.createdAt) ? s.createdAt : 0), 0)
+  /**
+   * 组间排序键：组内最早一条会话的 `createdAt`，也就是「这个工作区第一次出现的时间」。
+   * 空组（`recentCwds` 里切过去还没发消息的目录）取 `-Infinity`，降序排最后。
+   * 空组先短路，不让 `-Infinity` 参与减法（`-Infinity - -Infinity` 是 `NaN`）。
+   *
+   * 非有限的 `createdAt` 按 0 计：契约（`contract/session.ts:16`）写了必填，但 meta 行
+   * 缺这个字段时 `core/session.ts:1552` 原样透传 `undefined`，而 `Math.min(Infinity, undefined)`
+   * 是 `NaN`——一旦排序键变成 `NaN`，比较器对同一对组的两个方向都返回 -1，全序就没了，
+   * 组顺序会随输入序漂。按 0 计等于「时间未知的组排在有时间的组之后」，且不随输入序变。
+   */
+  const firstSeen = (list: SessionSummary[]): number => {
+    if (list.length === 0) return Number.NEGATIVE_INFINITY
+    return list.reduce((min, s) => Math.min(min, Number.isFinite(s.createdAt) ? s.createdAt : 0), Number.POSITIVE_INFINITY)
+  }
+  /** 同键组的兜底：比 cwd 字符串，给出一份全序（同时间的两组不会按输入序换位）。 */
+  const byCwd = (a: [string, SessionSummary[]], b: [string, SessionSummary[]]): number =>
+    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0
+  /**
+   * manual 档的组间顺序：只按「工作区第一次出现的时间」倒序，不随会话活动变化。
+   * 以前这里是组内 `updatedAt` 倒序，于是在某个工作区里新建一条会话，那条会话的
+   * `updatedAt` 就是「此刻」，整组顶到第一位（2026-11-17 报障：建新会话目录整体跳到顶部）。
+   */
+  const byFirstSeen = (a: [string, SessionSummary[]], b: [string, SessionSummary[]]): number => {
+    const sa = firstSeen(a[1])
+    const sb = firstSeen(b[1])
+    if (sa !== sb) return sb > sa ? 1 : -1
+    return byCwd(a, b)
+  }
   const sorted = visible
     .map(([dir, list]) => [dir, orderedSessions(dir, list, sort, sessionOrder)] as [string, SessionSummary[]])
     .sort((a, b) => {
       if (sort === 'manual') {
-        // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则空的活动组置顶，其余按最近使用
+        // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则空的活动组置顶，其余按首次出现时间
         if (order.length > 0) {
           const ra = rank(a[0])
           const rb = rank(b[0])
-          if (ra !== rb) {
-            if (ra < 0) return 1
-            if (rb < 0) return -1
-            return ra - rb
-          }
-        } else {
-          // 活动组只在「还没有会话」时才置顶：刚切过去的新工作区要第一眼看得见。
-          // 已经有会话的组不参与抢位——否则点开任意一条历史会话，宿主 cwd 一变它就
-          // 整块跳到侧栏顶部（2026-11-13 报障：点会话时工作区跟着跑）。
-          const aFresh = a[0] === cwd && a[1].length === 0
-          const bFresh = b[0] === cwd && b[1].length === 0
-          if (aFresh !== bFresh) return aFresh ? -1 : 1
+          if (ra >= 0 && rb >= 0) return ra - rb
+          if (ra >= 0) return -1
+          if (rb >= 0) return 1
+          // 表外两组之间也只看首次出现时间。以前两边都是 -1 时会掉回 `lastUsed`，
+          // 于是表外工作区里新建一条会话，它也会跳到表外第一（同一根因的第二处）。
+          return byFirstSeen(a, b)
         }
-        return lastUsed(b[1]) - lastUsed(a[1])
+        // 活动组只在「还没有会话」时才置顶：刚切过去的新工作区要第一眼看得见。
+        // 已经有会话的组不参与抢位——否则点开任意一条历史会话，宿主 cwd 一变它就
+        // 整块跳到侧栏顶部（2026-11-13 报障：点会话时工作区跟着跑）。
+        const aFresh = a[0] === cwd && a[1].length === 0
+        const bFresh = b[0] === cwd && b[1].length === 0
+        if (aFresh !== bFresh) return aFresh ? -1 : 1
+        return byFirstSeen(a, b)
       }
       // 最近更新 / 创建时间这两档两级都按时间，不再人为把活动组顶上去
       return sort === 'created' ? lastCreated(b[1]) - lastCreated(a[1]) : lastUsed(b[1]) - lastUsed(a[1])
