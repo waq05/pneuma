@@ -9,9 +9,10 @@
  *
  * 断言来源：除标注「自补」的一条外，全部照抄上游
  * `D:\code\dsh-superagent-prototype\tests\policy.spec.ts`，每条用例标题后面注明上游行号。
- * 上游用 `SourceRegistry` + 真实的 Feishu / GitHub 来源插件取接收范围；本包还没有 Feishu 来源适配层
- * （`adapters/scope.ts` 只登记 manual 与 GitHub），所以用下面 `scopeOf()` 这个 stub 复刻同一批 `scope()`
- * 返回值（注释里写明每个分支对应上游哪条断言），判据（`gate` / `revalidate` 的结论）仍是上游原文。
+ * 上游用 `SourceRegistry` + 真实的 Feishu / GitHub 来源插件取接收范围；本文件不挂真来源，
+ * 用下面 `scopeOf()` 这个 stub 复刻同一批 `scope()` 返回值（注释里写明每个分支对应上游哪条断言），
+ * 判据（`gate` / `revalidate` 的结论）仍是上游原文。来源适配层在 `sources/`（feishu.ts /
+ * github.ts / registry.ts 等）——2026-11-17 合并 dev 后老 `adapters/` 整层已删，别照旧路径找。
  *
  * 迁移说明：原文件跑的是构建产物、先手工 build；现在直接 import 源码。
  *

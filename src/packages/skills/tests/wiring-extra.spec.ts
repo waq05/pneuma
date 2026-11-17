@@ -22,6 +22,11 @@ const TMP = mkdtempSync(join(tmpdir(), 'dsc-skills-wiring-'))
 process.env['DSC_HOME'] = join(TMP, '.dsc')
 process.env['HOME'] = TMP
 process.env['USERPROFILE'] = TMP
+// `DSH_HOME` 必须一起隔离：技能发现根里有 `dshSkillsDir()`（src/core/skills.ts:197），
+// 它读 `DSH_HOME`，没设就落到 `~/.dsh/skills`。本机 `~/.dsh/skills` 真有技能时，
+// 「一个技能都没有」那条用例的目录永远清不空，`waitFor` 空转 5 秒后超时——同一份
+// 代码在别人机器上绿、在这台机器上红，与合并无关（2026-11-17 复查实测：隔离后 9/9 通过）。
+process.env['DSH_HOME'] = join(TMP, '.dsh')
 const DSH = join(TMP, '.dsc')
 const SKILLS = join(DSH, 'skills')
 const WORK = mkdtempSync(join(tmpdir(), 'dsc-skills-wiring-cwd-'))
@@ -137,6 +142,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   delete process.env['DSC_HOME']
+  delete process.env['DSH_HOME']
   rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   rmSync(WORK, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })

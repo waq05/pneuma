@@ -30,6 +30,36 @@
         pnpm run typecheck:spec / pnpm run check:style
 ```
 
+### 2.1 dev 已并入（2026-11-17）
+
+`dev` 已完整合并进本分支（`dev..HEAD` = 0），两个合并提交：`9ba15f11`（主合并，26 条冲突）、
+`06fea1e2`（合并进行期间 dev 又前进的 2 个提交，transcript 收起修复）。
+
+**测试侧的口径变化**（照旧图施工会踩坑）：
+
+- **包级测试两套并存**：老 119 条已迁成 vitest `*.spec.ts`（`pnpm test` 覆盖）；dev 带回来
+  42 条 node:test 的 `*.test.mjs`（superagent 38 + config-core / superagent-webhook / web-fetch /
+  web-search 各 1），由 `scripts/package-tests.mjs` 逐个 spawn，接在 `check:plugin` 里——
+  **不在 `pnpm test` 里**，单独跑用 `pnpm run test:packages`。合并成一套记在 B57。
+- **superagent 老实现的测试已全删**：dev 的 `3d251715` 删掉 `adapters/` 整层后，我们迁移时
+  转写的 24 个 `src/packages/superagent/tests/*.spec.ts` 没有被测对象，连同 `src/core/properties.spec.ts`
+  的 `slugOf` 属性组一起删掉；替身是 dev 的 38 条 `*.test.mjs`。
+- **两个大探针按 dev 版恢复**：`scripts/sandbox-win-token-test.mjs`、`scripts/ui-sidebar-order-test.mjs`
+  与我们同名的 vitest 版并存（覆盖不重合），合并成一套记在 B58。
+- **快照要跟着产品改动重录**：会话回放的请求指纹按设计会 409（dev 改了系统提示与工具面），
+  当前指纹 `sha256:4787c631…`；浏览器 golden 因 dev 的界面改动重录过 04/05/06/07/09 这几份。
+  改产品提示词/工具 schema/界面结构就必须重录，别改测试绕过。
+- **构建新鲜度守卫会整片 skip 快照**：改了 `src/`（`*.spec.ts` 不算）或 `ui-shell/src` 之后，
+  必须先 `pnpm run build` + `pnpm -C ui-shell build`，否则浏览器 DOM 快照整文件 skip
+  （skip 不算绿）。
+
+**产品代码相对 dev 的差异**（都不是这次合并造成的，是本分支早前自己修的，交接时按 8 条核对）：
+`bin/dsc.js`（未知子命令拒绝 + 非 TTY stdin 结束即退）、`src/core/redact.ts`（七类凭据）、
+`src/packages/sandbox/net-proxy.ts`（放行路径 400/502/header 崩溃）、
+`src/packages/tui/app/DiffBlock.tsx`（折叠行数）、`src/packages/subagent/index.ts`（一处 `.catch`）、
+`package.json`（dev 的依赖与脚本都在，只摘掉已不存在的探针）、`ui-shell/tsconfig.json` 与
+`ui-shell/tsconfig.spec.json`（界面 spec 独立类型检查）。除此之外产品代码与 dev 一致。
+
 **最终验收（2026-11-16，本机 Windows，Node 24.19）**
 
 | 命令 | 结果 |
