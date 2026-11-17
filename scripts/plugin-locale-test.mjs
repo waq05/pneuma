@@ -86,7 +86,7 @@ console.log('[1] 每个包都声明了 ./locale/*.json，且 locale/en.json 齐�
   const ids = readdirSync(packagesDir)
     .filter((name) => existsSync(join(packagesDir, name, 'package.json')))
     .sort()
-  check('包目录数与门禁口径一致（92）', ids.length === 92, String(ids.length))
+  check('包目录数与门禁口径一致（93）', ids.length === 93, String(ids.length))
   const problems = []
   let declared = 0
   for (const id of ids) {

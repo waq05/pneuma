@@ -1,0 +1,41 @@
+{
+  "name": "@pneuma/web-fetch",
+  "version": "0.9.1",
+  "description": "让模型读一个具体网页的正文：抓回 HTML 转成 Markdown，太长的自动截断",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3635,
+    "resolution": "overridable",
+    "title": "网页抓取",
+    "description": "让模型读一个具体网页的正文：抓回 HTML 转成 Markdown，太长的自动截断",
+    "settingsSection": "web-fetch",
+    "toggleable": true
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}

@@ -695,6 +695,15 @@
       "bundle": null
     },
     {
+      "file": "web-fetch",
+      "name": "网页抓取",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "web-fetch",
+      "bundle": null
+    },
+    {
       "file": "web-search",
       "name": "联网搜索",
       "enabled": true,
@@ -863,6 +872,12 @@
       "title": "用量统计",
       "order": 25,
       "builtin": true
+    },
+    {
+      "id": "web-fetch",
+      "title": "网页抓取",
+      "order": 47,
+      "builtin": false
     },
     {
       "id": "web-search",
