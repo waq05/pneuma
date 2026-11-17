@@ -413,14 +413,20 @@ export class DscExecutor implements Executor {
 
 #### 6.2.3 worktree
 
+> **移植后的最终口径（§18.3 有差异条目）**：宿主不再自己建 worktree。工单目录是普通目录
+> `<executionRoot>/<ticket name>`，由执行器的 `executor.prepare` 命令在「目录还不存在时、于
+> 父目录」检出（环境变量 `DSH_SUPERAGENT_DIR` 指向本单目录）。这与上游一致（上游
+> `client/locales.ts` 的 `prepareCommandHint` 就是这么写的），本仓不再保留 `git worktree`
+> 那套宿主侧实现；下面的原始 P0 设计仅作历史记录。
+
 ```sh
 git -C <repo> worktree add -b "agent/<ticket name>" <dir> <base ref>
 ```
 
 - 仓库路径、起点分支都来自设置；
-- 分支名固定 `agent/<ticket name>`，与上游一致（上游靠分支名把 PR 绑回工单，我们暂时不用，但保留格式）；
+- 分支名固定 `agent/<ticket name>`，与上游一致（上游靠分支名把 PR 绑回工单）；
 - 目录已存在就复用，不重复 `add`；
-- 清理按钮做 `git worktree remove --force` + 删目录。
+- ~~清理按钮做 `git worktree remove --force` + 删目录~~：移植后清理只删普通目录（`PanelApi.clean`）。
 
 ### 6.3 dispatcher.ts（P0 的编排器）
 
@@ -1082,7 +1088,7 @@ PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exi
 | 项 | 做了什么 | 与上游的差异 |
 | --- | --- | --- |
 | G2 持久化 effect 队列 | `adapters/effects.ts` 照上游 `app/effects.ts` 移植：`launch` / `delivery` 两种 kind，`seq` / `generation` / `attempts` / `due` 语义逐项对齐 | 上游 6 种 kind，这里只有 2 种——`assessment` / `relay` / `notice` 依赖主会话（G1 不做），`reply` 由发送泵承担 |
-| G4 准备命令 | 设置项 `prepareCommand`，建树后执行、10 分钟超时、失败判 failed 不重试 | 上游跑在工单目录的父目录（目录由 prepare 建）；这里目录由 git worktree 建好，跑在树里 |
+| G4 准备命令 | 设置项 `prepareCommand`，建树后执行、10 分钟超时、失败判 failed 不重试 | 当时目录由本仓的 git worktree 建好、跑在树里；移植后改回上游口径（目录由 prepare 建，跑在父目录，见 §18.3） |
 | G5 临时故障重试 | `transient()` 判据 + 3 次重试（15/30/60 秒），同一会话投「继续」 | 上游投完等 `whenIdle`；`MiniAgent` 没有可等待的 idle 事件，用 `retryPending` 标记让故障回合先不报 |
 | G7 报告语义 | `superagent_report` 工具（state / summary / question），工具报的状态覆盖回合默认的 `ready` | 上游叫 `orchestrator_report`，另有 `question_for_trigger_id` / `pr_number` / `reply_to_trigger_id` 三个参数；DSC 没有对应链路，去掉了 |
 | G8 提示词外置 | `prompts/worker.md` + 构建脚本拷两个落点 + 运行时读文件缓存 + 内置兜底 | 上游 15 个 md；这里只有 worker 一个（主会话提示词随 G1 不做） |
@@ -1092,7 +1098,7 @@ PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exi
 | S6 飞书准入 | 飞书来源接进 `policy.sources` + 设置项 `feishuAllowed` | 上游 SETUP 里让用户填名单；这里同样必须填，否则消息全判 `not_a_member` |
 | O1 安装引导 | `repoPath` 为空时快照面返回 `repo_missing`，界面画一条不挡页面的警告 | 上游有完整的 `SETUP.md` 向导；这里只有一条提示 |
 | O2 机器校验 | 体检项 `superagent/dependencies`：git / lark-cli 各跑一次 `--version` | 上游 `deployment.ts` 校验更多依赖 |
-| O3 全链路门禁 | `scripts/superagent-e2e-test.mjs`：假模型 + 真宿主 / 工具 / worktree / git，24 条断言 | 上游没有等价探针 |
+| O3 全链路门禁 | `scripts/superagent-e2e-test.mjs`：假模型 + 真宿主 / 工具 / prepare 建出的工单目录 / git，28 条断言 | 上游没有等价探针 |
 | O4 outbox 状态列 | `state`（pending / sending）+ `claimOutbox` + 开库时把残留 `sending` 改回 pending | 上游 `Effects` 管副作用、`Outbox` 只管入队；DSC 的发送泵自己带队列语义 |
 | U1 停用复位 | `ui-sessions` 对任意整页判断「启动图里还有没有人报名」 | 上游没有这个界面 |
 | U2 转录自动刷新 | 详情页在 `working` / `idle` 时每 5 秒静默重读 | 上游没有这个界面 |
@@ -1571,13 +1577,19 @@ src/packages/superagent/
 | `sources/feishu-image.ts` 缺「模型不支持图片」前置拒绝 | 改为下载后由投影链剥图，用户看到的是替换说明 | `SourceAgent` 只有宿主类型，本层拿不到模型路由 |
 | `sources/github.ts`/`feishu.ts` 的 disposer 不同步等循环结束 | 停用瞬间注册表仍列该 kind | 本仓 cordis disposer 签名要求同步 |
 | `executor/background.ts` 用轮询替代作业事件、`stopping` 状态不存在 | 后台作业收尾最坏多等一个轮询周期 | 本仓 `JobsService` 只有 `running/completed/failed/killed` |
+| 执行器不自建 git worktree，也不建 `agent/<name>` 分支；工单目录是普通目录，`clean` 只删目录 | 默认 `executor.prepare` 为空时 worker 在空目录里开工；要分支与 PR 自动绑定，得在 prepare 里检出（`$DSH_SUPERAGENT_DIR` / `%DSH_SUPERAGENT_DIR%`） | 上游就是这一模型（上游 `client/locales.ts` 的 `prepareCommandHint`：目录由 prepare 命令创建、例如 `git worktree`）；宿主建树会与上游语义分叉，旧 `adapters/worktree.ts` 随之删除 |
+| Windows 上 `prepare` 以 `cmd.exe /d /s /c` 执行，且参数按 verbatim 传给 cmd（`runAsWorker` 的第 5 个参数） | 含引号的路径（`"C:\a b"`）能原样到达命令；POSIX 仍走 `sh -c` | 上游只跑 POSIX；node 默认的 Windows 参数转义会把命令里的 `"` 变成 `\"`，cmd 原样保留，导致带空格的路径解析失败（2026-11-17 实测） |
+| `surface().recent` 从已结束工单投影（`ended.at` + 结局词 + 报告摘要），最多 20 条 | 「最近动态」只含工单结束，不含开工 / 出站等旧窗口条目 | 上游没有旧 DSC 的内存通知窗口；用库里真实字段拼，不另造内存状态 |
+| `surface().settingsHistory` 由设置历史 revision 投影成逐字段行（点分键 + from/to） | 规则、准入表这类数组变化只显示 JSON 串，不如上游 `change.<code>` 细 | 本仓契约是逐字段行（界面按 `field.<key>.label` 取词），改成上游结构化 changes 要连带改契约与界面 |
+| 移植前的旧库（`PRAGMA user_version` = 4）不迁移：连同 `-wal`/`-shm` 旁置成 `<db>.legacy-<时间戳>` 后按新库启动，`report` 记一句 | 旧工单 / 候选不会出现在新面板（文件保留，可人工取） | 旧库行形状是旧领域模型，与上游 schema 11 不同构，逐行转换等于发明一套迁移；上游没有对应路径 |
+| 旧 `plugins.json` 的 `repoPath` / `ticketTimeoutSeconds` / `confirmInferred` / `githubTokenEnv` 不再生效，启动时告警一次 | 升级后按旧键配置的用户会看到「未完成部署检查」，需要在新设置分区重配 | 新配置模型是设置分区 + 来源实例（仓库在 GitHub 来源里配），旧键没有等价映射 |
 | HTTP 服务（`app/http.ts`）、面板 API（`app/api.ts` 上游版）、会话跳转（`navigation.ts`） | 不移植 | DSC 面板走 `INVOKABLE_METHODS` + 快照面，会话导航由 `ui-sessions` 提供 |
 
 ### 18.4 测试移植
 
 上游 48 份 vitest 规格（11,746 行）→ 本仓 30 份转写成 `node:test`（同一断言语义、真假件按本仓 API 重写），其余 18 份不移植：client 侧 5 份（`draft`/`marks`/`markdown`/`prompt-config`/`locales`，本仓界面是原生重写）、DSH 运行时集成 7 份（`runtime`/`runtime-concurrency`/`http`/`navigation`/`model-surface`/`index`/`service-script`）、文档与打包检查 5 份（本仓自带 `style-check`/`check-plugin`/`check:ui`/`check-docs` 等价闸门）、`bundle-patch` 1 份。
 
-当前：**92 个包 / 139 个用例 / 1696 条断言 / 0 失败**。
+当前：**92 个包 / 141 个用例 / 1,721 条断言 / 0 失败**（复审修复轮新增 `api-surface`、`plugin-config` 两份包级测试，`store` 补「旧库旁置」用例）。
 
 ### 18.5 验收证据
 
@@ -1585,10 +1597,31 @@ src/packages/superagent/
 npx tsc -p tsconfig.json --noEmit   → 0（14 s）
 pnpm run build                      → 0（408 桩 + 80 功能包，23 s）
 pnpm run build:ui                   → 0（22 份 bundle，372 份类型，46 s）
-node scripts/style-check.mjs        → 0（1,484 个文件）
-pnpm run check:ui                   → 0（79/79，77 s）
-pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL，166 s）
+node scripts/style-check.mjs        → 0（1,486 个文件）
+pnpm run check:ui                   → 0（79/79，69 s）
+pnpm run check:plugin               → 0（92 包 / 141 用例 / 1,721 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL）
+node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-test.mjs superagent-worker-e2e-test.mjs
+                                    → 0（3/3：28/28、29/29、26/26，合计 72.5 s）
 ```
+
+### 18.7 复审修复轮（2026-11-17）
+
+代码复审提出 7 条（P1×3、P2×3、P3×1）。逐条核实后 7 条现象全部属实；其中 6 条改代码，1 条（执行器不建 worktree）
+判定为「文档与文案漂移」——代码与上游一致，修的是本仓残留的设计文档、locale 文案与死代码。
+复审判定 P1 的「三条 e2e 必挂」属实（实测 7/10、7/12、7/9），已按新架构重写。
+
+| 复审条目 | 核实结论 | 处理 |
+| --- | --- | --- |
+| P1 执行器不再建 worktree、prepare 在父目录先跑 | 属实；但这是上游行为（上游 `prepareCommandHint` 明说目录由 prepare 建） | 不回退代码：删死代码 `worktreesDir()`、改 locale 两处文案、修 `api.ts` 注释、补 §18.3 差异行、改 §6.2.3 与移植计划 §3 |
+| P1 旧库与旧 `plugins.json` 无迁移路径 | 属实：旧库 `user_version` 被无视，直接写 schema 11；旧键静默忽略 | 旧库旁置成 `.legacy-<时间戳>` 后新建（`report` 记一句，测试覆盖）；旧键启动告警一次（`legacyPluginKeys` + 测试） |
+| P1 三条 e2e 探针未迁移，`check:core` 必挂 | 属实（7/10、7/12、7/9） | 三条全部按新架构重写：settings 播种、假 gh、prepare 检出、主会话工具回合、飞书 bot 推断自动接单；28/28、29/29、26/26 |
+| P2 快照面缺 `settingsHistory` | 属实 | `surface()` 从 `store.settingsHistory(30)` 投影成逐字段行（只比相邻 revision） |
+| P2 候选收件箱已删但界面/契约/README 仍写 | 属实 | 契约、RPC 白名单（`host-methods`/`ui-methods`）、`PanelApi`、界面、locale、README、测试一并删除 |
+| P2 发布页 `base` 被静默忽略 | 属实 | 契约、界面、locale 删除（上游没有起点分支；检出由 prepare 负责） |
+| P3 快照面 `recent` 恒空 | 属实 | 从已结束工单投影（`ended.at` 升序、结局词 + 摘要、上限 20） |
+
+顺带修掉复审之外的一处 Windows 缺陷：`prepare` 走 `cmd.exe /d /s /c` 时 node 默认参数转义会把命令里的
+引号变成 `\"`，带空格的路径直接失败（实测）；`runAsWorker` 加第 5 个参数按 verbatim 传给 cmd，已写进 §18.3。
 
 ### 18.6 「加第三种来源」验收切片
 

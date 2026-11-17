@@ -108,7 +108,7 @@
 | `index.ts` | 1,340 | `index.ts` + `cordis.patch.yml` | 原生重写 |
 | `prompts/*.md` 2 卷 | 74 | `prompts/*.md` 15 个 | 逐字 |
 | `ui-superagent/*` | 2,397 | `client/*` 3,939 行 | 原生重写（DSC 界面运行时） |
-| `adapters/worktree.ts` | 268 | 无 | **本仓特有，保留** |
+| `adapters/worktree.ts` | 268 | 无 | **已删**：移植后宿主不自建 worktree，检出交给 `executor.prepare`（上游口径，见设计文档 §18.3） |
 | `adapters/manual.ts` | 82 | 无 | **本仓特有，保留** |
 
 ---
@@ -161,7 +161,7 @@
 
 ## 5 风险与回滚
 
-1. **P9-C 数据迁移**是唯一碰用户已有库的一批：迁移前先复制库文件，测试覆盖「旧库 → 新库 → 旧功能仍可用」；迁移失败时插件拒绝启动并给可读原因，不做半迁移。
+1. **P9-C 数据迁移**是唯一碰用户已有库的一批。最终口径（与计划不同，已写进设计文档 §18.3）：上游 schema 11 与移植前 schema 4 的行形状不同构，**不做逐行转换**；打开库时若识别到移植前的旧库（无 `kv.schema` 键且 `PRAGMA user_version > 0`，并有 `meta`/`candidate`/`assignment` 表），把库文件连同 `-wal`/`-shm` 旁置成 `<db>.legacy-<时间戳>`，再按全新库启动，并经 `report` 记一句。旧文件保留可人工取；`store.test.mjs` 覆盖「旁置 + 新库可用 + 旧行不可见」。
 2. **P9-F / P9-G 会删掉 3,700 行现有适配器**：删前打 tag，每批单独提交，可按批回滚。
 3. **P9-B2 动设置契约**（补 `rows` / `fact` 字段类型）：界面与内核同时编译，单独提交，不与其他批并行。
 4. 每波由主协调者独立重跑四道闸并记录退出码；开发子代理只实现 + `tsc --noEmit`，测试子代理另派。
@@ -195,6 +195,7 @@
 | W6 | 完成 | `5eaabed3` | `app/{prompts,context,skill-files,settings-history,setup,role-models,settings}`；`prompts/` 12+3 个 md 与 `skills/` 2 个 SKILL.md 逐字（`shared.md`/`worker.md` 留 W9 换） |
 | W7 | 完成 | `5eaabed3` | `app/{store,store-read,versions,migration}` 逐字；`kv.ts` 四类键接真类型 |
 | W8 | 完成 | `5eaabed3` | `executor/{dsh,background}`、`app/{sessions,delivery,tools/*,resources,assessment}`、`app/views/*`、`app/runtime` |
+| W11 | 完成 | 本轮 | 复审修复：旧库旁置、旧配置键告警、快照补 `settingsHistory`/`recent`、删候选收件箱与发布 `base`、三条 e2e 按新架构重写、Windows `prepare` 引号修正 |
 
 **逐字审计（r1，2026-11-16）**：38 个 A 类路径里 26 个归一后 0 差异、9 个只差「上游首行注释」——已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块、`skill-files.ts` 的包根解析）；`as unknown as` 4 处全是上游原文继承（`migration.ts:356/383`、`effects.ts:81/122`）。`@deepseek-ai/*` import 0 处、残留 `.ts` import 0 处。
 
@@ -211,9 +212,11 @@
 npx tsc -p tsconfig.json --noEmit   → 0
 pnpm run build                      → 0（408 桩 + 80 功能包）
 pnpm run build:ui                   → 0（22 份 bundle）
-node scripts/style-check.mjs        → 0（1,484 个文件）
+node scripts/style-check.mjs        → 0（1,486 个文件）
 pnpm run check:ui                   → 0（79/79）
-pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL）
+pnpm run check:plugin               → 0（92 包 / 141 用例 / 1,721 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL）
+node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-test.mjs superagent-worker-e2e-test.mjs
+                                    → 0（3/3：28/28、29/29、26/26）
 node src/packages/superagent-webhook/tests/webhook.test.mjs → 0（通过 6）
 ```
 
