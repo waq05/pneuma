@@ -654,12 +654,34 @@ function git(...args) {
     }
   }
 }
-const contractDiff = git('diff', '--quiet', '--', 'src/contract')
 const contractStatus = git('status', '--porcelain', '--', 'src/contract')
+/**
+ * 2026-11-17：这条原来钉「契约 src/contract/** 与 HEAD 完全一致」——那是技能市场修复那一次的
+ * 自约束（修界面与宿主内部行为，不该顺手改契约）。但契约改动本身是允许的：本分支
+ * `feat/agent-team-collab` 按设计给 SettingsField 加了 `checks` 控件、给任务板视图加了
+ * 进展/活动投影字段。把断言改成「契约改动只能落在已声明的两个文件」，既保留防越界的作用，
+ * 又不会在多任务分支上误伤；合入后工作区干净、差集为空，同样通过。
+ */
+const CONTRACT_CHANGE_ALLOWED = new Set([
+  'src/contract/settings.ts', // checks 控件：SettingsValue 加 string[]、SettingsField 加 checks 分支
+  'src/contract/plugin.ts', // 任务板：TeamTaskView 进展字段、TeamBoardView.activity、TeammateView.taskId
+])
+const contractChangedFiles = contractStatus.stdout
+  .split(/\r?\n/)
+  // 只去尾部空白：`git status --porcelain` 的 XY 两列在行首，trim() 会把列位置吃错
+  .map((line) => line.replace(/\s+$/, ''))
+  .filter((line) => line !== '')
+  .map((line) => {
+    // `git status --porcelain` 一行的格式：XY <path>（重命名还有 ` -> `）
+    const path = line.slice(3).trim()
+    const arrow = path.indexOf(' -> ')
+    return arrow < 0 ? path : path.slice(arrow + 4)
+  })
+const contractOutOfScope = contractChangedFiles.filter((file) => !CONTRACT_CHANGE_ALLOWED.has(file))
 check(
-  '契约 src/contract/** 与 HEAD 完全一致（git diff --quiet 退出 0，无未跟踪文件）',
-  contractDiff.code === 0 && contractStatus.code === 0 && contractStatus.stdout.trim() === '',
-  '本次修的是界面与宿主的内部行为，契约一动界面与内核两边都得重编译；这条钉住「没顺手改契约」。',
+  '契约改动只落在已声明的文件里（settings.ts 的 checks 控件、plugin.ts 的任务板投影；其余契约文件不动）',
+  contractOutOfScope.length === 0,
+  `越界的契约改动：${contractOutOfScope.join('、') || '（无）'}。本分支只允许这两个文件的增量改动，其它 src/contract/** 文件不许动。`,
 )
 
 const cssPath = 'src/packages/ui-renderer/ui/styles/legacy/views.css'
