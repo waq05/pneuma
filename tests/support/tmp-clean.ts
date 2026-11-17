@@ -158,7 +158,7 @@ export function sweepStaleTempDirs(options: SweepOptions = {}): SweepResult {
 /**
  * 删掉「本轮建」的目录：创建时间不早于 `since` 的那些。
  *
- * 为什么按创建时间而不是「全部 dsc-` 目录」：同一台机器上可能还有另一份 vitest 在跑
+ * 为什么按创建时间而不是「全部 `dsc-` 目录」：同一台机器上可能还有另一份 vitest 在跑
  * （开发者本地、或两个 CI job 共用 runner），按创建时间切只影响本轮，边界之外的不碰。
  * 真正防并发的那道闸是 `otherRunActive()`——这一层只是把范围收窄。
  */

@@ -6,8 +6,9 @@
  * 1. **开跑前**：删掉系统临时根下超过 24 小时的 `dsc-` 目录。上一轮被强杀、CI 取消
  *    留下的残留靠这一步收掉；门槛远大于一次全量跑，不会误伤同时在跑的另一份。
  * 2. **整轮结束后**（teardown）：删掉**本轮创建**的目录。这是「测试跑完不留临时文件」
- *    的主路径——仓库里还有 268 处测试直接 `mkdtempSync`，它们不在 `tmp-dir.ts` 的
- *    登记表里，只有等所有 worker 退出后按创建时间扫一遍才收得干净。
+ *    的主路径——判据是「系统临时根**顶层** + 目录名以 `dsc-` 开头 + 创建时间不早于本轮
+ *    开跑」。仓库里还有两百多处测试直接 `mkdtempSync`，它们没走 `createTempDir`（也就
+ *    没有失败标记），只有等所有 worker 退出后按这两条扫一遍才收得干净。
  *
  * ## 为什么收尾必须放在主进程，而不是 worker 退出时
  *
@@ -18,7 +19,7 @@
  * ## 失败与并发怎么处理
  *
  * - 任一用例红：worker 会写 `dsc-failed-<pid>.flag`，teardown 读到就**整轮保留**，
- *   连未登记的现场一起留，路径在 worker 的 stderr 里已经打过。
+ *   连那些没走 `createTempDir` 的现场一起留，路径在 worker 的 stderr 里已经打过。
  * - 另一份 vitest 还活着（`dsc-run-<pid>.lock` 且 pid 存活）：跳过本轮清理，让位。
  * - `DSC_KEEP_TMP=1`：开跑清扫、收尾清理全部跳过，连锁都不建。
  *
@@ -92,7 +93,7 @@ export default function globalSetup(): () => void {
       console.log(`[测试临时目录] 收尾清理 ${result.removed.length} 个本轮目录`)
     }
     if (result.failed.length > 0) {
-      console.warn(`[测试临时目录] ${result.failed.length} 个目录删不掉（多半被子进程占用），下一轮开跑时会再清`)
+      console.warn(`[测试临时目录] ${result.failed.length} 个目录删不掉（多半被子进程占用），24 小时后的开跑清扫会再清`)
     }
   }
 }
