@@ -166,20 +166,26 @@ const DEFAULT_PREFS: SidebarPrefs = {
  */
 function usePageEntryAvailable(entryId: string): boolean {
   const channel = useHostChannel()
-  const read = (): boolean => {
-    const frame = channel.getPluginsFrame()
-    // 还没收到第一帧：先当作「在」，免得首帧之前那颗钮闪一下消失。
-    return frame === null ? true : frame.graph.entries.some((entry) => entry.id === entryId)
-  }
-  const [available, setAvailable] = useState<boolean>(read)
+  /**
+   * 存的是**启动图帧**，不是「这一页在不在」那个布尔。
+   *
+   * 为什么不能存布尔：布尔是拿**当时的** entryId 算出来的。切页那一帧 entryId 刚从
+   * `''` 换成 `'skills'`，而 state 里还是上一个 entryId 的答案（`''` 谁都匹配不上，
+   * 恒为 false），下面的守卫就会把它当成「这页的插件被停用了」当场踢回对话页——
+   * 结果是点技能/插件永远不换页（2026-11-17 修 BUG-0002）。存帧之后，
+   * 「在不在」每次渲染现算，同一帧里 entryId 和答案不会错位。
+   */
+  const [frame, setFrame] = useState(() => channel.getPluginsFrame())
   useEffect(() => {
-    setAvailable(read())
-    return channel.onPlugins(() => {
-      setAvailable(read())
+    setFrame(channel.getPluginsFrame())
+    return channel.onPlugins((next) => {
+      setFrame(next)
     })
-    // read 每次渲染都是新函数，只认通道与 entryId。
-  }, [channel, entryId])
-  return available
+    // 只认通道：frame 由它推。
+  }, [channel])
+  // 还没收到第一帧：先当作「在」，免得首帧之前那颗钮闪一下消失。
+  if (frame === null) return true
+  return frame.graph.entries.some((entry) => entry.id === entryId)
 }
 
 function SessionList() {
