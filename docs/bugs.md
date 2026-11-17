@@ -45,6 +45,7 @@
 | BUG-0005 | 设置里显示的「沙箱私有临时目录」不是命令真正用的那个 | P3 | 已修（2026-11-17） | 按显示的路径找临时文件会找不到；策略层放行一个没人写的目录 |
 | BUG-0006 | 在某个工作区里新建会话，那个目录整块跳到侧栏顶部 | P2 | 已修（2026-11-17） | 侧栏工作区分组的顺序 |
 | BUG-0007 | 工作区文件夹图标点开/关后一直是灰色三角，看不出展开态 | P3 | 已修（2026-11-17） | 侧栏工作区行的图标与悬停换位 |
+| BUG-0008 | 影子 git 的回合快照偶发记 0 条，回滚会漏文件 | P2 | 待修 | `checkpoint` 的回合账本与「回滚到回合前」 |
 
 ---
 
@@ -454,6 +455,54 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
   `.folder-icon` 是 `flex`、三角是 `none`；展开态 svg 子节点 `rect/rect/path`；悬停仍换三角；键盘 Tab 仍出三角）。
 - **注意**：改 `views.css` 之后必须 `pnpm run build && pnpm run build:ui`，只跑 `build` 不重建界面包，
   真机加载的还是 `lib/ui/assets/style-<旧哈希>.css`，会把原始报障原样演一遍。
+
+---
+
+## BUG-0008：影子 git 的回合快照偶发记 0 条，回滚会漏文件
+
+- **状态**：待修（2026-11-17 发现，未动代码）
+- **严重度**：P2（不阻断日常；但账本为空时「回滚到回合前」看不到这回合改了哪些文件，回滚会漏）
+- **发现**：2026-11-17，跑 `pnpm run check:plugin` 时撞见。`src/packages/checkpoint` 与 `main` 一字未改，是既有问题，不是当天那批提交引入的
+- **影响**：想回滚到某个回合之前的人，偶尔会拿到一份空的改动清单，误以为这回合什么都没改
+
+**复现**
+
+1. 同一个文件连跑三次：
+
+   ```sh
+   node --test --test-isolation=none src/packages/checkpoint/tests/checkpoint.test.mjs
+   ```
+
+2. 三次实测（2026-11-17 16:47）分别是 `pass=5 fail=2`、`pass=6 fail=1`、`pass=7 fail=0`，挂的用例每次不同。
+
+**期望**：pre/post 两张快照的树不同时，`recordTurnLedger` 一定记下改动条目。
+
+**实际**：两张快照都返回 `ok: true`，但 `git diff <pre> <post>` 是空的，账本记 0 条
+（断言原文：`第 1 回合应当记两条（改 a.txt、新增 b.txt），实际 0`）。另外两个集成用例也偶发失败：
+「pre/post 两张快照、内容可回看、用户 .git 不受影响」与「超大文件进了 info/exclude 且活过多次 ensureRepo」。
+
+**证据**
+
+- 快照实现：`src/packages/checkpoint/shadow.ts:333`（`snapshot`）→ `:372`（`capture`：`add -A` → `commit --allow-empty` → 打 tag）。
+- 账本实现：`shadow.ts:926` 的 `recordTurnLedger`，用 `git diff --name-status -z <pre> <post>` 取条目。
+- 三个集成用例各自 `mkdtemp` 独立目录，不存在互相踩目录。
+
+**初步定位**（推测，未证实）
+
+`capture()` 只对 `git add -A` 抛错这条路有判据（`shadow.ts:375` 返回 `ok: false`）；
+「加成功了但树没变」这条路没有任何判据，于是静默成功。可疑点：`commit --allow-empty`
+让空提交也算成功，把「一个文件都没暂存到」和「本来就没改动」混成同一个结果。
+
+**修复方向**
+
+1. 先改 `capture`：提交前后 tree hash 相同、而工作树确实有改动时返回错误，把静默失败变成可见失败。
+2. 再查 `add -A` 的时序：是文件写入与索引刷新撞车，还是 `ensureRepo` 首次初始化时索引未就绪。
+3. **不许改测试去迁就失败**——「两张快照都 ok」这条断言本身是对的。
+
+**验收**
+
+- 连跑 10 次 `node --test --test-isolation=none src/packages/checkpoint/tests/checkpoint.test.mjs` 全绿。
+- 人为让 `add -A` 空转（例如先把文件标成 `assume-unchanged` 再改内容）时，新判据必须判红。
 
 ---
 
