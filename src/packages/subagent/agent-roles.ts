@@ -12,7 +12,7 @@
  * tools: read, glob, grep        # 工具白名单；写 none 表示一个工具都不给
  * model:                         # 例 deepseek/deepseek-chat；留空 = 跟随当前模型
  * effort: default                # default|off|low|high|max
- * max-turns: 12                  # 内部请求轮次上限，到点自动收手；不写或写 0 = 不限
+ * max-turns: 12                  # 内部请求轮次上限，到点自动收手；不写 = 用设置页给这个角色的默认值，写 0 = 不限
  * approval: forbid               # forbid|ask|foreground：这个角色想不想弹审批卡
  * enabled: true
  * ---
@@ -58,6 +58,15 @@ export interface AgentRole {
   effort: EffortLevel | null
   /** 内部请求轮次上限（到点自动收手，防止子智能体无限自转）；0 = 不限。 */
   maxTurns: number
+  /**
+   * 角色文件里是否**显式**写了 `max-turns`（写 0 也算显式）。
+   *
+   * 为什么要分开记：预算有三档优先级——角色文件显式值 > 设置页按角色的默认值 > 全局上限。
+   * 只看 `maxTurns` 的话，「没写」与「显式写 0」解析出来都是 0，前者会把设置页的按角色
+   * 默认值顶掉（旧安装的出厂文件正好都没写）；分开记之后「显式写 0 = 不限」仍然压过
+   * 设置页，没写才回落设置页。
+   */
+  maxTurnsDeclared: boolean
   /** 这个角色想不想弹审批卡。 */
   approval: TeammateApproval
   enabled: boolean
@@ -90,7 +99,6 @@ approval: forbid
 name: writer
 description: 落地实现：按明确范围改代码、补测试
 tools: read, write, edit, glob, grep, bash
-max-turns: 20
 approval: ask
 ---
 
@@ -106,7 +114,6 @@ approval: ask
 name: critic
 description: 反驳式审查：只读材料，专门找漏洞和反例
 tools: read, glob, grep
-max-turns: 4
 approval: forbid
 ---
 
@@ -122,7 +129,6 @@ approval: forbid
 name: reviewer
 description: 代码审查（/review 用）：只读过 diff 与相关代码，按固定格式交 findings
 tools: read, glob, grep
-max-turns: 16
 approval: forbid
 ---
 
@@ -171,6 +177,72 @@ export function ensureBuiltinRoles(): string[] {
   return created
 }
 
+/**
+ * 旧出厂模板里钉死的轮次上限：critic 4 / reviewer 16 / writer 20。
+ *
+ * 为什么要迁：老安装的角色文件是**当年写出去的那一份**，ensureBuiltinRoles 只补缺、
+ * 不覆盖，所以文件里还留着这些数字。它们属于「显式声明」，会一直压过设置页的按角色
+ * 默认值——2026-11 把默认值改成 16 / 64 / 128 之后，不迁的话老用户永远用不上新默认。
+ */
+export const LEGACY_BUILTIN_MAX_TURNS: Readonly<Record<string, number>> = {
+  critic: 4,
+  reviewer: 16,
+  writer: 20,
+}
+
+/** frontmatter 边界（与 `splitFrontmatter` 同一套正则，这里要保留原文重写）。 */
+const FRONTMATTER_SPAN = /^(﻿?---\r?\n)([\s\S]*?)(\r?\n---\r?\n?)/
+
+/**
+ * 把等于旧出厂默认的 `max-turns` 一行从角色文本里删掉。
+ * @returns 改好的文本；不该动或解析不了时给 null
+ */
+function stripLegacyMaxTurns(text: string, legacy: number): string | null {
+  const match = FRONTMATTER_SPAN.exec(text)
+  if (match === null) return null
+  const prefix = match[1] ?? ''
+  const front = match[2] ?? ''
+  const suffix = match[3] ?? ''
+  let doc: Record<string, unknown>
+  try {
+    doc = (YAML.parse(front) as Record<string, unknown>) ?? {}
+  } catch {
+    return null
+  }
+  // 认 max-turns 与 maxTurns 两种写法，与 parseRoleText 保持一致
+  const raw = doc['max-turns'] ?? doc.maxTurns
+  if (raw === undefined || Number.parseInt(String(raw), 10) !== legacy) return null
+  const eol = prefix.includes('\r\n') ? '\r\n' : '\n'
+  const kept = front.split(/\r?\n/).filter((line) => !/^\s*max-?turns\s*:/i.test(line))
+  return prefix + kept.join(eol) + suffix + text.slice(match[0].length)
+}
+
+/**
+ * 迁移老安装的内置角色文件：只删「仍等于旧出厂默认」的那行 max-turns，让设置页的按角色
+ * 默认值生效；用户改过的值（不等于旧默认）一律保留。
+ *
+ * 幂等：删过一次之后文件里没有 max-turns，再跑不会命中。只碰内置角色的文件名，别的
+ * .md 一个字节都不动。任何异常都吞掉——迁移失败最多是继续用旧轮次，不能影响插件启动。
+ * @returns 实际改过的角色名（正常第二次起就是空数组）
+ */
+export function migrateBuiltinRoleMaxTurns(): string[] {
+  const migrated: string[] = []
+  for (const [name, legacy] of Object.entries(LEGACY_BUILTIN_MAX_TURNS)) {
+    const file = join(DSC_AGENTS_DIR, `${name}.md`)
+    try {
+      if (!existsSync(file)) continue
+      const text = readFileSync(file, 'utf8')
+      const next = stripLegacyMaxTurns(text, legacy)
+      if (next === null || next === text) continue
+      writeFileSync(file, next, 'utf8')
+      migrated.push(name)
+    } catch {
+      // 只读盘、权限、半截文件：迁移失败就当没发生，不影响插件启动
+    }
+  }
+  return migrated
+}
+
 /** 读一个角色文件；返回 null = 文件名不合法或读不起来。 */
 export function readRole(file: string): AgentRole | null {
   const base = basename(file, '.md')
@@ -217,6 +289,7 @@ function parseRoleText(file: string, text: string): AgentRole | null {
       model: null,
       effort: null,
       maxTurns: 0,
+      maxTurnsDeclared: false,
       approval: 'forbid',
       enabled: false,
       prompt: '',
@@ -244,9 +317,11 @@ function parseRoleText(file: string, text: string): AgentRole | null {
     else problem = problem ?? `effort 只能是 ${EFFORTS.join(' / ')}，收到 ${rawEffort}，本项退回跟随当前`
   }
 
-  // 不写或写 0 = 不限；写了就夹进 1..200，0 这个值专门留给「不限」
-  const rawTurns = Number.parseInt(String(doc['max-turns'] ?? doc.maxTurns ?? ''), 10)
-  const maxTurns = Number.isFinite(rawTurns) ? Math.min(Math.max(rawTurns, 0), 200) : 0
+  // 不写 = 没表态（回落设置页给这个角色的默认值）；写 0 = 显式不限；写了就夹进 0..200
+  const rawTurns = doc['max-turns'] ?? doc.maxTurns
+  const parsedTurns = Number.parseInt(String(rawTurns ?? ''), 10)
+  const maxTurnsDeclared = rawTurns !== undefined && Number.isFinite(parsedTurns)
+  const maxTurns = maxTurnsDeclared ? Math.min(Math.max(parsedTurns, 0), 200) : 0
 
   const rawApproval = typeof doc.approval === 'string' ? doc.approval.trim() : ''
   let approval: TeammateApproval = 'forbid'
@@ -263,6 +338,7 @@ function parseRoleText(file: string, text: string): AgentRole | null {
     model: rawModel !== '' ? rawModel : null,
     effort,
     maxTurns,
+    maxTurnsDeclared,
     approval,
     enabled: doc.enabled !== false && doc.enabled !== 'false',
     prompt: body.trim(),

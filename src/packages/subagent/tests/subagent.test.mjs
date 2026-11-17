@@ -1,12 +1,14 @@
 /**
- * @pneuma/subagent 的包级测试：钉 10 条不变量。
+ * @pneuma/subagent 的包级测试：钉住这个包自己的不变量。
  * 为什么只钉这些：入口只有插件对象，派活要会话与模型；能便宜钉住的是装配面、包形态、入口、
- * 文档、agent-roles 里那张不落盘的出厂角色表，以及 2026-11-06 并入的共享任务板
+ * 文档、agent-roles 里那张不落盘的出厂角色表、2026-11 起的轮次预算（角色文件 > 设置页按
+ * 角色 > 全局上限，以及旧安装的角色文件迁移）、模型授权（开关 + 授权清单 + spawn 的
+ * model/effort 校验与优先级），以及 2026-11-06 并入的共享任务板
  * （team_task 工具、板子提示段、设置分区里的 board 子开关）装配面。
  * @module @pneuma/subagent/tests
  */
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -60,7 +62,54 @@ function fakeContext() {
       return typeof off === 'function' ? off : () => {}
     },
     transcript: { touch: () => {} },
-    llm: {},
+    // 模型面：设置分区的授权清单读 listModels()，spawn 校验读 parseModelRef()。
+    // 路由用不到（本文件不真派活），给空实现占位。
+    llm: {
+      model: 'current-model',
+      listModels: () => [
+        {
+          value: 'alpha/m1',
+          provider: 'alpha',
+          providerDisplayName: 'Alpha',
+          model: 'm1',
+          description: 'Alpha · 32k 上下文',
+          contextWindow: 32000,
+          thinkingLevels: [],
+          modalities: ['text'],
+        },
+        {
+          value: 'alpha/m2',
+          provider: 'alpha',
+          providerDisplayName: 'Alpha',
+          model: 'm2',
+          description: 'Alpha · 64k 上下文',
+          contextWindow: 64000,
+          thinkingLevels: [],
+          modalities: ['text'],
+        },
+        {
+          value: 'beta/m3',
+          provider: 'beta',
+          providerDisplayName: 'Beta',
+          model: 'm3',
+          description: 'Beta · 128k 上下文',
+          contextWindow: 128000,
+          thinkingLevels: [],
+          modalities: ['text'],
+        },
+      ],
+      // 与真实现同口径的简化版：带已知端点前缀就切，否则整串当当前端点的模型名
+      parseModelRef: (ref) => {
+        for (const provider of ['alpha', 'beta']) {
+          if (ref.startsWith(`${provider}/`)) return { provider, model: ref.slice(provider.length + 1) }
+        }
+        return { provider: 'current', model: ref }
+      },
+      providerOf: () => 'current',
+      modelOf: () => 'current-model',
+      routeTo: () => ({}),
+      routeForSession: () => ({}),
+    },
     approval: {},
     // 队友的会话归属解析登记在 `guards` 上（P0-8 收口）：假 ctx 也要给这两个口，
     // 否则 apply 里 `ctx.guards.registerSessionResolver` 直接抛，整条装配测不起来。
@@ -75,6 +124,22 @@ function fakeContext() {
     get: () => undefined,
   }
   return { ctx, captured }
+}
+
+/** 直接把配置写进临时 DSC_HOME 的 plugins.json（模拟「重启后读盘」与设定初始开关）。 */
+function writeSubagentConfig(config) {
+  const file = join(process.env.DSC_HOME, 'plugins.json')
+  let doc = { version: 1, entries: [] }
+  try {
+    doc = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    // 还没有这份文件：从空条目树开始
+  }
+  if (!Array.isArray(doc.entries)) doc.entries = []
+  const entry = doc.entries.find((item) => item.file === 'subagent')
+  if (entry === undefined) doc.entries.push({ file: 'subagent', disabled: false, config: { ...config } })
+  else entry.config = { ...(entry.config ?? {}), ...config }
+  writeFileSync(file, JSON.stringify(doc), 'utf8')
 }
 
 // 装配行：id 或 name 写歪了，这个包就永远关不掉、也永远认不对，所以逐字比对。
@@ -178,7 +243,7 @@ test('提示段提 team_task，设置分区仍是 subagent 且带任务板分组
 
   const section = captured.sections
   assert.equal(section.id, 'subagent')
-  assert.deepEqual((section.groups ?? []).map((group) => group.id), ['board'])
+  assert.deepEqual((section.groups ?? []).map((group) => group.id), ['turns', 'models', 'board'])
   const fields = section.fields()
   const boardField = fields.find((field) => field.key === 'board')
   assert.notEqual(boardField, undefined, '缺 board 子开关')
@@ -239,6 +304,323 @@ test('subagent 工具：父会话查不到就报错，查得到就按那条会�
   ctx.agent.sessionById = (sessionId) => (sessionId === 'worker-t1' ? { meta: { id: 'worker-t1' } } : undefined)
   const listed = await tool.run({ action: 'list' }, runCtx)
   assert.match(listed, /本会话没有在队或收工的队友/, '查得到就按那条会话报名单')
+  passed += 1
+})
+
+// 出厂角色模板不再钉死轮次：默认值放设置页的 roleTurns，否则文件里的显式值会永远压过
+// 设置页——那样「默认最大轮次」这一项对内置角色就是个摆设。
+test('出厂角色模板不写 max-turns，默认轮次交给设置页的 roleTurns', () => {
+  for (const name of ['critic', 'reviewer', 'writer', 'explorer']) {
+    const role = roles.builtinRole(name)
+    assert.notEqual(role, null, `内置角色 ${name} 缺失`)
+    assert.equal(role.maxTurnsDeclared, false, `${name} 的出厂模板不该再钉 max-turns`)
+    assert.equal(role.maxTurns, 0, `${name} 未声明时解析结果应为 0（不设限）`)
+  }
+  passed += 1
+})
+
+// 三档优先级：角色文件显式 max-turns > 设置页按角色 roleTurns > 全局上限。
+// 显式写 0 也算显式（= 不限），要压过设置页；但全局设了上限仍取更严。
+test('轮次预算三档优先级：角色文件 > 设置页按角色 > 全局上限', () => {
+  const defaults = { critic: 16, reviewer: 64, writer: 128, explorer: 0 }
+  const declared = { name: 'critic', maxTurns: 9, maxTurnsDeclared: true }
+  assert.equal(mod.resolveMaxTurns(declared, defaults, 0), 9, '角色文件显式值优先')
+  assert.equal(mod.resolveMaxTurns(declared, defaults, 5), 5, '全局上限更小时取全局')
+  assert.equal(mod.resolveMaxTurns(declared, defaults, 50), 9, '全局上限更大时仍用角色值')
+
+  const inherited = { name: 'writer', maxTurns: 0, maxTurnsDeclared: false }
+  assert.equal(mod.resolveMaxTurns(inherited, defaults, 0), 128, '没写就用设置页该角色的值')
+  assert.equal(mod.resolveMaxTurns({ ...inherited, name: 'explorer' }, defaults, 0), 0, 'explorer 默认不限')
+  assert.equal(mod.resolveMaxTurns({ ...inherited, name: 'custom-role' }, defaults, 0), 0, '没配过的角色按不限')
+
+  const explicitZero = { name: 'critic', maxTurns: 0, maxTurnsDeclared: true }
+  assert.equal(mod.resolveMaxTurns(explicitZero, defaults, 0), 0, '显式写 0 = 不限，压过设置页')
+  assert.equal(mod.resolveMaxTurns(explicitZero, defaults, 30), 30, '但全局上限照旧取更严')
+  passed += 1
+})
+
+// 设置页：一个「默认最大轮次」分组，四个内置角色各一个 0..200 的数字项，
+// 默认值 critic 16 / reviewer 64 / writer 128 / explorer 0（不限）。
+test('设置分区有「默认最大轮次」分组，按角色给 0..200 的数字项与出厂默认值', () => {
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const section = captured.sections
+  const zh = JSON.parse(read('../locale/ui.zh.json'))
+  assert.deepEqual((section.groups ?? []).map((group) => group.id), ['turns', 'models', 'board'])
+  const turnsGroup = section.groups[0]
+  assert.equal(turnsGroup.title, zh['group.turns.title'], '分组标题走字典，中文原文是「默认最大轮次」')
+  assert.equal(turnsGroup.description, zh['group.turns.description'])
+
+  const fields = section.fields()
+  const byKey = new Map(fields.map((field) => [field.key, field]))
+  const values = section.values()
+  for (const [role, turns] of [['critic', 16], ['reviewer', 64], ['writer', 128], ['explorer', 0]]) {
+    const field = byKey.get(`roleTurns.${role}`)
+    assert.notEqual(field, undefined, `缺 roleTurns.${role} 数字项`)
+    assert.equal(field.type, 'number')
+    assert.equal(field.min, 0)
+    assert.equal(field.max, 200)
+    assert.equal(field.step, 1)
+    assert.equal(field.group, 'turns')
+    assert.ok(field.label.includes(role), `label 要点名角色：${field.label}`)
+    assert.equal(values[`roleTurns.${role}`], turns, `${role} 的出厂默认值`)
+  }
+  passed += 1
+})
+
+// 保存链路：点号键 roleTurns.<角色> 整块写进 plugins.json 的 subagent.config.roleTurns，
+// 改一个角色不动别的；越界或未知角色当场拒。
+test('保存 roleTurns.<角色> 落到 plugins.json，改一个不动其他', () => {
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const section = captured.sections
+  assert.equal(section.save('roleTurns.writer', 200), undefined, '保存成功应返回 void')
+  const file = join(process.env.DSC_HOME, 'plugins.json')
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  const entry = doc.entries.find((item) => item.file === 'subagent')
+  assert.notEqual(entry, undefined, 'plugins.json 里应有 subagent 条目')
+  assert.equal(entry.config.roleTurns.writer, 200)
+  assert.equal(entry.config.roleTurns.critic, 16, 'roleTurns 整块写入时其余角色保留默认值')
+  assert.equal(section.values()['roleTurns.writer'], 200, '保存后分区值立刻反映新值')
+  assert.equal(section.values()['roleTurns.critic'], 16, '改一个角色不该动其他角色')
+
+  const bad = section.save('roleTurns.critic', 999)
+  assert.equal(typeof bad, 'string', '越界值要返回失败原因')
+  assert.equal(section.values()['roleTurns.critic'], 16, '保存失败不改值')
+  assert.equal(typeof section.save('roleTurns.nobody', 5), 'string', '未知角色要拒绝')
+  passed += 1
+})
+
+// 重启后从磁盘读回：配置里缺的角色补出厂默认，不是整份丢失。
+test('从 plugins.json 读回各角色轮次，配置里缺的角色补出厂默认', () => {
+  const file = join(process.env.DSC_HOME, 'plugins.json')
+  const doc = JSON.parse(readFileSync(file, 'utf8'))
+  const entry = doc.entries.find((item) => item.file === 'subagent')
+  entry.config.roleTurns = { critic: 33, explorer: 5 }
+  writeFileSync(file, JSON.stringify(doc), 'utf8')
+
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const values = captured.sections.values()
+  assert.equal(values['roleTurns.critic'], 33, '磁盘上的值要读回')
+  assert.equal(values['roleTurns.explorer'], 5, '不限的角色也可以配上限')
+  assert.equal(values['roleTurns.writer'], 128, '配置里缺的角色补出厂默认')
+  assert.equal(values['roleTurns.reviewer'], 64, '配置里缺的角色补出厂默认')
+  passed += 1
+})
+
+// 旧安装迁移：只在 max-turns 仍等于旧出厂默认（critic 4 / reviewer 16 / writer 20）时删掉
+// 那一行；用户改过的值保留；只动内置角色的 .md；幂等。
+test('迁移旧角色文件：等于旧出厂默认的 max-turns 删掉，改过的保留且幂等', () => {
+  const dir = roles.DSC_AGENTS_DIR
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'critic.md'), '---\nname: critic\ndescription: 反驳\ntools: read\nmax-turns: 4\n---\n\n正文\n', 'utf8')
+  writeFileSync(join(dir, 'reviewer.md'), '---\nname: reviewer\nmax-turns: 16\n---\n正文\n', 'utf8')
+  writeFileSync(join(dir, 'writer.md'), '---\nname: writer\nmax-turns: 99\n---\n正文\n', 'utf8')
+  writeFileSync(join(dir, 'my-role.md'), '---\nname: my-role\nmax-turns: 4\n---\n正文\n', 'utf8')
+
+  assert.deepEqual(roles.migrateBuiltinRoleMaxTurns().sort(), ['critic', 'reviewer'], '只迁等于旧默认的内置角色')
+  const criticText = readFileSync(join(dir, 'critic.md'), 'utf8')
+  assert.equal(criticText.includes('max-turns'), false, '旧默认那一行要删掉')
+  assert.equal(criticText.includes('tools: read'), true, '其他 frontmatter 原样保留')
+  assert.equal(criticText.includes('正文'), true, '正文原样保留')
+  assert.equal(readFileSync(join(dir, 'writer.md'), 'utf8').includes('max-turns: 99'), true, '用户改过的值保留')
+  assert.equal(readFileSync(join(dir, 'my-role.md'), 'utf8').includes('max-turns: 4'), true, '非内置角色不碰')
+
+  const critic = roles.readRole(join(dir, 'critic.md'))
+  assert.equal(critic.maxTurnsDeclared, false, '迁移后不再算显式声明，回落设置页默认值')
+  assert.deepEqual(critic.tools, ['read'])
+  assert.equal(critic.prompt, '正文')
+
+  assert.deepEqual(roles.migrateBuiltinRoleMaxTurns(), [], '第二次跑不该再改任何文件')
+  passed += 1
+})
+
+// 迁移挂在 apply 上：插件一启动就把旧安装的出厂角色文件挪到「用设置页默认值」的状态。
+test('apply 启动时自动迁移旧出厂角色文件', () => {
+  writeFileSync(join(roles.DSC_AGENTS_DIR, 'critic.md'), '---\nname: critic\nmax-turns: 4\n---\n正文\n', 'utf8')
+  const { ctx } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  assert.equal(readFileSync(join(roles.DSC_AGENTS_DIR, 'critic.md'), 'utf8').includes('max-turns'), false)
+  passed += 1
+})
+
+// ── T2b：队友模型授权（开关 + 授权清单 + spawn 的 model/effort）────────────────
+
+// 配置读取：allowedModels 只收非空字符串，去重、保序；坏类型整份当没配。
+test('allowedModels 读取：去空、去重、非字符串丢弃', () => {
+  assert.deepEqual(mod.readAllowedModels(['alpha/m1', ' alpha/m1 ', '', 3, null, 'beta/m3']), ['alpha/m1', 'beta/m3'])
+  assert.deepEqual(mod.readAllowedModels('alpha/m1'), [])
+  assert.deepEqual(mod.readAllowedModels(undefined), [])
+  passed += 1
+})
+
+// 设置分区：旧的「队友默认模型」文本框撤掉，换成开关 + 按端点分组的授权模型多选。
+test('设置分区：默认模型文本框换成开关 + 授权模型分组多选', () => {
+  writeSubagentConfig({ allowModelSelection: false, allowedModels: [] })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const section = captured.sections
+  assert.deepEqual((section.groups ?? []).map((group) => group.id), ['turns', 'models', 'board'])
+  const zh = JSON.parse(read('../locale/ui.zh.json'))
+  assert.equal(section.groups[1].title, zh['group.models.title'], '分组标题走字典')
+  assert.equal(section.groups[1].description, zh['group.models.description'])
+
+  const fields = section.fields()
+  assert.equal(fields.some((field) => field.key === 'defaultModel'), false, '旧的默认模型文本框要撤掉')
+  const toggle = fields.find((field) => field.key === 'allowModelSelection')
+  assert.notEqual(toggle, undefined, '缺 allowModelSelection 开关')
+  assert.equal(toggle.type, 'switch')
+  assert.equal(toggle.group, 'models')
+  const checks = fields.find((field) => field.key === 'allowedModels')
+  assert.notEqual(checks, undefined, '缺 allowedModels 多选')
+  assert.equal(checks.type, 'checks')
+  assert.equal(checks.group, 'models')
+  assert.deepEqual(checks.groups.map((group) => group.title), ['Alpha', 'Beta'], '按端点显示名分组')
+  assert.deepEqual(checks.groups[0].options.map((option) => option.value), ['alpha/m1', 'alpha/m2'])
+  assert.equal(checks.groups[1].options[0].value, 'beta/m3')
+  assert.equal(checks.groups[1].options[0].label, 'm3', '选项标题是模型名')
+  assert.ok(checks.groups[0].options[0].detail.includes('32k'), '副说明用 listModels 的 description')
+  passed += 1
+})
+
+// 保存语义：开关开着却一个模型都没勾 = 不可保存（两个方向都拦），落盘是扁平值数组。
+test('模型授权保存：开关开但清单为空时拒绝，落盘进 plugins.json', () => {
+  writeSubagentConfig({ allowModelSelection: false, allowedModels: [] })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const section = captured.sections
+  assert.equal(section.values().allowModelSelection, false, '默认关闭')
+  assert.deepEqual(section.values().allowedModels, [], '默认一个都不授权')
+
+  assert.equal(typeof section.save('allowModelSelection', true), 'string', '没勾模型不能开启开关')
+  assert.equal(section.values().allowModelSelection, false, '保存失败不落盘')
+
+  assert.equal(section.save('allowedModels', ['alpha/m1', 'beta/m3']), undefined)
+  assert.deepEqual(section.values().allowedModels, ['alpha/m1', 'beta/m3'])
+  assert.equal(section.save('allowModelSelection', true), undefined)
+  assert.equal(section.values().allowModelSelection, true)
+
+  assert.equal(typeof section.save('allowedModels', []), 'string', '开关开着时不能清空清单')
+  assert.deepEqual(section.values().allowedModels, ['alpha/m1', 'beta/m3'], '拒绝后原值不动')
+
+  const doc = JSON.parse(readFileSync(join(process.env.DSC_HOME, 'plugins.json'), 'utf8'))
+  const entry = doc.entries.find((item) => item.file === 'subagent')
+  assert.equal(entry.config.allowModelSelection, true)
+  assert.deepEqual(entry.config.allowedModels, ['alpha/m1', 'beta/m3'])
+  passed += 1
+})
+
+// spawn 覆盖值校验：开关、授权清单、effort 取值，全是纯函数，好钉。
+test('spawn 覆盖值校验：开关关闭/不在清单/清单为空都拒，命中则归一成 provider/model', () => {
+  const parse = (ref) => {
+    for (const provider of ['alpha', 'beta']) {
+      if (ref.startsWith(`${provider}/`)) return { provider, model: ref.slice(provider.length + 1) }
+    }
+    return { provider: 'current', model: ref }
+  }
+  const off = mod.resolveSpawnOverrides('alpha/m1', undefined, { allow: false, allowed: ['alpha/m1'] }, parse)
+  assert.equal(off.ok, false, '开关关闭时带 model 必须拒')
+  assert.match(off.reason, /允许 Agent 为子队友选择模型/, '要告诉模型去设置里打开')
+
+  const denied = mod.resolveSpawnOverrides('alpha/m2', undefined, { allow: true, allowed: ['alpha/m1'] }, parse)
+  assert.equal(denied.ok, false)
+  assert.match(denied.reason, /不在用户授权的清单里/)
+  assert.ok(denied.reason.includes('alpha/m1'), '拒绝时要列出可选项')
+
+  assert.deepEqual(
+    mod.resolveSpawnOverrides('alpha/m1', 'high', { allow: true, allowed: ['alpha/m1'] }, parse),
+    { ok: true, model: 'alpha/m1', effort: 'high' },
+    '命中清单：归一成 provider/model',
+  )
+  assert.deepEqual(
+    mod.resolveSpawnOverrides('m1', undefined, { allow: true, allowed: ['current/m1'] }, parse),
+    { ok: true, model: 'current/m1', effort: null },
+    '裸模型名补当前端点前缀再比对',
+  )
+
+  const none = mod.resolveSpawnOverrides('alpha/m1', undefined, { allow: true, allowed: [] }, parse)
+  assert.equal(none.ok, false)
+  assert.match(none.reason, /一个都没授权/)
+
+  const badEffort = mod.resolveSpawnOverrides(undefined, 'maxx', { allow: false, allowed: [] }, parse)
+  assert.equal(badEffort.ok, false)
+  assert.match(badEffort.reason, /不认识的 effort/)
+
+  assert.deepEqual(
+    mod.resolveSpawnOverrides(undefined, undefined, { allow: false, allowed: [] }, parse),
+    { ok: true, model: null, effort: null },
+    '不传 = 不覆盖',
+  )
+  passed += 1
+})
+
+// 优先级：spawn 显式 > 角色文件 > 旧配置 defaultModel > 跟随会话；effort 没有旧配置那一档。
+test('模型/思考强度优先级：spawn > 角色文件 > 旧 defaultModel > 跟随会话', () => {
+  const role = { model: 'alpha/role', effort: 'low' }
+  assert.equal(mod.resolveTeammateModel('beta/spawn', role, 'current/old'), 'beta/spawn')
+  assert.equal(mod.resolveTeammateModel(null, role, 'current/old'), 'alpha/role')
+  assert.equal(mod.resolveTeammateModel(null, { model: null }, 'current/old'), 'current/old', '旧配置做兼容兜底')
+  assert.equal(mod.resolveTeammateModel(null, { model: null }, ''), null, '都没有 = 跟随当前会话')
+  assert.equal(mod.resolveTeammateEffort('high', role), 'high')
+  assert.equal(mod.resolveTeammateEffort(null, role), 'low')
+  assert.equal(mod.resolveTeammateEffort(null, { effort: null }), null)
+  passed += 1
+})
+
+// 工具面：schema 上有 model/effort，开关关闭时真调 spawn 会被明确拒绝（不会真派出去）。
+test('spawn 工具带 model/effort 参数，开关关闭时带 model 被拒', async () => {
+  writeSubagentConfig({ allowModelSelection: false, allowedModels: [] })
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')
+  assert.notEqual(tool, undefined)
+  assert.equal(tool.parameters.properties.model.type, 'string')
+  assert.deepEqual(tool.parameters.properties.effort.enum, ['default', 'off', 'low', 'high', 'max'])
+  assert.ok(tool.description.includes('允许 Agent 为子队友选择模型'), '工具描述要点出这个开关')
+
+  ctx.agent.sessionById = (sessionId) => ({ meta: { id: sessionId } })
+  const runCtx = {
+    cwd: process.cwd(),
+    sessionId: 't2b-session',
+    sessionPath: join(home, 't2b-session.jsonl'),
+    signal: new AbortController().signal,
+  }
+  const out = await tool.run({ action: 'spawn', role: 'writer', task: '把 x 改成 y，并补一条测试', model: 'alpha/m1' }, runCtx)
+  assert.match(out, /允许 Agent 为子队友选择模型/, '开关关闭时给出明确拒绝原因')
+  passed += 1
+})
+
+// 提示词：开着时名册提示写出授权清单（且只写清单内的），关着时明说不能指定。
+test('提示词：授权清单只写清单内的模型，关闭时明说不能指定', () => {
+  writeSubagentConfig({ allowModelSelection: true, allowedModels: ['alpha/m1'] })
+  let { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  let prompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
+  assert.ok(prompt.includes('alpha/m1'), '授权清单要写进名册提示')
+  assert.ok(prompt.includes('只影响之后新建的队友'))
+  assert.equal(prompt.includes('alpha/m2'), false, '未授权的模型不该出现在提示里')
+  assert.equal(prompt.includes('beta/m3'), false, '未授权的端点也不该出现')
+
+  writeSubagentConfig({ allowModelSelection: false })
+  ;({ ctx, captured } = fakeContext())
+  mod.subagentPlugin.apply(ctx)
+  prompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
+  assert.ok(prompt.includes('不能指定模型'), '关闭时要明说不能指定')
+  passed += 1
+})
+
+// 队友系统提示的模型句：冻结值与「仅影响新队友」；授权清单不往队友提示里写。
+test('队友系统提示的模型句：写冻结值与仅影响新队友，不列授权清单', () => {
+  const text = mod.teammateModelNote('alpha/m1', 'high', true)
+  assert.ok(text.includes('alpha/m1'))
+  assert.ok(text.includes('high'))
+  assert.ok(text.includes('只影响之后新建的队友'))
+  assert.ok(text.includes('只能从用户授权的模型清单里挑'))
+
+  const following = mod.teammateModelNote('current-model', null, false)
+  assert.ok(following.includes('思考强度跟随默认'))
+  assert.ok(following.includes('不能指定模型'))
   passed += 1
 })
 

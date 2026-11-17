@@ -30,6 +30,7 @@ import {
   ensureBuiltinRoles,
   findRole,
   listRoles,
+  migrateBuiltinRoleMaxTurns,
   writeRole,
   type AgentRole,
   type TeammateApproval,
@@ -54,7 +55,16 @@ import {
   TEAMMATE_REPORT_OPEN,
   type BoardAction,
 } from '@pneuma/runtime/core/team-board.js'
-import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TeamBoardView, TranscriptEntry } from '@pneuma/runtime/contract.js'
+import type {
+  EffortLevel,
+  SettingsCheckGroup,
+  SettingsCheckOption,
+  SettingsField,
+  SettingsValue,
+  TeammateView,
+  TeamBoardView,
+  TranscriptEntry,
+} from '@pneuma/runtime/contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
@@ -78,15 +88,38 @@ interface SubagentConfig {
   approval: TeammateApproval
   /** 后台队友干完：auto = 立刻把汇报接进 Lead 的下一轮；quiet = 只写进会话等用户下次说话。 */
   notify: 'auto' | 'quiet'
-  /** 新队友默认模型（`端点/模型`）；空 = 跟随当前模型。角色文件里的 model 优先。 */
+  /**
+   * 新队友的默认模型（`端点/模型`）；空 = 跟随当前模型。
+   *
+   * @deprecated 设置页已不再展示这一项，改成「允许 Agent 为子队友选择模型」+ 授权模型清单。
+   * 仍按旧配置读取，作为「spawn 显式 > 角色文件 model」之后、跟随会话之前的兜底，老安装
+   * 不会因为升级丢掉模型设置。
+   */
   defaultModel: string
+  /**
+   * 允许 Agent 派活时给新队友指定模型与思考强度。
+   *
+   * 关闭（默认）时 spawn 带 `model` 会被拒绝；开启后 `model` 只能从
+   * {@link SubagentConfig.allowedModels} 里挑——用户授权的清单是唯一入口。
+   */
+  allowModelSelection: boolean
+  /** 授权给 Agent 挑选的模型清单（`端点/模型`）；空数组 = 一个都没授权。 */
+  allowedModels: string[]
   /**
    * 轮次上限：0 = 不限，队友自己决定跑几轮。
    *
-   * 设了就与角色文件的 max-turns 取更严的那个（角色写 0 也当不限）。设限后最后一轮
+   * 设了就与角色自己的预算取更严的那个（角色文件显式 max-turns 优先，其次看
+   * {@link SubagentConfig.roleTurns}；角色写 0 也当不限）。设限后最后一轮
    * 留给汇报：先提醒它交结论，再把工具表收成空，逼它用正文收尾。
    */
   maxTurns: number
+  /**
+   * 各角色自己的默认轮次预算：`角色名 → 轮数`，0 = 不限。
+   *
+   * 角色文件里没写 `max-turns` 时用它；设置页「默认最大轮次」按角色改的就是这一份。
+   * 出厂值见 {@link DEFAULT_ROLE_TURNS}。
+   */
+  roleTurns: Record<string, number>
   /**
    * 共享任务板：true = 注册 `team_task` 并注入板子提示段。
    *
@@ -98,6 +131,23 @@ interface SubagentConfig {
 
 const CONFIG_KEY = 'subagent'
 
+/**
+ * 内置角色的出厂轮次预算（设置页「默认最大轮次」的默认值；0 = 不限）。
+ *
+ * 为什么默认值不写在角色文件的 `max-turns` 里：文件里的值属于「显式声明」，会一直压过
+ * 设置页；默认值放这里，用户改设置页才真的生效。旧安装里钉着旧默认值的角色文件由
+ * `migrateBuiltinRoleMaxTurns` 迁移。
+ */
+export const DEFAULT_ROLE_TURNS: Readonly<Record<string, number>> = {
+  critic: 16,
+  reviewer: 64,
+  writer: 128,
+  explorer: 0,
+}
+
+/** 设置页「默认最大轮次」列出的角色：先列有上限的，不限的那个垫底。 */
+const TURN_ROLES: readonly string[] = ['critic', 'reviewer', 'writer', 'explorer']
+
 const DEFAULTS: SubagentConfig = {
   allowDelegation: true,
   maxTeammates: 4,
@@ -105,7 +155,10 @@ const DEFAULTS: SubagentConfig = {
   approval: 'forbid',
   notify: 'auto',
   defaultModel: '',
+  allowModelSelection: false,
+  allowedModels: [],
   maxTurns: 0,
+  roleTurns: { ...DEFAULT_ROLE_TURNS },
   board: true,
 }
 
@@ -122,6 +175,172 @@ function effectiveMaxTurns(roleTurns: number, pluginTurns: number): number {
   if (roleTurns <= 0) return Math.max(pluginTurns, 0)
   if (pluginTurns <= 0) return roleTurns
   return Math.min(roleTurns, pluginTurns)
+}
+
+/**
+ * 一个角色此刻的轮次预算，三档优先级：
+ *   1. 角色文件里**显式**写了 `max-turns`（写 0 也算显式，表示不限）→ 用文件里的；
+ *   2. 没写 → 用设置页「默认最大轮次」里这个角色的值（{@link SubagentConfig.roleTurns}）；
+ *   3. 全局 {@link SubagentConfig.maxTurns} 大于 0 时，再取更严的那个。
+ *
+ * 名册提示与队友冻结的工牌都走这一个函数，保证「展示的轮次」就是「实际给的轮次」。
+ * @param role - 角色（只用到名字、max-turns 与是否显式声明）
+ * @param roleTurns - 设置页按角色配的轮次表
+ * @param globalTurns - 全局轮次上限（0 = 不设限）
+ * @returns 0 = 这个角色不额外设限
+ */
+export function resolveMaxTurns(
+  role: Pick<AgentRole, 'name' | 'maxTurns' | 'maxTurnsDeclared'>,
+  roleTurns: Readonly<Record<string, number>>,
+  globalTurns: number,
+): number {
+  const budget = role.maxTurnsDeclared ? role.maxTurns : (roleTurns[role.name] ?? 0)
+  return effectiveMaxTurns(budget, globalTurns)
+}
+
+/**
+ * 读配置里的 `roleTurns`：出厂默认打底，只认数字（夹进 0..200），坏值退回该角色的默认值。
+ * 配置里没有的角色（包括用户自建角色）不写进表，解析时按 0（不限）处理。
+ */
+function readRoleTurns(raw: unknown): Record<string, number> {
+  const source = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const out: Record<string, number> = { ...DEFAULT_ROLE_TURNS }
+  for (const [name, value] of Object.entries(source)) {
+    if (name === '') continue
+    out[name] = clamp(value, 0, 200, DEFAULT_ROLE_TURNS[name] ?? 0)
+  }
+  return out
+}
+
+/** 思考强度档位（与角色文件 frontmatter、主会话 /model 的档位同一套）。 */
+const EFFORT_LEVELS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
+
+/**
+ * 读配置里的 `allowedModels`：只收非空字符串、去重、保持原顺序。
+ *
+ * 这里不拿 `ctx.llm.listModels()` 过滤：模型清单跟着端点配置变，用户临时删掉一个端点
+ * 不该把他勾过的授权静默清空；真到派活时那个模型解析不出来，会被校验拦下。
+ */
+export function readAllowedModels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const value = item.trim()
+    if (value !== '' && !out.includes(value)) out.push(value)
+  }
+  return out
+}
+
+/**
+ * 队友用哪个模型：spawn 显式指定 > 角色文件 model > 旧配置 defaultModel > 跟随当前会话。
+ * @param spawnModel - spawn 参数里归一好的 `端点/模型`；null = 没指定
+ * @param role - 角色（读它的 model）
+ * @param fallbackModel - 旧配置 defaultModel；空串 = 没配
+ * @returns null = 跟随当前会话的模型
+ */
+export function resolveTeammateModel(
+  spawnModel: string | null,
+  role: Pick<AgentRole, 'model'>,
+  fallbackModel: string,
+): string | null {
+  if (spawnModel !== null) return spawnModel
+  if (role.model !== null) return role.model
+  return fallbackModel === '' ? null : fallbackModel
+}
+
+/**
+ * 队友用哪个思考强度：spawn 显式指定 > 角色文件 effort > 跟随模型默认。
+ * @returns null = 不覆盖，按模型默认档位
+ */
+export function resolveTeammateEffort(
+  spawnEffort: EffortLevel | null,
+  role: Pick<AgentRole, 'effort'>,
+): EffortLevel | null {
+  return spawnEffort ?? role.effort
+}
+
+/**
+ * 队友系统提示里的「模型 / 思考强度」事实句。
+ *
+ * 只写它自己冻结的那一份与「仅影响新队友」的语义，**不列授权清单**：清单是派活方做
+ * 合法选择要用的信息（写在名册提示里），对已经开工的队友来说既用不上，也不该被它拿去
+ * 推断用户还有哪些模型没授权。
+ * @param model - 冻结的模型（`端点/模型`，或跟随会话时的模型名）
+ * @param effort - 冻结的思考强度；null = 跟随默认
+ * @param selectionAllowed - 本会话是否放开了「允许 Agent 为子队友选择模型」
+ */
+export function teammateModelNote(model: string, effort: EffortLevel | null, selectionAllowed: boolean): string {
+  const frozen = effort === null ? '，思考强度跟随默认' : `，思考强度 ${effort}`
+  const future = selectionAllowed
+    ? '如果你还能往下派（层级允许），派新队友时可以用 model / effort 指定模型与思考强度，但只能从用户授权的模型清单里挑——不在清单里会被直接拒绝，别反复试。'
+    : '这个会话里派活的人不能指定模型。'
+  return `模型：你开工时冻结为「${model}」${frozen}。这是派你的人在你开工那一刻定的：中途改角色文件或设置只影响之后新建的队友，改不了你这一份。${future}`
+}
+
+/** spawn 的 model / effort 校验结果：通过时给出要冻结进工牌的覆盖值。 */
+export type SpawnOverrides =
+  | { ok: true; model: string | null; effort: EffortLevel | null }
+  | { ok: false; reason: string }
+
+/**
+ * 校验并归一 spawn 的 `model` / `effort`。
+ *
+ * 规则（与设置页的开关、授权清单同一条口径）：
+ *   - `model` 在开关关闭时一律拒绝（明确告诉模型去设置里打开）；
+ *   - 开关打开时，用 `parseModelRef` 归一成 `端点/模型`，必须落在授权清单里；
+ *     清单为空 = 一个都没授权，同样拒绝并提示去勾选；
+ *   - `effort` 只认 {@link EFFORT_LEVELS} 里的值，与开关无关（它不涉及选端点/模型）。
+ *
+ * @param rawModel - spawn 参数 `model` 原值
+ * @param rawEffort - spawn 参数 `effort` 原值
+ * @param selection - 开关与授权清单
+ * @param parseModelRef - 归一模型引用（`ctx.llm.parseModelRef`）
+ */
+export function resolveSpawnOverrides(
+  rawModel: unknown,
+  rawEffort: unknown,
+  selection: { allow: boolean; allowed: readonly string[] },
+  parseModelRef: (ref: string) => { provider: string; model: string },
+): SpawnOverrides {
+  let model: string | null = null
+  const modelText = typeof rawModel === 'string' ? rawModel.trim() : ''
+  if (modelText !== '') {
+    if (!selection.allow) {
+      return {
+        ok: false,
+        reason:
+          '不能指定模型：用户还没打开「允许 Agent 为子队友选择模型」' +
+          '（设置 → 子智能体 → 队友模型）。不带 model 再派一次，它会跟随角色文件或当前会话的模型。',
+      }
+    }
+    const parsed = parseModelRef(modelText)
+    // 归一成清单里的形状：`端点/模型`（parseModelRef 对裸模型名会补上当前会话的端点）
+    const value = parsed.model === '' ? parsed.provider : `${parsed.provider}/${parsed.model}`
+    if (!selection.allowed.includes(value)) {
+      const allowed = selection.allowed.join('、')
+      return {
+        ok: false,
+        reason:
+          `模型「${value}」不在用户授权的清单里。` +
+          (allowed === '' ? '现在一个都没授权：去设置 → 子智能体 → 队友模型 里勾选。' : `可选的：${allowed}`),
+      }
+    }
+    model = value
+  }
+
+  let effort: EffortLevel | null = null
+  const effortText = typeof rawEffort === 'string' ? rawEffort.trim() : ''
+  if (effortText !== '') {
+    if (!EFFORT_LEVELS.includes(effortText as EffortLevel)) {
+      return {
+        ok: false,
+        reason: `不认识的 effort「${effortText}」。要用的值：${EFFORT_LEVELS.join(' / ')}`,
+      }
+    }
+    effort = effortText as EffortLevel
+  }
+  return { ok: true, model, effort }
 }
 
 /** 主会话这一方在任务板上的名字。 */
@@ -302,6 +521,10 @@ export const subagentPlugin: Plugin.Object = {
   inject: ['session', 'tools', 'llm', 'approval', 'guards', 'transcript', 'prompt', 'settings', 'agent'],
   apply(ctx, passed) {
     ensureBuiltinRoles()
+    // 旧安装的角色文件里钉着旧出厂轮次（critic 4 / reviewer 16 / writer 20）：删掉这几行，
+    // 让设置页的按角色默认值生效。只补缺、不覆盖的 ensureBuiltinRoles 管不到这一步。
+    // 幂等，且函数内部吞掉所有异常——迁移失败最多沿用旧轮次，不能影响启动。
+    migrateBuiltinRoleMaxTurns()
 
     // ── 配置 ────────────────────────────────────────────────────────────────
     const readConfig = (): SubagentConfig => {
@@ -316,7 +539,10 @@ export const subagentPlugin: Plugin.Object = {
         approval,
         notify: raw.notify === 'quiet' ? 'quiet' : 'auto',
         defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : '',
+        allowModelSelection: raw.allowModelSelection === true || raw.allowModelSelection === 'true',
+        allowedModels: readAllowedModels(raw.allowedModels),
         maxTurns: clamp(raw.maxTurns, 0, 200, DEFAULTS.maxTurns),
+        roleTurns: readRoleTurns(raw.roleTurns),
         board: raw.board !== false && raw.board !== 'false',
       }
     }
@@ -324,6 +550,26 @@ export const subagentPlugin: Plugin.Object = {
     const applyConfig = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
       config = readConfig()
+    }
+
+    /** 角色此刻的轮次预算：名册提示与开工冻结的工牌共用这一个（见 {@link resolveMaxTurns}）。 */
+    const roleMaxTurns = (role: AgentRole): number => resolveMaxTurns(role, config.roleTurns, config.maxTurns)
+
+    /**
+     * 派活方（Lead 或还能往下派的队友）看到的模型授权说明。
+     *
+     * 授权清单本身就是它做合法 spawn 调用要用的信息，所以这里完整列出；开关关闭时明确说
+     * 不能指定，免得模型反复试错。清单外的端点/模型细节（还有哪些模型没授权）不提。
+     */
+    const modelRuleText = (): string => {
+      if (!config.allowModelSelection) {
+        return '模型：派活时不能指定模型或思考强度；队友用角色文件里的 model / effort，没写就跟随当前会话。'
+      }
+      const list =
+        config.allowedModels.length === 0
+          ? '（还没有授权任何模型，先去设置 → 子智能体 → 队友模型 里勾选）'
+          : config.allowedModels.join('、')
+      return `模型：spawn 时可以用 model 指定模型、用 effort 指定思考强度（${EFFORT_LEVELS.join('/')}）。模型只能从用户授权的清单里挑：${list}。只影响之后新建的队友，正在跑的改不了。`
     }
 
     // ── 名册持久化 ──────────────────────────────────────────────────────────
@@ -676,6 +922,10 @@ export const subagentPlugin: Plugin.Object = {
       parentSession: Session
       /** 不填 = 寻常队友（收工后还能传话接着干）。 */
       mode?: TeammateMode
+      /** spawn 显式指定的模型（已归一成 `端点/模型`）；不填看角色文件与旧配置兜底。 */
+      model?: string | null
+      /** spawn 显式指定的思考强度；不填看角色文件。 */
+      effort?: EffortLevel | null
     }): Teammate {
       const cwd = input.parentSession.meta.cwd
       const file = join(teammateRoot(), cwdSlug(cwd), `${randomUUID()}.jsonl`)
@@ -690,8 +940,9 @@ export const subagentPlugin: Plugin.Object = {
         session = Session.load(file, true)
       }
 
-      const model = input.role.model ?? (config.defaultModel === '' ? null : config.defaultModel)
-      const effort = input.role.effort
+      // 优先级：spawn 显式 > 角色文件 > 旧配置 defaultModel（兼容兜底）> 跟随当前会话
+      const model = resolveTeammateModel(input.model ?? null, input.role, config.defaultModel)
+      const effort = resolveTeammateEffort(input.effort ?? null, input.role)
       const teammate: Teammate = {
         name: input.name,
         role: input.role.name,
@@ -699,8 +950,8 @@ export const subagentPlugin: Plugin.Object = {
         // 工牌在此刻冻结：此后改角色文件不影响它
         badge: {
           tools: input.role.tools,
-          // 角色文件与插件设置都设了上限时取更严的；两边都 0 才是真的不设限
-          maxTurns: effectiveMaxTurns(input.role.maxTurns, config.maxTurns),
+          // 角色文件显式 max-turns > 设置页按角色默认值 > 全局上限（取更严），见 resolveMaxTurns
+          maxTurns: roleMaxTurns(input.role),
           approval: input.role.approval,
           model,
           effort,
@@ -730,11 +981,23 @@ export const subagentPlugin: Plugin.Object = {
       teammate.agent = new MiniAgent(
         {
           route: () => {
-            if (teammate.badge.model === null) return ctx.llm.routeForSession(teammate.parentSession)
-            const at = teammate.badge.model.indexOf('/')
-            const provider = at > 0 ? teammate.badge.model.slice(0, at) : teammate.badge.model
-            const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''
-            return ctx.llm.routeTo(provider, modelId, teammate.badge.effort ?? 'default')
+            // 模型：显式指定优先；否则跟着父会话的端点/模型走。
+            // 思考强度要单独覆盖：即使模型跟随会话，spawn/角色文件给的 effort 也得生效，
+            // 所以这里用 routeTo（不改当前选择）而不是直接 routeForSession。
+            if (teammate.badge.model !== null) {
+              const at = teammate.badge.model.indexOf('/')
+              const provider = at > 0 ? teammate.badge.model.slice(0, at) : teammate.badge.model
+              const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''
+              return ctx.llm.routeTo(provider, modelId, teammate.badge.effort ?? 'default')
+            }
+            if (teammate.badge.effort !== null) {
+              return ctx.llm.routeTo(
+                ctx.llm.providerOf(teammate.parentSession),
+                ctx.llm.modelOf(teammate.parentSession),
+                teammate.badge.effort,
+              )
+            }
+            return ctx.llm.routeForSession(teammate.parentSession)
           },
           // 子代理的 deps 没有 rewrite（主会话的 env-facts 投影对子代理不生效），
           // 又没有尾部快照那条路，所以环境/模型事实直接写进它自己的系统提示词。
@@ -751,6 +1014,7 @@ ${
               ? `你最多能发 ${teammate.badge.maxTurns} 次模型请求，用完会被自动收手，请把力气花在关键处；最后一轮不再给你工具，那轮直接交结论。`
               : '轮次不设上限，但每轮都要往结论推进，别在同一个问题上打转。'
           }
+${teammateModelNote(teammate.badge.model ?? ctx.llm.model, teammate.badge.effort, config.allowModelSelection)}
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`
@@ -1271,6 +1535,15 @@ ${body}
       }
       const task = String(args.task ?? '').trim()
       if (task.length < 8) return '任务描述太短：队友看不到你和用户的对话，请把背景、目标、交付格式写清楚'
+      // 模型/思考强度覆盖：开关关闭时带 model 直接拒；开启时只能在用户授权的清单里挑。
+      // 归一结果在工牌冻结那一刻生效（见 startTeammate），只影响这个新队友。
+      const overrides = resolveSpawnOverrides(
+        args.model,
+        args.effort,
+        { allow: config.allowModelSelection, allowed: config.allowedModels },
+        (ref) => ctx.llm.parseModelRef(ref),
+      )
+      if (!overrides.ok) return overrides.reason
       const working = busyFor(currentId)
       if (working.length >= config.maxTeammates) {
         return `本会话正在干活的队友已到上限 ${config.maxTeammates} 个（${working.map((entry) => entry.name).join('、')}）。等一个收工，或去设置「子智能体」里提高上限`
@@ -1319,6 +1592,8 @@ ${body}
         seed,
         parentSession: parent,
         mode,
+        model: overrides.model,
+        effort: overrides.effort,
       })
 
       if (!background) {
@@ -1351,7 +1626,8 @@ ${body}
         '把一件可以独立完成的活派给一个有明确授权的队友（角色见 ~/.dsc/agents），或者给在队队友传话、打断它。' +
         'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。' +
         'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。' +
-        'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。',
+        'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。' +
+        'spawn 时可以带 model / effort 给新队友指定模型与思考强度，但只有用户打开「允许 Agent 为子队友选择模型」后才可用，且模型只能挑授权清单里的；这些只影响新队友。',
       parameters: {
         type: 'object',
         properties: {
@@ -1362,6 +1638,8 @@ ${body}
           context: { type: 'string', enum: ['fresh', 'fork'], description: 'fresh = 只知道这条任务；fork = 额外带上父会话到上一个完整回合为止的内容' },
           background: { type: 'boolean', description: 'true = 后台干（推荐，可并行多个）；false = 这一轮等它结果' },
           keep: { type: 'boolean', description: 'spawn 可选：false = 一次性的，干完就结束、不再接传话（只留一条运行记录）；不填 = 寻常队友，收工后传话还能接着干' },
+          model: { type: 'string', description: 'spawn 可选：队友模型，写「端点/模型」（或模型名）。只能在设置 → 子智能体 → 队友模型 授权的清单里挑；开关没开时不许带。只影响这个新队友' },
+          effort: { type: 'string', enum: [...EFFORT_LEVELS], description: 'spawn 可选：思考强度；不填用角色文件的 effort，再否则跟随默认' },
           text: { type: 'string', description: 'message 必填：要传的话' },
         },
         required: ['action'],
@@ -1531,25 +1809,30 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
             const roles = listRoles().filter((role) => role.enabled)
             const lines = roles.map((role) => {
               const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
-              const turns = effectiveMaxTurns(role.maxTurns, config.maxTurns)
+              const turns = roleMaxTurns(role)
               return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，${turns === 0 ? '轮次不限' : `最多 ${turns} 轮`}）`
             })
             // 板子与派活是同一层的协作：分开成两个包时，子智能体提示里不提板子，
             // 模型就永远不会用 team_task（旧决策见 docs/development-log.md:848）；
             // 现在同一包里，必须提一句，否则板子等于没有。
-            const boardRule = config.board
-              ? '\n5. 多人协作还有一块共享任务板：用 team_task 登记、认领、结项，队友看到的是同一块板；改状态要带 expected_revision。'
-              : ''
+            // 规则用数组拼：板子与模型说明各自可选，编号才不会跳号或重号。
+            const rules = [
+              '队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。',
+              `本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。`,
+              '只读角色改不了文件；要落地代码用 writer 或者你自己动手。',
+              '派完活自己接着干别的，别闲着等。',
+              ...(config.board
+                ? ['多人协作还有一块共享任务板：用 team_task 登记、认领、结项，队友看到的是同一块板；改状态要带 expected_revision。']
+                : []),
+              modelRuleText(),
+            ]
             return `# 子智能体
 你可以用 subagent 工具把能独立完成的活派给队友。
 可用角色（文件在 ${DSC_AGENTS_DIR}，用户可以自己加）：
 ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能体」里打开或新建）'}
 
 派活的规矩：
-1. 队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。
-2. 本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
-3. 只读角色改不了文件；要落地代码用 writer 或者你自己动手。
-4. 派完活自己接着干别的，别闲着等。${boardRule}`
+${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
           }), 'subagent: prompt.register'),
         )
       }
@@ -1561,6 +1844,23 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
     syncTools()
 
     // ── 设置分区 ────────────────────────────────────────────────────────────
+    /**
+     * 授权模型多选清单：按端点显示名分组，值用 `端点/模型`（与 `listModels()` 一致）。
+     *
+     * 只列当前配置里存在的模型；已存但端点/模型被删掉的授权仍留在配置里（见
+     * {@link readAllowedModels}），恢复端点后自动回到清单里，不用重新勾。
+     */
+    const modelCheckGroups = (): SettingsCheckGroup[] => {
+      const groups = new Map<string, SettingsCheckOption[]>()
+      for (const choice of ctx.llm.listModels()) {
+        const title = choice.providerDisplayName === '' ? choice.provider : choice.providerDisplayName
+        const options = groups.get(title) ?? []
+        options.push({ value: choice.value, label: choice.model, detail: choice.description })
+        groups.set(title, options)
+      }
+      return [...groups].map(([title, options]) => ({ title, options }))
+    }
+
     const fields = (): SettingsField[] => [
       {
         type: 'switch',
@@ -1579,6 +1879,17 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
         step: 1,
         help: t('field.maxTurns.help'),
       },
+      // ── 默认最大轮次（按角色；角色文件里显式写了 max-turns 的以文件为准）────
+      ...TURN_ROLES.map((role) => ({
+        type: 'number' as const,
+        key: `roleTurns.${role}`,
+        label: t('field.roleTurns.label', { role }),
+        min: 0,
+        max: 200,
+        step: 1,
+        help: t('field.roleTurns.help'),
+        group: 'turns',
+      })),
       {
         type: 'select',
         key: 'approval',
@@ -1599,7 +1910,22 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           { value: 'quiet', label: t('option.notify.quiet') },
         ],
       },
-      { type: 'text', key: 'defaultModel', label: t('field.defaultModel.label'), placeholder: t('field.defaultModel.placeholder'), help: t('field.defaultModel.help') },
+      // ── 队友模型：允许 Agent 指定 + 授权清单 ──────────────────────────────
+      {
+        type: 'switch',
+        key: 'allowModelSelection',
+        label: t('field.allowModelSelection.label'),
+        help: t('field.allowModelSelection.help'),
+        group: 'models',
+      },
+      {
+        type: 'checks',
+        key: 'allowedModels',
+        label: t('field.allowedModels.label'),
+        groups: modelCheckGroups(),
+        help: t('field.allowedModels.help'),
+        group: 'models',
+      },
       { type: 'info', label: t('field.rolesDir.label'), text: DSC_AGENTS_DIR, mono: true, copyable: true, help: t('field.rolesDir.help', { names: builtinRoleNames().join(t('field.rolesDir.separator')) }) },
       { type: 'button', action: 'new-role', label: t('field.newRole.label'), style: 'ghost', help: t('field.newRole.help') },
       // ── 任务板（原「共享任务板」插件的设置，并进同一分区）───────────────
@@ -1619,20 +1945,43 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       title: t('section.title'),
       subtitle: t('section.subtitle'),
       order: 40,
-      groups: [{ id: 'board', title: t('group.board.title'), description: t('group.board.description') }],
+      groups: [
+        { id: 'turns', title: t('group.turns.title'), description: t('group.turns.description') },
+        { id: 'models', title: t('group.models.title'), description: t('group.models.description') },
+        { id: 'board', title: t('group.board.title'), description: t('group.board.description') },
+      ],
       fields,
-      values: (): Record<string, SettingsValue> => ({
-        allowDelegation: config.allowDelegation,
-        maxTeammates: config.maxTeammates,
-        maxDepth: config.maxDepth,
-        maxTurns: config.maxTurns,
-        approval: config.approval,
-        notify: config.notify,
-        defaultModel: config.defaultModel,
-        board: config.board,
-      }),
+      values: (): Record<string, SettingsValue> => {
+        const values: Record<string, SettingsValue> = {
+          allowDelegation: config.allowDelegation,
+          maxTeammates: config.maxTeammates,
+          maxDepth: config.maxDepth,
+          maxTurns: config.maxTurns,
+          approval: config.approval,
+          notify: config.notify,
+          allowModelSelection: config.allowModelSelection,
+          allowedModels: [...config.allowedModels],
+          board: config.board,
+        }
+        for (const role of TURN_ROLES) {
+          values[`roleTurns.${role}`] = config.roleTurns[role] ?? DEFAULT_ROLE_TURNS[role] ?? 0
+        }
+        return values
+      },
       // 契约：save 返回字符串 = 失败原因；action 返回字符串 = 完成后的提示文案，失败直接抛
       save: (key, value): string | void => {
+        // 按角色轮次是一组带点号的平铺键（`roleTurns.<角色>`），整块对象写进 config.roleTurns
+        if (key.startsWith('roleTurns.')) {
+          const role = key.slice('roleTurns.'.length)
+          if (!TURN_ROLES.includes(role)) return t('save.unknownKey', { key })
+          const turns = Number(value)
+          if (!Number.isFinite(turns) || turns < 0 || turns > 200) {
+            return t('save.badTurns', { value: String(value) })
+          }
+          // writePluginConfig 是顶层键浅合并：roleTurns 按对象整块写，别的角色不会丢
+          applyConfig({ roleTurns: { ...config.roleTurns, [role]: Math.round(turns) } })
+          return
+        }
         switch (key) {
           case 'allowDelegation':
             applyConfig({ allowDelegation: value === true || value === 'true' })
@@ -1657,12 +2006,17 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           case 'notify':
             applyConfig({ notify: String(value) === 'quiet' ? 'quiet' : 'auto' })
             break
-          case 'defaultModel': {
-            const text = String(value).trim()
-            if (text !== '' && !text.includes('/')) {
-              return t('save.badModelFormat')
-            }
-            applyConfig({ defaultModel: text })
+          case 'allowModelSelection': {
+            const enabled = value === true || value === 'true'
+            // 开关开着却一个模型都没授权：Agent 没有任何合法可选值，先拦下比让它每次派活都报错好
+            if (enabled && config.allowedModels.length === 0) return t('save.needAllowedModel')
+            applyConfig({ allowModelSelection: enabled })
+            break
+          }
+          case 'allowedModels': {
+            const list = readAllowedModels(value)
+            if (config.allowModelSelection && list.length === 0) return t('save.needAllowedModel')
+            applyConfig({ allowedModels: list })
             break
           }
           case 'board':
