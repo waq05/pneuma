@@ -283,8 +283,9 @@
 `canonicalizePath(value, { win32, cwd })` 按会话 cwd 展开；后端
 `src/packages/sandbox/win/backend.ts:207-210` 直接拿原始串传给 `grantWrite`，
 相对路径由宿主进程的 cwd 决定（打包版就是安装目录），于是 ACL 打在另一个地方。
-（顺带一个相邻的坑：附加根写成**已存在的文件**时，`mkdirSync` 会抛 `EEXIST`——BUG-0001 修完
-只对 temp 建目录之后，这条路回到「打 ACL 失败 → 降级」，不会再抛。）
+（顺带一个相邻的坑：附加根写成**已存在的文件**时，`grantWrite` 走 `GetNamedSecurityInfoW` /
+`SetNamedSecurityInfoW`，对文件同样能成功，只是 OI|CI 继承在文件上没有意义——既不抛也不降级，
+所以它不是「打 ACL 失败」那条路。复核时实测过。）
 
 **证据**：`src/packages/sandbox/locale/ui.zh.json:20` 的帮助文案、
 `policy.ts:677` 与 `backend.ts:207-210` 的对照；复核者用一次性探针确认了两处解析结果不同。
@@ -300,12 +301,20 @@
 **改了什么**：走的是「后端复用同一个函数」那条路——`writeRootsFor` 里对每条附加根调用
 `canonicalizePath(…, { cwd })`（与 `policy.ts` 的 `createPolicy` 同一个函数、同一个 cwd），
 拿到绝对路径再派生能力 SID、再交给 `grantWrite`
-（[backend.ts:184-220](src/packages/sandbox/win/backend.ts#L184-L220)）。
+（[backend.ts:216-231](src/packages/sandbox/win/backend.ts#L216-L231)）。
 
 为什么不在 `sandbox/index.ts` 提前绝对化：那里有两个入口（策略快照与受限令牌后端），
 只要有一个漏了就会重现同一个 bug；放在 `writeRootsFor` 里是「产出可写根的那一处」，
-后端无论被谁调用都绕不过去。顺带把绝对路径也过一遍这个函数——8.3 短名、大小写、符号链接
-拼法不同会派生出另一个 SID，而 runner 是按 realpath 复算的，对不上会直接退 127。
+后端无论被谁调用都绕不过去。顺带把绝对路径也过一遍这个函数——大小写、8.3 短名、符号链接
+拼法不同会派生出另一个 SID 身份，同一个目录就有两份能力 ACE（root 侧授权不回收），
+去重也认不出来。
+
+`cwd` 自己也过一遍同一个函数：会话从 junction / 符号链接进来时（`D:\link\proj` 实际指
+`E:\data\proj`），cwd 按原串、附加根按真实拼法，同一个目录会变成两条根。这一条留给
+「同一条路径只该有一个身份」，不是防 runner 退 127——runner 的 `verifySidForPath`
+（[runner-entry.ts:300-306](src/packages/sandbox/win/runner-entry.ts#L300-L306)）用的是
+`--root` 收到的那个串原样复算，宿主怎么拼它就怎么算，对不上是不可能的；上一版文档里
+「runner 按 realpath 复算，对不上会退 127」这句是错的，复核时纠正了。
 
 规范化**不通过**的那一类（8.3 短名、盘符不存在）与策略层同口径：这条根干脆不加。
 否则策略层已经把它记进 `problems` 并拒绝写，后端还去授权，失败一次就把整条后端降级。
@@ -314,7 +323,7 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `node scripts/sandbox-win-token-test.mjs` | **99 通过 / 0 失败**：新增 6 条 —— 相对附加根解析成「会话 cwd + rel-out」/ 不是宿主进程 cwd 旁边的那个 rel-out / 与 `createPolicy` 的可写根是同一条路径 / `--root` 里带的是绝对路径 / **受限令牌里真往那条相对附加根写文件成功** / 规范化不通过的附加根不加进来 |
+| `node scripts/sandbox-win-token-test.mjs` | **100 通过 / 0 失败**：新增 7 条 —— 相对附加根解析成「会话 cwd + rel-out」/ 不是宿主进程 cwd 旁边的那个 rel-out / 与 `createPolicy` 的可写根是同一条路径 / `--root` 里带的是绝对路径 / **受限令牌里真往那条相对附加根写文件成功** / 规范化不通过的附加根不加进来 / 经 junction 进来的 cwd 与真实路径的附加根只算一条根 |
 | `node desktop/shots/_verify-sandbox-write-packaged.mjs`（重建后的打包版） | **PASS**（这次改动不碰工作区口径，跑它是确认没把 P0 那条弄回去） |
 
 **没验到的**：没有在打包版界面上点着改「附加根」再跑命令（要动设置表单 + 一次重建），

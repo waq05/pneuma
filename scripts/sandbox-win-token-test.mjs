@@ -29,7 +29,7 @@
  * @module dsc/scripts/sandbox-win-token-test
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -517,8 +517,9 @@ async function runIntegration(backend) {
     const psLiteral = (value) => `'${value.replace(/'/g, "''")}'`
     const script = [
       // 让 PowerShell 用 UTF-8 写管道：系统语言是中文时拒绝理由本来是 GBK，
-      // 经 runner 的字节管道到这边按 UTF-8 解就是乱码，白丢一条现场证据
-      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      // 经 runner 的字节管道到这边按 UTF-8 解就是乱码，白丢一条现场证据。
+      // 外面套 try：宿主 stdout 不是控制台时这一句会报「无法设置」，整段就假红了（13:20 撞过一次）。
+      'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }',
       `Set-Content -Path ${psLiteral('.\\inside.txt')} -Value ${psLiteral('ok')}`,
       '$denied = $true',
       'try {',
@@ -817,6 +818,26 @@ async function runRelativeExtraRootCase(backend) {
     !badRoots.some((root) => root.path.toLowerCase().includes('progra~1')),
     badRoots.map((root) => root.path).join('、'),
   )
+
+  // 同一个目录只能有一个身份：会话是从 junction 进来的（D:\link\proj → 真实 E:\data\proj）时，
+  // cwd 按原串、附加根按真实拼法，会派生出两条 SID、打两份能力 ACE（root 侧授权不回收）。
+  const junction = join(sandboxRoot, 'rel-junction')
+  try {
+    symlinkSync(workspace, junction, 'junction')
+  } catch {
+    // 建不了 junction（权限/文件系统）就跳过这一条，别把整段判据拖红
+  }
+  if (existsSync(junction)) {
+    const viaLink = backend.writeRootsFor(junction, [workspace])
+    const rootSides = viaLink.filter((root) => root.side === 'root').map((root) => root.path.toLowerCase())
+    check(
+      '经 junction 进来的 cwd 与真实路径的附加根只算一条根',
+      rootSides.length === 1 && rootSides[0] === realpathSync.native(workspace).toLowerCase(),
+      rootSides.join('、'),
+    )
+  } else {
+    note('建不了 junction，跳过「同一目录只有一个身份」这条')
+  }
 
   // 计划里的 --root 也要是这条绝对路径：runner 按 realpath 复算 SID，对不上会直接退 127。
   // 先把目录建出来（root 侧不替用户建，见 BUG-0001 那段），否则授权会失败、执行器降级。

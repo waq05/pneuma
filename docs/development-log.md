@@ -17309,3 +17309,24 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
 里是绝对路径 / 受限令牌里真写进那个相对附加根成功）。打包产物已按 HEAD 重建，沙箱写边界探针复跑 PASS。
 
 **没验到的**：没在打包版界面上点着改「附加根」再跑命令，证据停在令牌层——那正是出问题的那一层。
+
+
+### 2026-11-17 复核第二轮（BUG-0004）
+
+**复核提了什么**：`ok === false` 的附加根仍被拿去授权（与策略层口径不一致）、cwd 未规范化
+（junction 进来的会话会派生出第二条身份）、文档里「runner 按 realpath 复算 → 退 127」这句不实、
+「附加根写成文件会打 ACL 失败」这句不实。
+
+**怎么改的**
+
+1. `writeRootsFor` 里 `!resolved.ok` 直接跳过——策略层已经把它记进 `problems` 并拒绝写，
+   后端再授权只会失败一次、把整条后端降级。
+2. `cwd` 也过一遍 `canonicalizePath`（解析失败退回原串）：会话从 junction 进来时，
+   cwd 按原串、附加根按真实拼法会派生出两条根、两份能力 ACE，root 侧授权还不回收。
+   副作用是 junction 会话的 `--temp` 目录名换成真实拼法，旧目录由清扫按龄回收。
+3. 文档那两句改实：runner 的 `verifySidForPath` 用的是 `--root` 收到的串原样复算，不会退 127；
+   附加根写成已存在的文件时 `grantWrite` 对文件同样成功，只是 OI|CI 继承没意义。
+4. 顺手给自检里那行 `[Console]::OutputEncoding` 套 try——宿主 stdout 不是控制台时它会报
+   「无法设置」，整段假红（当天撞过一次）。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **100 通过 / 0 失败**（新增 junction 去重判据）。

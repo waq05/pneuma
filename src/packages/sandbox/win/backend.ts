@@ -195,11 +195,16 @@ export interface SandboxWriteRoot {
  * 围栏说「可以写」、系统层仍然拒，还顺手在安装目录旁边造一个目录。两处必须用同一个函数、
  * 同一个 cwd。
  *
- * @param cwd - 这次调用所在会话的工作目录（realpath 后的绝对路径）。
+ * `cwd` 自己也过一遍这个函数：同一个目录只能有一个身份。会话是从 junction / 符号链接进来的
+ * 时候（`D:\link\proj` 实际指 `E:\data\proj`），cwd 按原串、附加根按真实拼法，同一个目录就会
+ * 派生出两条 SID、打两份能力 ACE（root 侧授权不回收），去重也认不出来。
+ *
+ * @param cwd - 这次调用所在会话的工作目录（调用方给的是绝对路径；可能带 junction / 符号链接）。
  * @param extraRoots - 配置里的附加可写根（允许相对路径，按 `cwd` 展开）。
  */
 export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): SandboxWriteRoot[] {
   const trim = (path: string): string => path.replace(/[\\/]+$/, '')
+  const win32 = process.platform === 'win32'
   const list: SandboxWriteRoot[] = []
   /** 同一个目录只出现一次：尾巴分隔符不同、或附加根与工作区重合，都算同一个。 */
   const add = (path: string, side: 'root' | 'temp'): void => {
@@ -207,17 +212,20 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
     if (list.some((item) => item.path.toLowerCase() === key)) return
     list.push({ path, sid: side === 'root' ? rootWriteSid(path) : tempWriteSid(path), side })
   }
-  const root = trim(cwd)
+  // 工作区也规范化：解析不了（盘符没了之类）就退回原串——这一步的失败不该让整条后端降级，
+  // 后面打 ACL 时自然会报出真实原因。
+  const canonicalCwd = canonicalizePath(trim(cwd), { win32, cwd: trim(cwd) })
+  const root = trim(canonicalCwd.ok ? canonicalCwd.path : trim(cwd))
   add(root, 'root')
   add(sandboxTmpDir(DSC_HOME, root), 'temp')
   for (const extra of extraRoots) {
     const trimmed = trim(extra.trim())
     if (trimmed === '') continue
     // 绝对路径也过一遍同一个函数：大小写、8.3 短名、符号链接拼法不同会派生出另一个 SID 身份，
-    // 而 runner 那边是按 realpath 复算的（`--root` 里 SID 与路径对不上会直接退 127）。
+    // 同一个目录就有两份能力 ACE（root 侧不回收），去重也认不出来。
     // 规范化不通过（8.3 短名、盘符不存在这类）就跟策略层保持一致：**这条不加**——
     // 策略层已经把它记进 `problems` 并在判定里拒绝写，这里再加进来只会让整条后端降级。
-    const resolved = canonicalizePath(trimmed, { win32: process.platform === 'win32', cwd: root })
+    const resolved = canonicalizePath(trimmed, { win32, cwd: root })
     if (!resolved.ok) continue
     add(trim(resolved.path), 'root')
   }
