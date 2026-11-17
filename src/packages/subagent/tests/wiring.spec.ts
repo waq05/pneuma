@@ -41,7 +41,7 @@ interface CapturedSection {
   id: string
   order?: number
   groups?: Array<{ id: string }>
-  fields: () => Array<{ key?: string; action?: string; group?: string }>
+  fields: () => Array<{ key?: string; type?: string; label?: string; action?: string; group?: string }>
   values: () => Record<string, unknown>
   save: (key: string, value: unknown) => string | void
   action: (name: string) => string
@@ -73,6 +73,8 @@ interface Harness {
   emitted: Array<Record<string, unknown>>
   followups: Array<{ text: string; sessionId?: string; origin?: string }>
   decisions: Array<Record<string, unknown>>
+  /** 队友实际请求过的模型路由（路由参数，用于钉「旧配置 defaultModel 仍作兜底」）。 */
+  routeCalls: Array<{ provider: string; model: string; effort: string }>
   touches: number
   session: SessionT
   setSession: (session: SessionT) => void
@@ -205,6 +207,7 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   const emitted: Harness['emitted'] = []
   const followups: Harness['followups'] = []
   const decisions: Harness['decisions'] = []
+  const routeCalls: Harness['routeCalls'] = []
   const effects: Array<() => void> = []
   let touches = 0
 
@@ -281,7 +284,35 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
     llm: {
       model: 'fake/model',
       routeForSession: () => ROUTE,
-      routeTo: () => ROUTE,
+      routeTo: (provider: string, model: string, effort: string) => {
+        routeCalls.push({ provider, model, effort })
+        return ROUTE
+      },
+      providerOf: () => 'fake',
+      modelOf: () => 'fake/model',
+      // 设置分区「授权模型」多选现读模型清单：给两条够钉分组/选项形状
+      listModels: () => [
+        {
+          value: 'fake/model',
+          provider: 'fake',
+          providerDisplayName: 'Fake',
+          model: 'model',
+          description: 'Fake · 32k 上下文',
+          contextWindow: 32000,
+          thinkingLevels: [],
+          modalities: ['text'],
+        },
+        {
+          value: 'fake/other',
+          provider: 'fake',
+          providerDisplayName: 'Fake',
+          model: 'other',
+          description: 'Fake · 64k 上下文',
+          contextWindow: 64000,
+          thinkingLevels: [],
+          modalities: ['text'],
+        },
+      ],
       stream: (api: string, request: StreamRequestLike, handlers: StreamHandlersLike) =>
         harness.streamHandler(api, request, handlers),
     },
@@ -328,6 +359,7 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   harness.emitted = emitted
   harness.followups = followups
   harness.decisions = decisions
+  harness.routeCalls = routeCalls
   harness.touches = 0
   harness.session = parent
   harness.setSession = (session: SessionT) => {
@@ -394,7 +426,9 @@ const TASK = '请统计仓库里有多少个测试文件并给出结论，附证
 describe('注册面', () => {
   test('工具、提示段、服务、守卫与设置分区都挂上了', () => {
     const harness = fakeCtx()
-    expect(harness.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['subagent', 'team_task']))
+    expect(harness.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['subagent', 'team_task', 'team_message']),
+    )
     expect(harness.prompts.map((prompt) => prompt.id).sort()).toEqual(['subagent', 'team'])
     expect([...harness.services.keys()].sort()).toEqual(['review', 'team'])
     expect(harness.guards.map((guard) => `${guard.id}@${String(guard.order)}`)).toEqual([
@@ -403,7 +437,8 @@ describe('注册面', () => {
     ])
     expect(harness.resolverFns).toHaveLength(1)
     expect(harness.sections[0]).toMatchObject({ id: 'subagent', order: 40 })
-    expect(harness.sections[0]?.groups?.map((group) => group.id)).toEqual(['board'])
+    // 2026-11：设置分区扩成三组——默认最大轮次 / 队友模型（授权清单）/ 任务板
+    expect(harness.sections[0]?.groups?.map((group) => group.id)).toEqual(['turns', 'models', 'board'])
     expect([...(plugin.inject as string[])]).toEqual([
       'session',
       'tools',
@@ -417,7 +452,7 @@ describe('注册面', () => {
     ])
   })
 
-  test('默认配置：派活与板子都开，并发 4、层数 1、轮次不限、审批 forbid', () => {
+  test('默认配置：派活与板子都开，并发 4、层数 1、审批 forbid、团队/模型选择都关', () => {
     const harness = fakeCtx()
     expect(harness.section.values()).toMatchObject({
       allowDelegation: true,
@@ -426,9 +461,27 @@ describe('注册面', () => {
       maxTurns: 0,
       approval: 'forbid',
       notify: 'auto',
-      defaultModel: '',
       board: true,
+      teamMode: false,
+      allowModelSelection: false,
+      allowedModels: [],
+      // 九角色默认轮次（T1/T3 的出厂值）
+      'roleTurns.pm': 48,
+      'roleTurns.architect': 32,
+      'roleTurns.developer': 128,
+      'roleTurns.tester': 64,
+      'roleTurns.ops': 32,
+      'roleTurns.critic': 16,
+      'roleTurns.reviewer': 64,
+      'roleTurns.writer': 128,
+      'roleTurns.explorer': 0,
     })
+    // 旧配置键仍在读，但设置值里不再暴露它（界面上已换成授权模型清单）
+    expect('defaultModel' in harness.section.values()).toBe(false)
+    const fields = harness.section.fields()
+    expect(fields.some((field) => field.key === 'defaultModel')).toBe(false)
+    expect(fields.find((field) => field.key === 'allowModelSelection')?.type).toBe('switch')
+    expect(fields.find((field) => field.key === 'allowedModels')?.type).toBe('checks')
   })
 
   test('配置夹取：数字越界收敛、坏审批回落 forbid、字符串 false 认作关', () => {
@@ -439,9 +492,13 @@ describe('注册面', () => {
         maxTurns: 999,
         approval: 'bogus',
         notify: 'quiet',
+        // 旧配置键仍能读（不报错、不崩），但不再出现在设置值里
         defaultModel: '  deepseek/deepseek-chat  ',
         board: 'false',
         allowDelegation: 'false',
+        allowModelSelection: 'true',
+        allowedModels: ['fake/model', ' fake/model ', '', 3],
+        teamMode: 'true',
       },
     })
     expect(harness.section.values()).toMatchObject({
@@ -450,24 +507,40 @@ describe('注册面', () => {
       maxTurns: 200,
       approval: 'forbid',
       notify: 'quiet',
-      defaultModel: 'deepseek/deepseek-chat',
       board: false,
       allowDelegation: false,
+      allowModelSelection: true,
+      allowedModels: ['fake/model'],
+      teamMode: true,
     })
+    expect('defaultModel' in harness.section.values()).toBe(false)
     expect(harness.tools.some((tool) => tool.name === 'subagent')).toBe(false)
     expect(harness.tools.some((tool) => tool.name === 'team_task')).toBe(false)
     expect(harness.prompts).toHaveLength(0)
   })
 
-  test('allowDelegation / board 各管一半：两种单独开都成立', () => {
+  test('旧配置 defaultModel 仍作为兜底：角色文件没写模型时队友按它路由', async () => {
+    const harness = fakeCtx({ config: { defaultModel: '  legacy/model  ' } })
+    expect('defaultModel' in harness.section.values(), '界面不再展示').toBe(false)
+    await spawnAndSettle(harness, { role: 'explorer', name: 'legacy-model-1' })
+    // explorer 角色文件没写 model：工牌应取旧配置的 legacy/model，并真的按它路由
+    expect(
+      harness.routeCalls.some((call) => call.provider === 'legacy' && call.model === 'model'),
+      JSON.stringify(harness.routeCalls),
+    ).toBe(true)
+  })
+
+  test('allowDelegation / board 各管一半：团队消息跟派活走，任务板跟 board 走', () => {
     const onlyBoard = fakeCtx({ config: { allowDelegation: false } })
     expect(onlyBoard.tools.some((tool) => tool.name === 'subagent')).toBe(false)
+    expect(onlyBoard.tools.some((tool) => tool.name === 'team_message'), '没有队友就没有收件人').toBe(false)
     expect(onlyBoard.tools.some((tool) => tool.name === 'team_task')).toBe(true)
     expect(onlyBoard.prompts.map((prompt) => prompt.id)).toEqual(['team'])
 
     const onlyDelegate = fakeCtx({ config: { board: false } })
     expect(onlyDelegate.tools.some((tool) => tool.name === 'team_task')).toBe(false)
     expect(onlyDelegate.tools.some((tool) => tool.name === 'subagent')).toBe(true)
+    expect(onlyDelegate.tools.some((tool) => tool.name === 'team_message'), 'team_message 不跟着 board').toBe(true)
     expect(onlyDelegate.prompts.map((prompt) => prompt.id)).toEqual(['subagent'])
   })
 
@@ -505,9 +578,17 @@ describe('设置分区', () => {
   test('保存非法值返回人话错误，且不改当前配置', () => {
     const harness = fakeCtx()
     expect(String(harness.section.save('approval', 'always'))).toContain('不认识的值')
-    expect(String(harness.section.save('defaultModel', 'deepseek-chat'))).toContain('端点名/模型名')
+    // defaultModel 已从界面移除：写它按未知键处理，不再做「端点/模型」格式校验
+    expect(String(harness.section.save('defaultModel', 'deepseek-chat'))).toContain('没有这项')
+    // 授权模型：开关开着但一个都没勾 → 失败；清单空着、开关关着时本身可以保存
+    expect(String(harness.section.save('allowModelSelection', true))).toContain('至少选择一个模型')
+    expect(harness.section.save('allowedModels', [])).toBeUndefined()
     expect(String(harness.section.save('nope', 1))).toContain('没有这项')
-    expect(harness.section.values()).toMatchObject({ approval: 'forbid', defaultModel: '' })
+    expect(harness.section.values()).toMatchObject({
+      approval: 'forbid',
+      allowModelSelection: false,
+      allowedModels: [],
+    })
   })
 
   test('动作：新建示例角色写进角色目录；清空任务板返回条数；未知按钮抛错', async () => {

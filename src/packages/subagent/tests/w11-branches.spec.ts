@@ -356,7 +356,7 @@ test('进程内切走当前会话：后台队友的卡片不往别的会话转�
 
 // ── 设置分区 ─────────────────────────────────────────────────────────────────
 
-test('设置保存：数值夹取、notify 归一、模型格式校验与未知键', () => {
+test('设置保存：数值夹取、notify 归一、授权模型校验与未知键', () => {
   const harness = fakeCtx()
   const section = harness.section
   section.save('maxTeammates', '20')
@@ -364,20 +364,47 @@ test('设置保存：数值夹取、notify 归一、模型格式校验与未知�
   section.save('maxTurns', '5')
   section.save('notify', 'quiet')
   expect(section.values()).toMatchObject({ maxTeammates: 8, maxDepth: 0, maxTurns: 5, notify: 'quiet' })
-  expect(section.save('defaultModel', 'no-slash')).toMatch(/模型|model/i)
-  section.save('defaultModel', 'fake/model')
-  expect(section.values()['defaultModel']).toBe('fake/model')
-  expect(section.save('unknownKey', 1)).toMatch(/unknown|未知/i)
+
+  // 2026-11：defaultModel 文本框已从界面移除（旧配置仍兼容读取，但设置键不再接受写入）
+  expect(String(section.save('defaultModel', 'fake/model'))).toMatch(/没有这项/)
+  expect('defaultModel' in section.values(), 'defaultModel 不该再出现在设置值里').toBe(false)
+
+  // 授权模型：开关开着但清单为空必须拒；勾选后才能开；开着时清空也要拒
+  expect(String(section.save('allowModelSelection', true))).toMatch(/至少选择一个模型/)
+  expect(section.values()['allowModelSelection']).toBe(false)
+  expect(section.save('allowedModels', ['fake/model', 'fake/other'])).toBeUndefined()
+  expect(section.save('allowModelSelection', true)).toBeUndefined()
+  expect(section.values()).toMatchObject({
+    allowModelSelection: true,
+    allowedModels: ['fake/model', 'fake/other'],
+  })
+  expect(String(section.save('allowedModels', []))).toMatch(/至少选择一个模型/)
+  expect(section.values()['allowedModels'], '保存失败不改原值').toStrictEqual(['fake/model', 'fake/other'])
+
+  expect(String(section.save('unknownKey', 1))).toMatch(/unknown|未知|没有这项/i)
   section.save('allowDelegation', false)
   section.save('board', false)
   expect(section.values()).toMatchObject({ allowDelegation: false, board: false })
+
+  // 团队模式：打开 = 允许二层派活，顺手把刚才夹到 0 的递归层级抬到 2；关闭不回退
+  expect(section.save('teamMode', true)).toBeUndefined()
+  expect(section.values()).toMatchObject({ teamMode: true, maxDepth: 2 })
+  expect(section.save('teamMode', false)).toBeUndefined()
+  expect(section.values()).toMatchObject({ teamMode: false, maxDepth: 2 })
 })
 
-test('轮次预算取角色与插件设置中更严的那个', () => {
+test('轮次预算取角色与插件设置中更严的那个（角色默认轮次也生效）', () => {
+  // 角色默认：writer 128 轮 / pm 48 轮；插件全局设 2 轮时一律压到 2
+  const defaults = fakeCtx()
+  const defaultPrompt = defaults.prompts.find((entry) => entry.id === 'subagent')?.render() ?? ''
+  expect(defaultPrompt).toContain('最多 128 轮')
+  expect(defaultPrompt).toContain('最多 48 轮')
+  expect(defaultPrompt).toContain('轮次不限')
+
   const harness = fakeCtx({ maxTurns: 2 })
   const prompt = harness.prompts.find((entry) => entry.id === 'subagent')
   expect(prompt).toBeDefined()
-  // writer 出厂 20 轮，插件设置 2 轮：提示词里应当报 2 轮。
+  // 全局 2 轮比角色默认 128 更严：提示词里应当报 2 轮。
   expect(prompt!.render()).toContain('最多 2 轮')
 })
 

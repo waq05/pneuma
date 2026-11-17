@@ -15,7 +15,8 @@ import { join } from 'node:path'
 import YAML from 'yaml'
 import { afterAll, expect, test } from 'vitest'
 import { builtinRole, builtinRoleNames } from '../agent-roles.js'
-import { COLLAB_TOOL_NAMES, subagentPlugin } from '../index.js'
+import { COLLAB_TOOL_NAMES, DEFAULT_ROLE_TURNS, subagentPlugin } from '../index.js'
+import { boardCreate, boardUpdate, resetBoard } from '@pneuma/runtime/core/team-board.js'
 
 /** 按相对本文件的路径读文本。 */
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -63,8 +64,8 @@ interface CapturedPrompt {
 /** 设置分区里测试用得到的部分。 */
 interface CapturedSection {
   id: string
-  groups?: Array<{ id: string }>
-  fields: () => Array<{ key: string; group?: string; action?: string }>
+  groups?: Array<{ id: string; title?: string }>
+  fields: () => Array<{ key: string; type?: string; group?: string; action?: string; label?: string }>
   values: () => Record<string, unknown>
   action?: unknown
 }
@@ -138,7 +139,8 @@ function fakeContext(): { ctx: Context; captured: { tools: CapturedTool[]; secti
       return typeof off === 'function' ? off : () => {}
     },
     transcript: { touch: () => {} },
-    llm: {},
+    // 设置分区里的「授权模型」多选要现读模型清单（这里给空清单；本文件不钉模型列表）
+    llm: { listModels: () => [] },
     approval: {},
     // 队友的会话归属解析登记在 `guards` 上（P0-8 收口）：假 ctx 也要给这两个口，
     // 否则 apply 里 `ctx.guards.registerSessionResolver` 直接抛，整条装配测不起来。
@@ -189,13 +191,41 @@ test('README 的 Model Experience 与 Known Limitations 两段都在', () => {
   expect(readme, '缺 ## Known Limitations').toContain('## Known Limitations')
 })
 
-test('出厂角色：四个内置角色，explorer 只有读工具且不许要授权', () => {
-  expect(builtinRoleNames()).toStrictEqual(['critic', 'explorer', 'reviewer', 'writer'])
-  const explorer = builtinRole('explorer')
-  expect(explorer).not.toBeNull()
-  expect(explorer?.builtin).toBe(true)
-  expect(explorer?.tools).toStrictEqual(['read', 'glob', 'grep'])
-  expect(explorer?.approval).toBe('forbid')
+test('出厂角色：九个内置角色，各自的工具白名单/审批/默认轮次都对得上', () => {
+  // 2026-11 团队协作升级：在四个通用角色之外新增 pm/architect/developer/tester/ops。
+  expect(builtinRoleNames()).toStrictEqual([
+    'architect',
+    'critic',
+    'developer',
+    'explorer',
+    'ops',
+    'pm',
+    'reviewer',
+    'tester',
+    'writer',
+  ])
+  const expected: Record<string, { tools: string[]; approval: string; turns: number }> = {
+    explorer: { tools: ['read', 'glob', 'grep'], approval: 'forbid', turns: 0 },
+    writer: { tools: ['read', 'write', 'edit', 'glob', 'grep', 'bash'], approval: 'ask', turns: 128 },
+    critic: { tools: ['read', 'glob', 'grep'], approval: 'forbid', turns: 16 },
+    reviewer: { tools: ['read', 'glob', 'grep'], approval: 'forbid', turns: 64 },
+    pm: { tools: ['read', 'glob', 'grep', 'subagent'], approval: 'forbid', turns: 48 },
+    architect: { tools: ['read', 'glob', 'grep'], approval: 'forbid', turns: 32 },
+    developer: { tools: ['read', 'write', 'edit', 'glob', 'grep', 'bash'], approval: 'ask', turns: 128 },
+    tester: { tools: ['read', 'glob', 'grep', 'bash', 'write'], approval: 'ask', turns: 64 },
+    ops: { tools: ['read', 'bash', 'glob', 'grep'], approval: 'ask', turns: 32 },
+  }
+  for (const [name, spec] of Object.entries(expected)) {
+    const role = builtinRole(name)
+    expect(role, `内置角色 ${name} 缺失`).not.toBeNull()
+    expect(role?.builtin, `${name} 要标成内置`).toBe(true)
+    expect(role?.tools, `${name} 的工具白名单`).toStrictEqual(spec.tools)
+    expect(role?.approval, `${name} 的审批档`).toBe(spec.approval)
+    // 出厂模板不再钉 max-turns：默认轮次统一放 DEFAULT_ROLE_TURNS，设置页才能改
+    expect(role?.maxTurns, `${name} 模板不该写死轮次`).toBe(0)
+    expect(role?.maxTurnsDeclared, `${name} 模板不该显式声明轮次`).toBe(false)
+    expect(DEFAULT_ROLE_TURNS[name], `${name} 的默认轮次`).toBe(spec.turns)
+  }
   expect(builtinRole('no-such-role')).toBeNull()
 })
 
@@ -230,35 +260,82 @@ test('allowDelegation 关掉后板子仍在（只想要共享待办的用法）'
   expect(captured.prompts.map((entry) => entry.id)).toStrictEqual(['team'])
 })
 
-test('提示段提 team_task，设置分区仍是 subagent 且带任务板分组', () => {
+test('提示段提 team_task，设置分区分 turns/models/board 三组且字段换成新键', () => {
   const { ctx, captured } = fakeContext()
   subagentPlugin.apply(ctx, undefined)
   expect(captured.prompts.map((entry) => entry.id).sort()).toStrictEqual(['subagent', 'team'])
 
   const subagentPrompt = captured.prompts.find((entry) => entry.id === 'subagent')?.render() ?? ''
   expect(subagentPrompt, '子智能体提示段必须提一句 team_task').toContain('team_task')
-  const boardPrompt = captured.prompts.find((entry) => entry.id === 'team')?.render() ?? ''
+  expect(subagentPrompt, 'Lead 提示段要有团队分工协议').toContain('分工协议')
+  const renderBoard = (): string => captured.prompts.find((entry) => entry.id === 'team')?.render() ?? ''
+  const boardPrompt = renderBoard()
   expect(boardPrompt, '板子提示段缺标题').toContain('# 共享任务板')
+  expect(boardPrompt, '空板要明说还没有任务').toContain('板上还没有任务')
+  expect(boardPrompt, '板子提示段要提示派活用 task_id 绑定').toContain('task_id')
+  // 板上真有任务时，提示段要带负责人与最新进展（空板看不到这一行，所以现造一条）
+  const created = boardCreate('package-test', { subject: '示例任务' })
+  try {
+    boardUpdate('package-test', created.task.id, created.board.revision, 'note', {
+      text: '接口层改完，跑单测中',
+      by: 'dev-1',
+    })
+    const withTask = renderBoard()
+    expect(withTask, '板子提示段要展示最新进展').toContain('最新进展')
+    expect(withTask, '提示段要带上进展正文').toContain('接口层改完')
+    expect(withTask, '提示段要带负责人署名').toContain('dev-1')
+  } finally {
+    // 提示段每轮现读磁盘：不清理会影响同一进程里后续断言空板的用例
+    resetBoard('package-test')
+  }
 
   const section = captured.sections
   expect(section).toBeDefined()
   expect(section?.id).toBe('subagent')
-  expect((section?.groups ?? []).map((group) => group.id)).toStrictEqual(['board'])
+  expect((section?.groups ?? []).map((group) => group.id)).toStrictEqual(['turns', 'models', 'board'])
+
   const fields = section?.fields() ?? []
+  const keys = fields.map((field) => field.key)
+  // 2026-11：默认模型文本框撤掉，换成「允许 Agent 选模型」开关 + 授权模型多选
+  expect(keys).not.toContain('defaultModel')
+  expect(fields.find((field) => field.key === 'allowModelSelection')?.type, '缺 allowModelSelection 开关').toBe('switch')
+  expect(fields.find((field) => field.key === 'allowedModels')?.type, '缺 allowedModels 多选').toBe('checks')
+  expect(fields.find((field) => field.key === 'teamMode')?.type, '缺 teamMode 开关').toBe('switch')
+  for (const role of builtinRoleNames()) {
+    const field = fields.find((candidate) => candidate.key === `roleTurns.${role}`)
+    expect(field, `缺 roleTurns.${role} 数字项`).toBeDefined()
+    expect(field?.type, `${role} 的轮次项要是数字`).toBe('number')
+    expect(field?.group).toBe('turns')
+  }
+  expect(fields.filter((field) => field.group === 'models')).toHaveLength(2)
   const boardField = fields.find((field) => field.key === 'board')
   expect(boardField, '缺 board 子开关').toBeDefined()
   expect(boardField?.group).toBe('board')
   expect(fields.some((field) => field.action === 'clear-board'), '清空任务板按钮要跟着搬过来').toBe(true)
-  expect(section?.values()['board'], '板子默认开').toBe(true)
+
+  // 默认值：板子开、团队模式关、模型选择关、九个角色轮次各就各位
+  const values = section?.values() ?? {}
+  expect(values['board'], '板子默认开').toBe(true)
+  expect(values['teamMode'], '团队模式默认关').toBe(false)
+  expect(values['allowModelSelection'], '模型选择默认关').toBe(false)
+  expect(values['allowedModels'], '授权清单默认空').toStrictEqual([])
+  for (const [role, turns] of Object.entries(DEFAULT_ROLE_TURNS)) {
+    expect(values[`roleTurns.${role}`], `${role} 的默认轮次`).toBe(turns)
+  }
+  // 旧配置键仍被兼容读取，但界面不再把它画成设置项
+  expect('defaultModel' in values, 'defaultModel 不该再出现在设置值里').toBe(false)
   expect(typeof section?.action).toBe('function')
 
-  // 分组标题中文是「任务板」：design 里点名的那一条，直接读本包的界面字典钉住。
+  // 分组标题直接读本包的界面字典钉住（design 里点名的三个分组）
   const zh = JSON.parse(read('../locale/ui.zh.json')) as Record<string, string>
+  expect(zh['group.turns.title']).toBe('默认最大轮次')
+  expect(zh['group.models.title']).toBe('队友模型')
   expect(zh['group.board.title']).toBe('任务板')
 })
 
-test('协作工具豁免表包含 team_task，且不夹带文件类工具', () => {
+test('协作工具豁免表包含 team_task / team_message，且不夹带文件类工具', () => {
   expect(COLLAB_TOOL_NAMES).toContain('team_task')
+  expect(COLLAB_TOOL_NAMES).toContain('team_message')
   for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
     expect(COLLAB_TOOL_NAMES, `${name} 不该进协作工具豁免表`).not.toContain(name)
   }
