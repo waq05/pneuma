@@ -3,8 +3,11 @@
  * 优先级（显式 → 环境变量 → 默认根）、`~` 展开、显示口径与监视路径的 realpath 规范化。
  *
  * 隔离：`DSC_HOME` / `HOME` / `USERPROFILE` 全部指向 `mkdtempSync` 的临时目录，并且**在
- * import 之前**设好（`path-policy` 在模块求值时就把 `DSC_HOME` 算成了常量）。收尾恢复
- * 三个环境变量；临时目录删除容忍 Windows 上的 EPERM（句柄还没放开）。
+ * import 之前**设好（`path-policy` 在模块求值时就把 `DSC_HOME` 算成了常量）。`$DSH_HOME`
+ * 与 `$DSH_AGENTS_HOME` 必须删掉：它们是被测模块的合法输入（`shims/home-paths.ts:81` /
+ * `:91` 的默认参数直接读 `process.env`），宿主设了就会让「环境变量未设、回落默认根」这类
+ * 断言测到真实主目录而不是临时目录——本机 `DSH_HOME=C:\Users\waq\.dsh` 曾让本文件稳定红。
+ * 收尾还原全部五个环境变量；临时目录删除容忍 Windows 上的 EPERM（句柄还没放开）。
  *
  * @module dsc/core/dsh-compat/tests/home-paths.spec
  */
@@ -19,14 +22,28 @@ const DSC_HOME = join(ROOT, 'dsc-home')
 mkdirSync(HOME, { recursive: true })
 mkdirSync(DSC_HOME, { recursive: true })
 
+/**
+ * 被测模块会读的全部环境变量，一个都不能少：
+ * - `DSC_HOME`：`path-policy.ts:20` 在模块求值时算成常量，import 前必须设好；
+ * - `DSH_HOME` / `DSH_AGENTS_HOME`：`shims/home-paths.ts:26` / `:35` 定义、`:81` / `:91`
+ *   的默认参数读 `process.env`；
+ * - `HOME` / `USERPROFILE`：`os.homedir()` 在 POSIX / Windows 各认一个。
+ * 少收一个，宿主设了它就会漏进断言——`DSH_HOME` 正是本文件曾经稳定红的原因。
+ */
 const savedEnv = {
   DSC_HOME: process.env['DSC_HOME'],
+  DSH_HOME: process.env['DSH_HOME'],
+  DSH_AGENTS_HOME: process.env['DSH_AGENTS_HOME'],
   HOME: process.env['HOME'],
   USERPROFILE: process.env['USERPROFILE'],
 }
 process.env['DSC_HOME'] = DSC_HOME
 process.env['HOME'] = HOME
 process.env['USERPROFILE'] = HOME
+// 删掉而不是设成假值：本文件要验「环境变量没设时回落默认根」，设成假值会把那条用例
+// 变成「环境变量生效」的又一次重复，反而测不到回退分支。
+delete process.env['DSH_HOME']
+delete process.env['DSH_AGENTS_HOME']
 
 const hp = await import('../shims/home-paths.js')
 
@@ -64,6 +81,30 @@ describe('解析优先级与 ~ 展开', () => {
     expect(hp.resolveDshHome(undefined, { DSH_HOME: join(ROOT, 'from-env') })).toBe(resolve(ROOT, 'from-env'))
     expect(hp.resolveDshHome(undefined, {})).toBe(resolve(DSC_HOME))
     expect(hp.resolveDshHome(undefined, { DSH_HOME: '   ' })).toBe(resolve(DSC_HOME))
+  })
+
+  test('不传 env 时也按同一条优先级：$DSH_HOME 压过默认根，显式参数再压过 $DSH_HOME', () => {
+    // 文档：`shims/home-paths.ts:76`「优先级：显式路径 → $DSH_HOME → ~/.dsc」（模块头注释
+    // `:5-6` 同一条）。上面那条用例只验了显式传进来的 env 表；默认参数走的是 `process.env`
+    // （`:81`），`dshHomePath()` 内部就靠它——这里补上，免得宿主环境变量再次无声漏进来。
+    // 场景：DSC_HOME（本文件里是临时目录 B）作默认根，DSH_HOME 指向 A。
+    const fromEnv = join(ROOT, 'env-dsh-home')
+    const saved = process.env['DSH_HOME']
+    process.env['DSH_HOME'] = fromEnv
+    try {
+      // 环境变量压过默认根 B。
+      expect(hp.resolveDshHome()).toBe(resolve(fromEnv))
+      // 拼路径的公开入口吃的是同一份解析结果。
+      expect(hp.dshHomePath('x')).toBe(join(resolve(fromEnv), 'x'))
+      expect(hp.dshCachePath()).toBe(join(resolve(fromEnv), 'cache'))
+      // 显示口径跟着说「是环境变量覆盖过的」。
+      expect(hp.dshHomeDisplay(resolve(fromEnv))).toBe('$DSH_HOME')
+      // 显式参数最优先：即便环境变量指向 A，显式给的 C 仍然赢。
+      expect(hp.resolveDshHome(join(ROOT, 'configured'))).toBe(resolve(ROOT, 'configured'))
+    } finally {
+      if (saved === undefined) delete process.env['DSH_HOME']
+      else process.env['DSH_HOME'] = saved
+    }
   })
 
   test('resolveDshHome：~、~/x、~\\x 都展开到真实主目录', () => {
