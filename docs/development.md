@@ -618,6 +618,22 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 
 ## 8. 开发流程
 
+**分支怎么走（2026-11-17 起）**：`main` 只从 `dev` 收，`dev` 是汇总线，收各条开发分支。
+
+```sh
+git switch dev                                  # 汇总线；它的上游是 main
+git switch -c fix/<话题> dev                     # 一条分支一件事，从 dev 拉
+# …改代码、跑门禁、自证（命令 + 退出码，见 §5）…
+git switch dev && git merge --no-ff fix/<话题> -m "merge: <一句话>"
+git branch -d fix/<话题>                         # 合完就删，别留分支坟场
+# dev 全绿、要发版时才动 main：
+git switch main && git merge --no-ff dev -m "merge: dev 合进 main（<版本>）"
+# tag 从 main 打（版本号三处对齐：根 / desktop / tag）
+```
+
+为什么多一条 `dev`：`main` 是发版口，直接往上叠开发分支的话，一半成品一半半成品说不清哪一版能发。
+汇总线把「能跑」和「能发」分开：`dev` 允许暂时红在已知项上（要写清哪条红），`main` 只收全绿的。
+
 ```sh
 # 装依赖：一个 workspace 装齐四个项目（内核 / 界面壳 / 桌面端 / 遥控 Web），
 # 子项目不用再单独 install（2026-10-28 起）
