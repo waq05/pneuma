@@ -2,6 +2,7 @@
 
 > 给谁看：第一次给这个仓库写测试的人，以及被要求「补测试」的 AI 助手。
 > 读完你应该能回答：测试为什么存在、测什么、怎么写、怎么验收、什么算好。
+> **只想尽快跑对测试**：直接看 [testing-agent-playbook.md](testing-agent-playbook.md)（选层决策表 + 命令 + 失败排查）。
 > 想直接看「我们这套体系长什么样」，翻 [testing-design.md](testing-design.md)；想看落地细节，翻 [testing-detailed-design.md](testing-detailed-design.md)。
 
 ---
@@ -14,7 +15,7 @@
 
 ### 1.1 防回归
 
-改 A 不要悄悄弄坏 B。仓库里现在有 264 个 spec 文件、2000 多条用例，另有一批留在 `scripts/` 的探针；每一条的抬头大多写着它防的是哪次事故。最典型的是 [session.int.spec.ts](../src/core/session/session.int.spec.ts)：0.6.46 版本发生过「同一 callId 两条工具结果 → DeepSeek 网关返回 400 → 这个会话之后每次请求都被拒」，修完之后把那次的输入原样固化成断言。以后再改会话加载逻辑，这条测试替你盯着。
+改 A 不要悄悄弄坏 B。仓库里现在有 591 个测试文件、8,100 多条用例，另有 7 条留在 `scripts/` 的探针（Vitest 表达不了的）；每一条的抬头大多写着它防的是哪次事故。最典型的是 [session.int.spec.ts](../src/core/session/session.int.spec.ts)：0.6.46 版本发生过「同一 callId 两条工具结果 → DeepSeek 网关返回 400 → 这个会话之后每次请求都被拒」，修完之后把那次的输入原样固化成断言。以后再改会话加载逻辑，这条测试替你盯着。
 
 ### 1.2 固化决策
 
@@ -67,16 +68,26 @@ check('勾选框是画的', read(TODO_VIEW).includes('tc-todo-box'))
 
 **别对一个测试写多个不相关断言。** 坏了要先猜是哪个断言红的。
 
-### 2.3 三层，各管一段
+### 2.3 五层常驻，四条通道
 
-| 层 | 测什么 | 速度 | 数量占比 | 本仓库现状（2026-11-14） |
-| --- | --- | --- | --- | --- |
-| **单元** | 一个函数/一个模块，不碰网络和磁盘 | 毫秒 | 60–70% | 插件包 119 个 `.spec.ts` + 内核 16 个模块，合计 2000 多条，跑 `pnpm test` |
-| **集成** | 几个模块 + 假外部（假模型），起真内核 | 秒–分钟 | 20–30% | 79 个 `.int.spec.ts`，约 1200 条，跑 `pnpm run test:int` |
-| **端到端** | 从真入口走完整链路 | 分钟 | 5–10% | 还没建（P3 的 e2e project） |
+| 层 | 测什么 | 速度 | 本仓库现状（2026-11-17） |
+| --- | --- | --- | --- |
+| **unit** | 一个函数/一个模块，不碰网络和磁盘 | 毫秒 | 303 个 `.spec.ts`，跑 `pnpm test` |
+| **integration** | 几个模块 + 假模型，起真内核 | 秒 | 114 个 `.int.spec.ts`，跑 `pnpm run test:int`（先 build） |
+| **ui** | React 组件与交互 | 百毫秒 | 155 个，jsdom，跑 `pnpm run test:ui` |
+| **snapshot** | TUI 整屏帧、浏览器 DOM 的 golden | 秒–分钟 | 3 个场景文件，跑 `pnpm run test:snapshot` |
+| **tui** | ink 终端界面（假终端抓帧） | 百毫秒 | 16 个，跑 `pnpm run test:tui` |
 
-这叫**测试金字塔**。这个仓库花了 2026-11 半个月把它从「缺角」补成了「三层都有」：
-单元层最厚，集成层第二，端到端还空着。空着不丢人，写一条假的端到端比空着更糟。
+四条独立通道（不在 `pnpm test` 里，各有前提）：
+
+| 通道 | 验什么 | 前提 |
+| --- | --- | --- |
+| **e2e** | 真 Electron + 真宿主全链路 | `build` + `build:ui` + Electron 二进制 |
+| **cli** | 真入口 `bin/dsc.js` | 先 `pnpm run build` |
+| **built** | 只验 `lib/` 产物（插件 client.js、SDK 类型树） | 先构建 |
+| **live** | 真模型冒烟 | 要 key，没有就整层 skip（不算通过） |
+
+这仍然是一座金字塔：单元最厚、集成第二、真机层最少。**真机层不是「更高级」，是更贵**——一条 e2e 十几秒，能放进 unit 的绝不放 e2e。
 
 ---
 
@@ -133,7 +144,7 @@ afterAll(restore)
 
 理由不是洁癖：测试往真实 `~/.dsc` 写，会污染用户正在用的会话，而且并行跑会互相踩。
 
-**临时目录的收尾**（`tests/support/tmp-dir.ts`）：全绿时 worker 退出就删；本文件有任一条红就保留，路径打到 stderr；`DSC_KEEP_TMP=1` 强制保留。被强杀留下的残留，下一轮开跑时由 `tests/setup/global-clean.ts` 清掉超过 24 小时的。想立刻清就 `pnpm run clean:test-tmp`。自己建目录时用 `createTempDir('dsc-xxx-')`，不要直接 `mkdtempSync`——后者不进登记表，退出时不会收尾。
+**临时目录的收尾**（`tests/support/tmp-dir.ts` + `tests/setup/global-clean.ts`）：全绿时整轮 teardown 删掉本轮建的目录；本文件有任一条红就整轮保留，teardown 把目录路径打到 stderr；`DSC_KEEP_TMP=1` 强制保留。被强杀留下的残留，下一轮开跑时由 `global-clean.ts` 清掉超过 24 小时的。想立刻清就 `pnpm run clean:test-tmp`。自己建目录时用 `createTempDir('dsc-xxx-')`，不要直接 `mkdtempSync`——后者不进认领范围，teardown 清不到。
 
 ### 3.5 假外部：只 mock 贵的和不确定的
 
@@ -141,8 +152,8 @@ DSH 的测试政策里有一条值得照抄：**只 mock 昂贵的或不确定�
 
 ```ts
 // 好：模型是假的，内核、会话、工具注册表全是真的
-const site = await fakeLLM({ turns: [...], baseUrl: 'http://127.0.0.1:PORT' })
-const ctx = await bootKernel({ provider: site.baseUrl })
+const llm = await fakeLLM({ turns: [{ content: '收到' }] })
+const kernel = await bootKernel({ providerBaseUrl: llm.baseUrl })
 ```
 
 自己造一个「假内核」来测「假插件」，只能证明「管子通了」，证明不了产品行为。
@@ -212,7 +223,7 @@ const ctx = await bootKernel({ provider: site.baseUrl })
 | 金字塔比例 | 单元占多数 | 单元 60%、集成 30%、端到端 10% |
 | 覆盖率 | 核心模块有数字、不倒退 | 只降不升基线（**不设 100%**） |
 | Flake 率 | < 1%（一百次里抖不到一次） | 重试 + 串行组 + 超时治理 |
-| 门禁分层 | 快的进 PR，慢的进夜跑 | unit/ui 进 PR，集成/e2e 夜跑 |
+| 门禁分层 | 快的进 PR，慢的进夜跑 | unit/ui/tui/integration/cli 进 PR；snapshot/e2e/coverage 夜跑 |
 | 真实性 | 至少一层碰真东西（真模型/真入口） | 5 条 live + 8 条 cli |
 
 ### 5.3 三个最常见的错误标准
@@ -233,7 +244,7 @@ const ctx = await bootKernel({ provider: site.baseUrl })
 | 新探针按命名自动进门禁 | [check-core.mjs](../scripts/check-core.mjs)。手挂清单永远追不上 |
 | 临时 HOME | 见 §3.4 |
 | Vitest 只 import `src/`，探针只 import `lib/` | 两个平面混用会产生两份模块实例，`command-runner` 的模块级 Map 分家 = 沙箱 fail-open |
-| 测试文件后缀决定层级 | `.spec.ts` / `.int.spec.ts` / `.spec.tsx` / `.e2e.ts` / `.snapshot.ts` / `.bench.ts` / `.live.e2e.ts` / `.cli.e2e.ts` |
+| 测试文件后缀决定层级 | `.spec.ts` / `.int.spec.ts` / `.spec.tsx` / `.e2e.ts` / `.snapshot.ts` / `.bench.ts` / `.live.spec.ts` / `.cli.e2e.ts` / `.built.e2e.ts` |
 
 ---
 

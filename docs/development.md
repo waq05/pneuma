@@ -564,10 +564,10 @@ note     { id, text }                   请求注入备忘（投影塞进请求�
 Esc 关；已发送贴图与待发贴图共用 `image-lightbox`（那边地址虽是同源
 `/api/attachments/<sha>`，但点开也是浮层，不再另开窗口）。
 
-**改附件之前先看**：`scripts/attachments-test.mjs` 覆盖了去重、上限、魔数、引用读回、
-Range、会话投影与路径洗白；界面侧的上传/规范化/抽帧在
-`src/packages/ui-composer/ui/attachments.ts`，类型定义在 `draft.ts`（那份必须零 import，
-`ui-composer-draft-test.mjs` 会红）。
+**改附件之前先看**：`tests/integration/attachments.int.spec.ts` 覆盖了去重、上限、魔数、
+引用读回、Range、会话投影与路径洗白（原 `scripts/attachments-test.mjs` 已迁入）；界面侧的
+上传/规范化/抽帧在 `src/packages/ui-composer/ui/attachments.ts`，对应 `attachments.spec.ts`；
+类型定义在 `draft.ts`（那份必须零 import，`ui-composer-draft-test.mjs` 会红）。
 
 **「模型可见 ⟺ 已记录」**（对齐 dsh 的 Model-visible ⟺ logged）：发给模型的每一份
 都要求能从日志重建——消息历史存原文，改写走 `ctx.prompt.registerProjection` 的
@@ -636,7 +636,7 @@ cd D:\dsc\desktop && pnpm run typecheck
 pnpm test                          # unit + ui + tui 三层（PR 门的核心，约 2 分钟）
 pnpm run test:int                  # 先 build 再跑 integration（真内核 + 临时 HOME，约 8 分钟；maxWorkers 4）
 pnpm run test:snapshot             # 帧/会话 golden（TUI 整屏 + 录制回放），PR 门的关键面
-pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，约 2 分钟；已知 6 红见 backlog B40）
+pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，161 通过 + 1 skip；B40 的 6 红已于 779498b7 修掉）
 pnpm run test:cli                  # 真入口 bin/dsc.js 八条（先 build，约 5 秒）
 pnpm run test:live                 # 真模型冒烟 5 条（无 DSC_LIVE_API_KEY 时整层跳过，不算失败）
 pnpm run test:bench                # 性能基准 4 条，7 次中位数 vs tests/bench/baseline.json（runner 不符只记录）
@@ -650,7 +650,7 @@ pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 di
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
 pnpm run check:core                # 7 条 Node 侧探针（ESM 缓存戳 / 源码文本 / 文档闸），见 testing-backlog §三
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
-pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（77 包/77 行/0 缺口）+ 包标准八条硬项 + 89 个包用例 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 组合门禁（77 包/63 实挂/0 失败）+ 17 条换包 e2e
+pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（--strict）+ 包标准硬项 + 清单快照 + 组合门禁（77 包/63 实挂）+ 换包 e2e；原来的「89 个包用例 / 92 条加载器探针 / 15 条 list 探针」已迁进 Vitest，不再挂在这里
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）

@@ -384,7 +384,7 @@ DSH 是 per-file 四项 100%，且它自己的 docs/testing.md（外部仓库 D:
 | 慢测试上限 | `testTimeout` 按层设：unit 5s、int 60s、e2e 120s、cli 60s | codex slow-timeout |
 | 串行组 | 会争抢端口/临时目录的套件标记 `sequence.concurrent = false` | codex test-group |
 | 报告 | JUnit XML 上报，CI 里能看每条用例 | codex JUnit |
-| 诊断 | 失败时打印 PID、临时目录、最后 20 行输出 | DSH fork 诊断 |
+| 诊断 | 失败时打印临时目录路径（已实现：`tests/setup/global-clean.ts` 的 teardown）；PID 与最后 20 行输出**尚未实现** | DSH fork 诊断 |
 
 ### 10.5 分片（P6）
 
