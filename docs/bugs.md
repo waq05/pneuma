@@ -45,6 +45,10 @@
 | BUG-0005 | 设置里显示的「沙箱私有临时目录」不是命令真正用的那个 | P3 | 已修（2026-11-17） | 按显示的路径找临时文件会找不到；策略层放行一个没人写的目录 |
 | BUG-0006 | 在某个工作区里新建会话，那个目录整块跳到侧栏顶部 | P2 | 已修（2026-11-17） | 侧栏工作区分组的顺序 |
 | BUG-0007 | 工作区文件夹图标点开/关后一直是灰色三角，看不出展开态 | P3 | 已修（2026-11-17） | 侧栏工作区行的图标与悬停换位 |
+| BUG-0008 | 影子 git 的回合快照偶发记 0 条，回滚会漏文件 | P2 | 待修 | `checkpoint` 的回合账本与「回滚到回合前」 |
+| BUG-0009 | README 的包数与默认关数量落后于磁盘 | P3 | 已修（2026-11-17） | 文档口径：读者照 README 数包会数不对 |
+| BUG-0010 | superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91 | P3 | 已修（2026-11-17） | 英文界面下这个包的标题与说明仍是中文；`plugin-locale-test` 必红 |
+| BUG-0011 | 设置分区探针的断言停在两处 onChanged，代码已经是三处 | P3 | 已修（2026-11-17） | 不是产品行为，是探针口径漂移；`check:plugin` 必红 |
 
 ---
 
@@ -414,6 +418,19 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
 
 **验收**：`node scripts/ui-sidebar-order-test.mjs` 退出码 0（35 条，含脏副本 A/B/C 各自必须变红）。
 
+**手工复测（在侧栏里点一遍，约 1 分钟）**
+
+1. 准备：侧栏至少两个工作区，「视图选项 → 排序方式」保持默认的**手动排序**；记下当前顺序，
+   例如 `dsc → testing → waq`。
+2. 在**最后一个**工作区点行尾的 ⊕（在此工作区新建会话）。侧栏顶上会出现一条高亮「新会话」行。
+3. **看**：`waq` 这一组还在最后，没有跑到第一位。这一步就是报障现场。
+4. 在这个组里发一条消息（内容随便），宿主会把临时行换成正式行。
+5. **再看**：组顺序仍未变（新建会话 + 发第一条消息都不该让它上浮）。
+6. 反证判据没空转：先用鼠标把某个工作区拖到最前（`workspaceOrder` 落盘），再按第 2~3 步在别的工作区
+   新建会话——顺序仍按你拖的那份，会话活动不抢位。
+7. 想验「表外组」那一路：搜索框里只留一个工作区名、把它拖一次（落盘的顺序只含这一个），清空搜索，
+   再在别的组里新建会话——别的组照旧排在已拖组之后，不因新建而上浮。
+
 ---
 
 ## BUG-0007：工作区文件夹图标点开/关之后一直是灰色三角
@@ -454,6 +471,171 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
   `.folder-icon` 是 `flex`、三角是 `none`；展开态 svg 子节点 `rect/rect/path`；悬停仍换三角；键盘 Tab 仍出三角）。
 - **注意**：改 `views.css` 之后必须 `pnpm run build && pnpm run build:ui`，只跑 `build` 不重建界面包，
   真机加载的还是 `lib/ui/assets/style-<旧哈希>.css`，会把原始报障原样演一遍。
+
+**手工复测（在侧栏里点一遍，约 1 分钟）**
+
+1. 起界面之前先重建：`pnpm run build && pnpm run build:ui`（桌面端再加 `pnpm --dir desktop run build`）。
+   **漏了 `build:ui` 你会看到旧样式，本 bug 会「原样复现」——这是复测里最容易踩的坑。**
+   自检一句：`node -e "const fs=require('fs');const d='lib/ui/assets';for(const f of fs.readdirSync(d))if(f.endsWith('.css'))console.log(f,fs.readFileSync(d+'/'+f,'utf8').includes('focus-visible .folder-chevron'))"`
+   应当打印 `true`。
+2. 侧栏里用**鼠标**点一下任意工作区行（先记下它原来是展开还是收起）。
+3. 把指针移到正文区（别停在侧栏上）。**看**：那一行左边是文件夹图标——收起态是闭合文件夹，
+   展开态是「打开的文件夹」（前片往外翻的那个），不再是灰色三角。
+4. 把指针移回那一行。**看**：这时换成实心三角（展开态旋转 90°）。这是设计里的悬停提示，**不算 bug**。
+5. 按 Tab 把焦点移到某个工作区行（或先点正文再 Tab）。**看**：焦点落在行上时同样显示三角（键盘可见焦点），
+   Tab 走开就回到文件夹图标。
+6. 再点一次收起：图标换成闭合文件夹，三角不常驻。
+7. 对照证据：`desktop/shots/out/sidebar-icon-before-after.png`（上：修前；下：修后）。
+
+---
+
+## BUG-0008：影子 git 的回合快照偶发记 0 条，回滚会漏文件
+
+- **状态**：待修（2026-11-17 发现，未动代码）
+- **严重度**：P2（不阻断日常；但账本为空时「回滚到回合前」看不到这回合改了哪些文件，回滚会漏）
+- **发现**：2026-11-17，跑 `pnpm run check:plugin` 时撞见。`src/packages/checkpoint` 与 `main` 一字未改，是既有问题，不是当天那批提交引入的
+- **影响**：想回滚到某个回合之前的人，偶尔会拿到一份空的改动清单，误以为这回合什么都没改
+
+**复现**
+
+1. 同一个文件连跑三次：
+
+   ```sh
+   node --test --test-isolation=none src/packages/checkpoint/tests/checkpoint.test.mjs
+   ```
+
+2. 三次实测（2026-11-17 16:47）分别是 `pass=5 fail=2`、`pass=6 fail=1`、`pass=7 fail=0`，挂的用例每次不同。
+
+**期望**：pre/post 两张快照的树不同时，`recordTurnLedger` 一定记下改动条目。
+
+**实际**：两张快照都返回 `ok: true`，但 `git diff <pre> <post>` 是空的，账本记 0 条
+（断言原文：`第 1 回合应当记两条（改 a.txt、新增 b.txt），实际 0`）。另外两个集成用例也偶发失败：
+「pre/post 两张快照、内容可回看、用户 .git 不受影响」与「超大文件进了 info/exclude 且活过多次 ensureRepo」。
+
+**证据**
+
+- 快照实现：`src/packages/checkpoint/shadow.ts:333`（`snapshot`）→ `:372`（`capture`：`add -A` → `commit --allow-empty` → 打 tag）。
+- 账本实现：`shadow.ts:926` 的 `recordTurnLedger`，用 `git diff --name-status -z <pre> <post>` 取条目。
+- 三个集成用例各自 `mkdtemp` 独立目录，不存在互相踩目录。
+
+**初步定位**（推测，未证实）
+
+`capture()` 只对 `git add -A` 抛错这条路有判据（`shadow.ts:375` 返回 `ok: false`）；
+「加成功了但树没变」这条路没有任何判据，于是静默成功。可疑点：`commit --allow-empty`
+让空提交也算成功，把「一个文件都没暂存到」和「本来就没改动」混成同一个结果。
+
+**修复方向**
+
+1. 先改 `capture`：提交前后 tree hash 相同、而工作树确实有改动时返回错误，把静默失败变成可见失败。
+2. 再查 `add -A` 的时序：是文件写入与索引刷新撞车，还是 `ensureRepo` 首次初始化时索引未就绪。
+3. **不许改测试去迁就失败**——「两张快照都 ok」这条断言本身是对的。
+
+**验收**
+
+- 连跑 10 次 `node --test --test-isolation=none src/packages/checkpoint/tests/checkpoint.test.mjs` 全绿。
+- 人为让 `add -A` 空转（例如先把文件标成 `assume-unchanged` 再改内容）时，新判据必须判红。
+
+---
+
+## BUG-0009：README 的包数与默认关数量落后于磁盘
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（文档骗人，不影响功能；但它是唯一不编译就能对外说谎的地方）
+- **发现**：2026-11-17 跑 `check-core` 时 `readme-test` 2/26 失败
+- **影响**：读者照 README 数包会数少一个；「默认关 12 个」与实际 13 个不符，照着数插件中心会对不上
+
+**复现**
+
+```sh
+node scripts/readme-test.mjs
+```
+
+失败原文：`功能包数写的是磁盘上的数 — README 79 / 磁盘 80`、`默认关的个数与包清单一致 — README 12 / 包清单 13`。
+
+**期望**：README 写的包数、默认关个数与 `src/packages/` 磁盘现状一致。
+
+**实际**：README 停在 `superagent-webhook` 加进来之前的口径：79 个功能包、默认关 12、总包数 91、功能档 17。
+
+**证据**
+
+- 磁盘实测：92 个包目录 = 80 个功能包 + 12 个库包；默认关 13 个（官方 10 + 实验 3）。
+- 漂移位置：`README.md:161`（功能包数与默认关）、`:163`（功能档与官方档计数）、`:235`（架构树里的包数）。
+
+### 修复（2026-11-17）
+
+**改了什么**：三处数字按磁盘对齐——功能包 `79→80`、默认关 `12→13`、总包数 `91→92`；
+「17 个功能档」改「18 个」、「9 个在官方档」改「10 个」并补上 Super Agent Webhook。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/readme-test.mjs` → **26/26 通过，退出码 0**。
+
+---
+
+## BUG-0010：superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（英文界面下这个包的标题与说明仍是中文；同时让 `plugin-locale-test` 必红）
+- **发现**：2026-11-17 跑 `check-core` 时 `plugin-locale-test` 3 条失败
+- **影响**：把界面语言切成英文的人，在插件中心看到「Super Agent Webhook」这一档的中文说明；
+  另外这条探针红着，`check:plugin` / `check-core` 都过不去
+
+**复现**
+
+```sh
+node scripts/plugin-locale-test.mjs
+```
+
+失败原文：`包目录数与门禁口径一致（91） <- 92`、`全部包都声明了 ./locale/*.json 键 <- 91/92`、
+`整体有合法的 title/description 译本 <- superagent-webhook: 清单没声明 ./locale/*.json；缺 locale/en.json`。
+
+**期望**：每个功能包都声明 `./locale/*.json`，且有 `locale/en.json`（`title` ≤24 字符、`description` ≤80 字符）。
+
+**实际**：`superagent-webhook` 是全仓唯一缺译本的功能包——`package.json` 里没有 `./locale/*.json` 导出，
+也没有 `locale/` 目录；探针里的包数还写死成 91。
+
+**证据**
+
+- `src/packages/superagent-webhook/package.json`（修复前只有 `.`、`./cordis.patch.yml`、`./package.json` 三个导出）。
+- `scripts/plugin-locale-test.mjs:89` 写死 `ids.length === 91`，磁盘是 92。
+
+### 修复（2026-11-17）
+
+**改了什么**：给包补 `./locale/*.json` 导出、`files` 里的 `locale/**`，新增 `locale/en.json`（两行：title / description）；
+探针的包数口径 `91→92`（含两处注释）。顺带把 `superagent` 的英文 description 从 86 字符压到 76——它超了探针新加的 80 字符上限。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/plugin-locale-test.mjs` → **38/38 通过，退出码 0**；
+`node scripts/plugin-standard-check.mjs` → 0 条问题。
+
+---
+
+## BUG-0011：设置分区探针的断言停在两处 onChanged，代码已经是三处
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（不涉及产品行为，是探针口径漂移；但它让 `check:plugin` 必红，挡合并）
+- **发现**：2026-11-17 跑 `check-core` 时 `settings-embed-slot-test` 1 条失败
+- **影响**：合并前门禁红，且失败信息写成「：3」，容易被误读成产品多调用了一次
+
+**复现**
+
+```sh
+node scripts/settings-embed-slot-test.mjs
+```
+
+失败原文：`写回成功后通知父页重取分区清单（两处：保存与按钮动作）：3`。
+
+**期望**：探针断言的口径与代码现状一致。
+
+**实际**：代码里 `onChanged?.()` 有三处，探针写死两处。
+
+**证据**
+
+- `src/packages/ui-settings/ui/ui.tsx:501`（子分区字段保存后）、`:548`（按钮动作后）、`:736`（通用字段保存后）。
+- 第三处由 `1bf3f53e`（设置字段补 fact 与 rows 并接通四个界面）引入，是两类保存 + 一个动作，不是重复调用。
+
+### 修复（2026-11-17）
+
+**改了什么**：断言与标签都改成三处（`两处保存与按钮动作`），不删任何一处调用。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/settings-embed-slot-test.mjs` → **31/31 通过，退出码 0**。
 
 ---
 
