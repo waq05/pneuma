@@ -809,6 +809,43 @@ async function runMissingTempRootCase(backend) {
   } finally {
     handle.dispose()
   }
+
+  // 第二段：**不替用户建**工作区/附加根里不存在的路径。
+  // 这一条盯的是「顺手多干一点」的反向风险：替配错的附加根建目录，会把一个用户没打算要的目录
+  // 造出来、打成可继承的低完整性标签，而 root 侧的授权不回收。配错了应该让他看见（降级 + 说明），
+  // 不是悄悄替他圆过去。
+  console.log('')
+  console.log('── 集成：附加根不存在时不替用户建目录（只降级并说明）')
+  const missingRoot = join(sandboxRoot, 'no-such-extra-root')
+  const tempRoot2 = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
+  rmSync(tempRoot2.path, { recursive: true, force: true })
+  const details2 = []
+  const handle2 = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    extraRoots: [missingRoot],
+    networkAccess: () => false,
+    onDetail: (message) => details2.push(String(message)),
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle2.runner.plan(run, base)
+    check('附加根不存在时不替用户建目录', !existsSync(missingRoot), missingRoot)
+    check(
+      '这种情况按降级处理（plan 返回 null），并说明是哪条路径',
+      planned === null && details2.some((line) => line.includes(missingRoot)),
+      `plan=${String(planned)}；细节=${details2.join(' / ') || '(无)'}`,
+    )
+    check('降级之前临时目录该建还是建了', existsSync(tempRoot2.path), tempRoot2.path)
+  } finally {
+    handle2.dispose()
+  }
 }
 
 /**

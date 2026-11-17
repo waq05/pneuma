@@ -257,8 +257,8 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
    * 不能「授权过一次就短路」：清单会随着不同会话的调用继续增长（见 scopeOf），
    * 新补进来的根必须在这一次调用之前授权好。已授权的根在 grants 里有记录，重复调用只花几次查找。
    *
-   * 授权前自己把目录建出来（`mkdirSync`）：ACL 能打的只有真实存在的路径，而私有临时目录
-   * 在第一次调用之前谁都没建过。建成失败才降级，理由写清是哪一条。
+   * 授权前自己把**私有临时目录**建出来（`mkdirSync`）：ACL 能打的只有真实存在的路径，而那个目录
+   * 在第一次调用之前谁都没建过。工作区与附加根不替用户建——它们是既有路径，配错了要让人看见。
    */
   const ensureAuthorized = (): boolean => {
     if (degraded) return false
@@ -279,13 +279,21 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       for (const root of roots) {
         if (grants.has(root.path)) continue
         // 授权的前提是目录**真存在**：GetNamedSecurityInfoW 对不存在的路径返回 Win32 错误 2，
-        // 整条后端当场降级。私有临时目录 `<DSC_HOME>/sandbox/tmp/<工作区哈希>` 在第一次跑命令
-        // 之前没有任何人建过（宿主建的临时目录带会话 id，是另一个路径），所以这一步必须在这里做，
-        // 不能指望调用方（2026-11-17 修 BUG-0001：全新安装后第一次跑命令，沙箱直接失效）。
-        try {
-          mkdirSync(root.path, { recursive: true })
-        } catch (error) {
-          throw new Error(`建可写根「${root.path}」（能力 SID ${root.sid}）失败：${describeError(error)}`)
+        // 整条后端当场降级。而私有临时目录 `<DSC_HOME>/sandbox/tmp/<工作区哈希>` 在第一次跑命令
+        // 之前没有任何人建过（宿主建的临时目录带会话 id，是另一个路径），所以这一格由我们自己建
+        // （2026-11-17 修 BUG-0001：全新安装后第一次跑命令，沙箱直接失效）。
+        //
+        // 只建 temp：工作区与附加根**都是既有路径**（工作区是用户打开的目录，附加根是用户配的
+        // 可写目录）。替它们建目录属于多管闲事——配错的路径会被我们悄悄造出来、打成可继承的
+        // 低完整性标签，而 root 侧的授权不回收；配成相对路径时还会按宿主进程的 cwd 落点，
+        // 与策略层按会话 cwd 解析的口径对不上。它们的目录不存在就照旧让这次授权失败并降级，
+        // 那是用户配置的问题，得让他看见。
+        if (root.side === 'temp') {
+          try {
+            mkdirSync(root.path, { recursive: true })
+          } catch (error) {
+            throw new Error(`建可写根「${root.path}」（能力 SID ${root.sid}）失败：${describeError(error)}`)
+          }
         }
         try {
           grants.set(root.path, grantWrite(boundNow, root.path, root.sid, LOCK_DIR))
