@@ -49,6 +49,9 @@
 | BUG-0009 | README 的包数与默认关数量落后于磁盘 | P3 | 已修（2026-11-17） | 文档口径：读者照 README 数包会数不对 |
 | BUG-0010 | superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91 | P3 | 已修（2026-11-17） | 英文界面下这个包的标题与说明仍是中文；`plugin-locale-test` 必红 |
 | BUG-0011 | 设置分区探针的断言停在两处 onChanged，代码已经是三处 | P3 | 已修（2026-11-17） | 不是产品行为，是探针口径漂移；`check:plugin` 必红 |
+| BUG-0012 | 等宽文本里的中文落到宋体，代码块与工具输出发灰发糊 | P2 | 已修（2026-11-17） | Windows 上所有走 `--dsc-font-mono` 的地方：代码块、行内代码、工具输出 |
+| BUG-0013 | 字号只能整体缩放、字体不可选，正文调不到舒服的大小 | P2 | 已修（2026-11-17） | 设置 → 外观：字体不可配；调到 135% 会连带放大侧栏与标题 |
+| BUG-0014 | 过程正文 12px + 54% 灰，对比度约 3.9:1 | P3 | 不修（设计取舍，留记录） | 会话流里的过程正文、工具行、卡片行的可读性 |
 
 ---
 
@@ -648,3 +651,131 @@ node scripts/settings-embed-slot-test.mjs
 - 一条 bug 只写一个现象。像 BUG-0002 这种「可能是 A 也可能是 B」的，把两个候选都列出来，
   修的时候用一条实验区分，别在文档里下结论；两条都被排掉也别删，写清「怎么排掉的」——
   真正的原因往往在第三处（BUG-0002 收尾就是这样）。
+
+---
+
+## BUG-0012：等宽文本里的中文落到宋体，代码块与工具输出发灰发糊
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：内容是能读的，只是笔画糊；11–12px 上最明显）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：Windows 上所有走 `--dsc-font-mono` 的地方——代码块、行内代码、工具输出、命令预览。
+  Mac / Linux 上不明显：PingFang / Noto 会先命中系统等宽栈里的中文族，落不到宋体。
+
+**复现**
+
+1. 任意会话里让模型输出一段带中文注释的代码块（或把行内代码写成中文）。
+2. 截一张图放大到 200% 看笔画：中文是宋体的横细竖粗，和旁边的 Consolas 不搭。
+
+**期望**：中文用无衬线黑体（微软雅黑 / 思源黑体），不该是宋体。
+
+**实际**：中文落到浏览器 `monospace` 通用族；Windows 上那是宋体。
+
+**证据**
+
+- 旧令牌：`--dsc-font-mono: 'JetBrains Mono', 'Cascadia Mono', 'Sarasa Mono SC', Consolas,
+  'DejaVu Sans Mono', Menlo, ui-monospace, monospace`——整条没有 CJK，最后一族是裸 `monospace`。
+- 本机 `C:\Windows\Fonts` 里没有 JetBrains Mono / Cascadia Mono / Sarasa Mono SC，
+  Consolas 本身不含中文字形（`node scripts/ui-font-apply-test.mjs` 里那条「CJK 在 monospace 之前」
+  就是给这件事上的锁）。
+
+**初步定位**（已确证）
+
+- `src/packages/ui-renderer/ui/styles/legacy/tokens.css:387-389`（修复前）：等宽栈没有 CJK 兜底。
+- 同款问题 dsh 与 zcode 都修过：dsh 的代码栈**不带** `monospace` 尾巴、末尾挂雅黑；
+  zcode 在 `monospace` 前显式插 `Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC`。
+
+**修复方向**：在 `monospace` 之前显式插入各平台 CJK 无衬线，让缺字形的西文等宽字体先跳过中文。
+
+### 修复（2026-11-17）
+
+**改了什么**：`tokens.css` 把等宽令牌拆成 `--dsc-font-mono-default`（用户变量在前、它兜底），
+默认栈在 `monospace` 前插 `'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC'`。
+提交 `1016fc48`。
+
+**怎么验的**：`node scripts/ui-font-apply-test.mjs` → **42/42 通过**，其中两条判据：
+「等宽栈在 monospace 之前含中文无衬线」「CJK 兜底不止一种（Mac / Linux）」。
+
+---
+
+## BUG-0013：字号只能在 85%–135% 之间整体缩放，字体不可选，正文调不到舒服的大小
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：改系统缩放，但会连带改整个桌面）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：所有嫌正文偏小、或想换掉系统默认字体的人。调字号时侧栏、标题、卡片一起变，
+  没有「只把正文放大」的档；字体更是完全不可配。
+
+**复现**
+
+1. 打开 设置 → 外观。
+2. 只有一行「字号 100%」滑杆（85–135%），没有正文字体 / 代码字体可填。
+3. 把滑杆拉到 135%：侧栏行高、标题、卡片一起放大，正文仍只能用这套系统字体。
+
+**期望**：正文 / 代码能各填一条字体列表（留空用默认），字号按 px 直接调，改完立刻生效、重启保持。
+
+**实际**：只有整体倍率；字体写死在令牌里。
+
+**证据**
+
+- 修复前 `src/packages/ui-settings/ui/ui.tsx:1135` 的 `appearanceKeys` 只有
+  `themeMode / fontSize / density`，设置页没有字体控件。
+- 修复前 `~/.dsc/settings.json` 的 `ui` 段没有字体字段；`tokens.css:384-390` 两条字体令牌写死。
+- 字号语义是倍率，基准实际 14px（`styles.css:3806` 覆盖了 tokens 里的 13px），
+  于是「100%」和「14px」在界面上对不上——设置页的说明还写着「正文 13px 为基准」。
+
+**初步定位**：设计缺口，不是某一处写错。方案与取舍见 `docs/font-settings-plan.md`。
+
+### 修复（2026-11-17）
+
+**改了什么**：
+
+- 字号真源换成 `ui.textSizePx`（10–22，默认 14）；`fontSize` 保留为派生值（px ÷ 14），
+  给还没升级的消费方读；旧档只写了倍率或 `'sm'|'md'|'lg'` 的，读档时一次性换算成 px。
+- 新增 `ui.textFontFamily` / `ui.codeFontFamily`，逗号分隔、空串 = 内置栈。
+  归一函数 `normalizeFontList` 与 px↔倍率换算收在 `src/contract/fonts.ts`，宿主、壳、设置页共用一份。
+- 设置页外观区加两行字体输入框（草稿 + 失焦/回车提交 + Esc 还原），字号滑杆改成 px（10–22，步长 1）。
+- 字体令牌改成 `var(--dsc-font-text, 内置栈), 内置栈` 的形状；空串时壳 `removeProperty`
+  （写空串会让整条 `font-family` 非法、退回浏览器默认字体）。
+
+提交 `1016fc48`。
+
+**怎么验的**：
+
+- `node scripts/ui-font-prefs-test.mjs` → **41/41**（旧档迁移、夹取、字体串归一、写盘往返）。
+- `node scripts/ui-font-apply-test.mjs` → **42/42**（假 DOM 上跑真 `applyAppearance`：空串删变量、
+  px→倍率、老镜像迁移、令牌接线）。
+- `pnpm run check:ui` → **83/83**；`pnpm run build`、`build:ui`、两份 `tsc`、`desktop typecheck` 全 0。
+- 真机 `desktop/shots/font-scale-shots.ps1 -Case fonts-custom` 的 DOM 读数：
+  `textInput="\"Noto Sans SC\""`、`codeInput="Consolas"`、`bodyFirst="Noto Sans SC"`，
+  落盘 `settings.json` 是 `textSizePx:15 / fontSize:1.0714 / textFontFamily:"\"Noto Sans SC\""`。
+
+---
+
+## BUG-0014：过程正文 12px + 54% 灰，对比度约 3.9:1，低于小字号的 4.5:1
+
+- **状态**：不修（理由见下：这是 2026-11-07 的排版取舍，改配色属于主题层整批调整；
+  这次的字号滑杆已能把它按比例放大，先留记录）
+- **严重度**：P3（可读性差，不影响功能）
+- **发现**：2026-11-17，0.9.1，`dev`
+- **影响**：会话流里「模型先说一句再调工具」那种过程正文（`.entry-note`），以及同档灰的
+  工具行 / 卡片行（11px）。中文雅黑在这个色阶上笔画发虚。
+
+**复现**：任意一轮里找「我来查一下……」这种过程正文，截图取色。
+
+**期望**：小字号正文的对比度 ≥ 4.5:1。
+
+**实际**：`--dsc-text-tertiary-a: 54%` 压在 claude 主题的 `#faf9f5` 上约 `#7e7e7b`，
+对比度约 3.9:1。
+
+**证据**
+
+- `src/packages/ui-renderer/ui/styles/legacy/views.css:1416-1420`（`.entry-note`：12px + tertiary）。
+- `tokens.css:536`（`--dsc-text-tertiary-a: 54%`）、`tokens.css:497-537`（claude 主题色阶）。
+
+**初步定位**：`views.css:1416-1420` + `tokens.css:536`。
+
+**修复方向**：两条路——把 `.entry-note` 提到 secondary（74%，约 7.7:1），或把 tertiary 整体上调；
+后者会牵动所有用同一档灰的次要文字（时间、说明、角标），要跟主题层一起评估。
+
+**验收**：改完用取色脚本量 `.entry-note` 的前景/背景，对比度 ≥ 4.5:1；并复查深色与 claude 两套主题。
