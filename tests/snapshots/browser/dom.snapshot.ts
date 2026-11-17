@@ -36,7 +36,7 @@
  *
  * @module dsc/tests/snapshots/browser/dom.snapshot
  */
-import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -58,22 +58,26 @@ import {
 const DRIVER = join(ROOT, 'tests', 'snapshots', 'browser', 'drivers', 'dom-shot.cjs')
 /** 宿主进程的钉死时钟预加载（`node --require`；理由见该文件头注释）。 */
 const HOST_CLOCK_PRELOAD = join(ROOT, 'tests', 'snapshots', 'browser', 'drivers', 'pin-host-clock.cjs')
+/** 宿主进程的钉死工作目录预加载（`node --require`；理由见 {@link seedHostWorkdir}）。 */
+const HOST_CWD_PRELOAD = join(ROOT, 'tests', 'snapshots', 'browser', 'drivers', 'pin-host-cwd.cjs')
 
 /**
- * 把宿主进程的时钟钉到 `at`：在 `NODE_OPTIONS` 里追加一个 `--require` 预加载（原有 flags
- * 保留），预加载读 `DSC_DOM_HOST_NOW` 后替换宿主进程的 `Date`。
+ * 往宿主子进程的 `NODE_OPTIONS` 里追加若干 `--require` 预加载（原有 flags 保留），
+ * 连同预加载要读的环境变量一起返回。
  *
  * 为什么走 `NODE_OPTIONS`：宿主是 `startUiHost` 起的**子进程**
- * （`tests/e2e/support/host.ts:102`），测试进程里的 `vi.setSystemTime` 管不到它；而页面侧
- * 的 `Date` 由 `bootScript` 单独钉。两侧同一个时刻，页面算相对时间才恒为非负。
+ * （`tests/e2e/support/host.ts:102`），测试进程里的 `vi.setSystemTime` / `process.chdir`
+ * 都管不到它。页面侧的 `Date` 由 `bootScript` 单独钉；两侧同一个时刻，页面算相对时间才
+ * 恒为非负。工作目录同理：`src/host/kernel.ts:47-48` 把 `process.cwd()` 交给 session 与
+ * desktop-dock，必须在宿主启动前改掉。
  */
-function pinnedHostEnv(at: number): Record<string, string> {
+function hostPreloadEnv(preloads: readonly string[], env: Record<string, string>): Record<string, string> {
   // 路径按 NODE_OPTIONS 的解析规则加引号：检出目录带空格时也不能散架。
-  const requireFlag = `--require "${HOST_CLOCK_PRELOAD.replaceAll('\\', '/')}"`
+  const flags = preloads.map((file) => `--require "${file.replaceAll('\\', '/')}"`).join(' ')
   const existing = process.env['NODE_OPTIONS']
   return {
-    NODE_OPTIONS: existing === undefined || existing === '' ? requireFlag : `${existing} ${requireFlag}`,
-    DSC_DOM_HOST_NOW: String(at),
+    ...env,
+    NODE_OPTIONS: existing === undefined || existing === '' ? flags : `${existing} ${flags}`,
   }
 }
 
@@ -140,6 +144,14 @@ interface Scenario {
   stable: string
   /** 预置隔离 HOME；调用前 `.dsc` 已建好。 */
   seed(dsc: string): void
+  /**
+   * 这一场界面看到的「当前工作区」有没有 git 读数（见 {@link seedHostWorkdir}）。
+   *
+   * 必填：当前会话的 cwd 默认是宿主进程 cwd = 本次检出的仓库根，工作树脏不脏会漏进
+   * golden。要画「更改」胶囊 / 分支名的场景给 `dirty-repo`，不该有 Git 读数的场景给
+   * `empty`——新加场景时编译器会拦一次，逼作者想清楚这一场依赖哪种现场。
+   */
+  hostWorkdir: HostWorkdir
   /** 窗口尺寸（窄屏场景用）。 */
   width?: number
   height?: number
@@ -333,6 +345,99 @@ function writeTeammateLog(dsc: string): string {
  */
 const SNAP_NOW = Date.parse('2026-11-17T04:00:00Z') // +08:00 本地正午
 
+/**
+ * 种子 git 现场的分支名。golden 里归一成 `<branch>`（见 `normalizeDom`），与检出目录
+ * 当前分支共用同一个占位符——两份都是「分支名」，换条分支跑不该红。
+ */
+const FIXTURE_BRANCH = 'snapshot-fixture'
+
+/** 种子仓库初始提交的时刻：固定值，让仓库本身也可复现（提交哈希不进 DOM）。 */
+const FIXTURE_COMMIT_AT = '2025-01-02T03:04:05Z'
+
+/**
+ * 给 git 子进程用的环境：剥掉继承来的 `GIT_*`（`GIT_DIR` 是 git worktree 的常规变量，
+ * 留着会把种子命令带到别人的仓里），再叠固定的作者 / 提交时刻。
+ *
+ * 还要把**全局 / 系统级 git 配置**挡掉（`GIT_CONFIG_GLOBAL` 指向空文件 +
+ * `GIT_CONFIG_NOSYSTEM=1`）：跑测试的人若在 `~/.gitconfig` 开了 `commit.gpgsign`、
+ * 配了 `core.hooksPath` 或 `init.templateDir`，种子 `git commit` 会失败甚至挂住——那是
+ * 机器配置问题，却会让 7 个 dirty 场景硬红（2026-11-17 验收 F2）。空配置下只剩本仓
+ * `git config` 设的用户名与邮箱，行为与机器无关。
+ *
+ * @param emptyConfig - 空 git 配置文件路径（放在种子目录外、隔离 HOME 里）
+ */
+function fixtureGitEnv(emptyConfig: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || key.toUpperCase().startsWith('GIT_')) continue
+    env[key] = value
+  }
+  return {
+    ...env,
+    GIT_AUTHOR_DATE: FIXTURE_COMMIT_AT,
+    GIT_COMMITTER_DATE: FIXTURE_COMMIT_AT,
+    GIT_CONFIG_GLOBAL: emptyConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
+    // 双保险：即使有别的配置来源把签名打开，也不让 commit 等用户输入。
+    GIT_TERMINAL_PROMPT: '0',
+  }
+}
+
+/**
+ * 宿主启动时的工作目录现场：决定界面看到的**当前工作区有没有 git 读数**。
+ *
+ * - `dirty-repo`：种子造的临时 git 仓库（固定分支 + 固定两条未提交改动）→ 状态面板收起
+ *   胶囊那行「更改」与输入框上方分支名恒出现；
+ * - `empty`：只是一个空目录（不是 git 仓库）→ 状态面板不挂 Git 区、输入框上方没有分支名。
+ *
+ * 为什么必须有它（见 {@link seedHostWorkdir}）：界面读的是**宿主进程 cwd**，也就是本次
+ * 检出的仓库根；不钉的话 golden 只能钉在「录的那一刻恰好脏 / 干净」。
+ */
+type HostWorkdir = 'dirty-repo' | 'empty'
+
+/**
+ * 造「界面所处状态」由场景自己决定的宿主工作目录，并让宿主在它里面启动。
+ *
+ * 为什么必须造：状态面板收起胶囊那行「更改」、输入框上方的分支名，读的都是**当前会话工作
+ * 目录**的 git 状态；而当前会话（还没发过消息那条）的 cwd 来自宿主进程的 cwd
+ * （`src/host/kernel.ts:47`）——本次检出的仓库根。它脏不脏取决于跑测试的人手上有没有未提交
+ * 改动，golden 因此只能钉在「录的那一刻恰好脏 / 干净」：干净时状态面板整块不挂，
+ * `dom.buttons` 少 5、`dom.elements` 少 53，那行「更改」也消失（反之亦然）。
+ *
+ * 修法：宿主是子进程（`tests/e2e/support/host.ts:102`），测试进程改不了它的 cwd；这里用
+ * `node --require` 预加载（`drivers/pin-host-cwd.cjs`，与钉时钟同一套机制）在宿主启动前
+ * `process.chdir()` 到种子目录。目录名与检出目录同名（侧栏工作区分组画的就是它，归一成
+ * `<repo>`），所以 golden 的分组行不随机器变。
+ *
+ * `dirty-repo` 另外固定两件事：分支名 {@link FIXTURE_BRANCH}（归一成 `<branch>`），以及
+ * 两条未提交改动（已跟踪的 `README.md` 改一行 + 未跟踪的 `notes.txt`）。当前会话仍是
+ * 「没落盘的空会话」（不恢复任何会话文件），欢迎页与侧栏回执那一行照旧。
+ *
+ * @returns 种子目录的绝对路径（交给预加载当 `DSC_DOM_HOST_CWD`）。
+ */
+function seedHostWorkdir(home: string, mode: HostWorkdir): string {
+  const dir = join(home, basename(ROOT))
+  mkdirSync(dir, { recursive: true })
+  if (mode === 'empty') return dir
+  // 空 git 配置：挡掉宿主机的 ~/.gitconfig 与系统配置（理由见 {@link fixtureGitEnv}）。
+  const emptyConfig = join(home, '.gitconfig-empty')
+  if (!existsSync(emptyConfig)) writeFileSync(emptyConfig, '', 'utf8')
+  const run = (...args: string[]): void => {
+    execFileSync('git', args, { cwd: dir, env: fixtureGitEnv(emptyConfig), stdio: 'ignore' })
+  }
+  run('init', '-b', FIXTURE_BRANCH)
+  run('config', 'user.email', 'snapshot@example.invalid')
+  run('config', 'user.name', 'Snapshot Fixture')
+  const readme = '# 快照种子仓库\n\n这个仓库由 `tests/snapshots/browser/dom.snapshot.ts` 现造。\n'
+  writeFileSync(join(dir, 'README.md'), readme, 'utf8')
+  run('add', 'README.md')
+  run('-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-m', 'fixture: 初始提交')
+  // 固定的一组未提交改动：一条已跟踪、一条未跟踪。worktree 与 index 的差就是它。
+  writeFileSync(join(dir, 'README.md'), `${readme}\n未提交的一行。\n`, 'utf8')
+  writeFileSync(join(dir, 'notes.txt'), '未跟踪的种子文件\n', 'utf8')
+  return dir
+}
+
 /** 把页面 `Date` 钉死在 SNAP_NOW：`new Date()` 与 `Date.now()` 走固定值，parse/UTC/带参构造不动。 */
 const PIN_CLOCK_BOOT = `(() => {
   const fixed = ${String(SNAP_NOW)}
@@ -413,12 +518,15 @@ const SCENARIOS: readonly Scenario[] = [
     slug: '01-welcome-empty',
     title: '欢迎页（空会话 + 仅当前未落盘会话）',
     stable:
-      '欢迎页只有四张静态能力卡与输入框；招呼语按现在几点六选一（归一化成 `<greeting>`），' +
-      '版本号、仓库目录名与相对时间也已归一。侧栏只有当前这条“还没发过消息”的会话回执，' +
-      '没有历史会话、没有用量。',
+      '当前会话的工作目录是种子造的临时 git 仓库（目录名与检出目录同名，归一成 `<repo>`；' +
+      '分支固定、归一成 `<branch>`；未提交改动固定两条），所以状态面板收起胶囊那行「更改」与' +
+      '输入框上方分支名恒出现，不随跑测试时的工作树脏不脏变化。欢迎页只有四张静态能力卡与' +
+      '输入框；招呼语按现在几点六选一（归一化成 `<greeting>`），版本号、仓库目录名与相对时间' +
+      '也已归一。侧栏只有当前这条“还没发过消息”的会话回执，没有历史会话、没有用量。',
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.welcome' },
       { type: 'wait', selector: '.welcome-card' },
@@ -438,12 +546,15 @@ const SCENARIOS: readonly Scenario[] = [
     slug: '02-session-list',
     title: '会话列表（三条种子会话 + 接着上次）',
     stable:
-      '会话标题来自种子的首条用户消息，分组按固定 cwd（`D:\\dom-work`），排序按固定 mtime；' +
-      '行尾相对时间归一成 `<time>`，空会话首屏的“接着上次”卡片只挑最近七天内最早更新的一条。',
+      '当前会话的工作目录是种子造的临时 git 仓库（目录名与检出目录同名，归一成 `<repo>`；' +
+      '分支与两条未提交改动都是固定值，状态面板的「更改」胶囊恒出现）。会话标题来自种子的' +
+      '首条用户消息，分组按固定 cwd（`D:\\dom-work`），排序按固定 mtime；行尾相对时间归一成' +
+      '`<time>`，空会话首屏的“接着上次”卡片只挑最近七天内最早更新的一条。',
     seed: (dsc) => {
       writeConfig(dsc)
       seedSessions(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.sess-item' },
       // 种子会话在另一个工作区分组里，默认收起；展开它才看得到三条历史。
@@ -472,6 +583,9 @@ const SCENARIOS: readonly Scenario[] = [
       writeConfig(dsc)
       writeSession(dsc, SESSION_ID, messageRecords(), T0 + 5_000)
     },
+    // 点开的是种子会话（cwd = 不存在的 `D:\dom-work`），本来就没有 Git 读数；宿主起始
+    // 工作目录也钉成非仓库的空目录，避免开跑那一拍把本次检出的工作树状态带进来。
+    hostWorkdir: 'empty',
     actions: [
       { type: 'wait', selector: '.sess-item' },
       // 种子会话在另一个工作区分组里，默认收起。
@@ -518,10 +632,12 @@ const SCENARIOS: readonly Scenario[] = [
     title: '设置-模型（两个端点 + 三个模型）',
     stable:
       '端点与模型全部来自种子 config.yaml；密钥状态只看环境变量在不在（本次不设）；' +
-      '配置路径里的隔离 HOME 归一成 `<TMP>`，版本号归一成 `<version>`。',
+      '配置路径里的隔离 HOME 归一成 `<TMP>`，版本号归一成 `<version>`。当前会话的 git 现场' +
+      '也来自种子仓库（固定分支 + 固定两条未提交改动），侧栏「更改」胶囊恒出现。',
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.app' },
       {
@@ -545,11 +661,13 @@ const SCENARIOS: readonly Scenario[] = [
     stable:
       '页面时钟钉死在 SNAP_NOW（2026-11-17 本地正午），用量流水按固定日期种子生成：' +
       '热力图按「今天」回溯铺格，格子数与元素总数不再随真实日历逐日漂移（2026-11-17 跨天必红的根因）；' +
-      '汇总值（总 token / 活跃天数 / 缓存命中）只随种子变化；日期与月标签是时间函数，归一成 `<date>` / `<month>`。',
+      '汇总值（总 token / 活跃天数 / 缓存命中）只随种子变化；日期与月标签是时间函数，归一成 `<date>` / `<month>`。' +
+      '当前会话的 git 现场也来自种子仓库（固定分支 + 固定两条未提交改动），侧栏「更改」胶囊恒出现。',
     seed: (dsc) => {
       writeConfig(dsc)
       writeUsage(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     bootScript: PIN_CLOCK_BOOT,
     // 宿主进程的时钟也钉到同一个 SNAP_NOW：侧栏「当前未落盘会话」的 createdAt 来自宿主
     // 进程（`Session.create` 的 `Date.now()`），只钉页面会让页面的相对时间变成负数，
@@ -587,6 +705,9 @@ const SCENARIOS: readonly Scenario[] = [
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    // 插件中心没有输入框与状态胶囊，但侧栏分组画的是当前工作区；钉成非仓库的空目录，
+    // 让「有没有 Git 读数」也只由场景决定。
+    hostWorkdir: 'empty',
     actions: [
       { type: 'wait', selector: '.nav-item' },
       { type: 'click', selector: '.nav-item', text: '插件' },
@@ -604,11 +725,13 @@ const SCENARIOS: readonly Scenario[] = [
     slug: '07-command-palette',
     title: '命令面板（动作清单）',
     stable:
-      '面板列出静态动作表与「最近会话」组的当前未落盘会话；动作来自各插件注册，顺序稳定。' +
-      '当前会话的工作目录是仓库根，归一成 `<repo>`；面板打开后焦点在搜索框，输入内容不进 DOM。',
+      '面板列出静态动作表与「最近会话」组里的当前会话；动作来自各插件注册，顺序稳定。' +
+      '当前会话的工作目录是种子造的临时 git 仓库（目录名与检出目录同名，归一成 `<repo>`；' +
+      '固定分支与固定两条未提交改动），面板打开后焦点在搜索框，输入内容不进 DOM。',
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.app' },
       { type: 'eval', expression: "window.dispatchEvent(new CustomEvent('shell.palette.open')); return true" },
@@ -636,6 +759,9 @@ const SCENARIOS: readonly Scenario[] = [
       const mateFile = writeTeammateLog(dsc)
       writeRoster(dsc, mateFile)
     },
+    // 点开的是种子会话（cwd = 不存在的 `D:\dom-work`），本来就没有 Git 读数；宿主起始
+    // 工作目录也钉成非仓库的空目录，保证开跑那一拍也没有。
+    hostWorkdir: 'empty',
     actions: [
       { type: 'wait', selector: '.sess-item' },
       // 种子会话在另一个工作区分组里，默认收起。
@@ -661,10 +787,12 @@ const SCENARIOS: readonly Scenario[] = [
     title: 'dock 面板（右侧栏 + 开始页）',
     stable:
       'dock 默认收起、内含一张 guide 页签；点开只改变展开态。guide 的四张入口卡与快捷键' +
-      '都是静态文案，不随会话或用量变化。',
+      '都是静态文案，不随会话或用量变化。当前会话的工作目录是种子造的临时 git 仓库' +
+      '（固定分支 + 固定两条未提交改动），「更改」胶囊恒出现。',
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.dock-toggle' },
       { type: 'click', selector: '.dock-toggle' },
@@ -684,12 +812,15 @@ const SCENARIOS: readonly Scenario[] = [
     title: '窄屏（mobile）布局',
     stable:
       '视口宽 420 落在 `max-width: 860px` 断点内，壳走 narrow 分支：侧栏不画、导航挂在顶栏、' +
-      '正文页签行收起。断点判定只读视口宽，与 UA 无关；招呼语归一成 `<greeting>`。',
+      '正文页签行收起。断点判定只读视口宽，与 UA 无关；招呼语归一成 `<greeting>`。' +
+      '当前会话的工作目录是种子造的临时 git 仓库（固定分支 + 固定两条未提交改动），' +
+      '「更改」胶囊恒出现。',
     width: 420,
     height: 860,
     seed: (dsc) => {
       writeConfig(dsc)
     },
+    hostWorkdir: 'dirty-repo',
     actions: [
       { type: 'wait', selector: '.app' },
       { type: 'wait', selector: '.topbar-nav-btn' },
@@ -713,6 +844,9 @@ const SCENARIOS: readonly Scenario[] = [
       writeConfig(dsc)
       writeSession(dsc, SESSION_ID, reviewRecords(), T0 + 5_000)
     },
+    // 点开的是种子会话（cwd = 不存在的 `D:\dom-work`），本来就没有 Git 读数；宿主起始
+    // 工作目录也钉成非仓库的空目录，保证开跑那一拍也没有。
+    hostWorkdir: 'empty',
     actions: [
       { type: 'wait', selector: '.sess-item' },
       { type: 'click', selector: '.group-row', text: 'dom-work' },
@@ -771,6 +905,8 @@ function pathVariants(path: string): string[] {
  * 把无常项折成占位符；每条规则都有明确理由。
  *
  * - 隔离 HOME / 临时目录：每次 `mkdtemp` 都不同，整段换成 `<TMP>`；
+ * - 种子工作目录：宿主被钉在 `<home>/<检出目录名>` 里跑，界面会把它当「当前工作区」画
+ *   出来（命令面板的「最近会话」直接给完整路径），换成 `<repo>`——与检出目录同义的占位符；
  * - 界面令牌：入口地址带 `?token=`，出现在标题或诊断行时不能进 golden；
  * - 会话 id / uuid：种子自己固定，但产品会在 DOM 里回显别的 id，统一折；
  * - 招呼语：按现在几点六选一，跨时段跑会红；
@@ -778,8 +914,10 @@ function pathVariants(path: string): string[] {
  * - 日期 / 时间 / 相对时间：种子按「相对今天」铺用量，日期标签是时间函数；
  * - 耗时读数：工具卡与队友卡的 `1.2s` / `1m4s` 来自时钟，不是业务文本。
  */
-function normalizeDom(text: string, home: string, branch: string): string {
+function normalizeDom(text: string, home: string, branch: string, workdir: string | null): string {
   let out = text.replace(/\r\n/g, '\n')
+  // 种子工作目录在 home 下面，先折它——否则整段先被 `<TMP>` 吞掉。
+  if (workdir !== null) for (const variant of pathVariants(workdir)) out = out.split(variant).join('<repo>')
   for (const variant of pathVariants(home)) out = out.split(variant).join('<TMP>')
   for (const variant of pathVariants(ROOT)) out = out.split(variant).join('<repo>')
   for (const variant of pathVariants(tmpdir())) {
@@ -787,7 +925,11 @@ function normalizeDom(text: string, home: string, branch: string): string {
   }
   // 分支名在状态栏里是独占一行；不要用子串替换（分支叫 `main` 时会把英文文本里的
   // `main` 一起吞掉）。目录名同理，见下。
-  if (branch !== '') out = out.replace(new RegExp(`^${escapeRegExp(branch)}$`, 'gm'), '<branch>')
+  // 两个来源：检出目录的当前分支（`currentBranch()`）与种子仓库的固定分支
+  // （`FIXTURE_BRANCH`）——都是「分支名」，golden 里共用 `<branch>`。
+  for (const name of new Set([branch, FIXTURE_BRANCH])) {
+    if (name !== '') out = out.replace(new RegExp(`^${escapeRegExp(name)}$`, 'gm'), '<branch>')
+  }
   if (REPO_NAME.length > 2) out = out.replace(new RegExp(`^${escapeRegExp(REPO_NAME)}$`, 'gm'), '<repo>')
   out = out.replace(/token=[A-Za-z0-9_-]+/g, 'token=<token>')
   out = out.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>')
@@ -821,7 +963,7 @@ function normalizeDom(text: string, home: string, branch: string): string {
 }
 
 /** 把一次真机读数转成 golden 文本：场景说明 + hash + 计数 + 整页文本。 */
-function toGolden(scenario: Scenario, shot: DomShot, home: string, branch: string): string {
+function toGolden(scenario: Scenario, shot: DomShot, home: string, branch: string, workdir: string | null): string {
   const counts = Object.entries(shot.counts ?? {}).sort(([left], [right]) => left.localeCompare(right))
   const styleLines = Object.entries(shot.styles ?? {})
     .sort(([left], [right]) => left.localeCompare(right))
@@ -840,7 +982,7 @@ function toGolden(scenario: Scenario, shot: DomShot, home: string, branch: strin
     ...counts.map(([name, value]) => `#   ${name} = ${String(value)}`),
     ...(styleLines.length === 0 ? [] : ['# 样式（真 Chromium computed style）：', ...styleLines]),
   ]
-  return normalizeDom([...header, '', shot.text ?? ''].join('\n'), home, branch)
+  return normalizeDom([...header, '', shot.text ?? ''].join('\n'), home, branch, workdir)
 }
 
 /** 一个场景的一轮真机。 */
@@ -853,6 +995,15 @@ async function runScenario(scenario: Scenario): Promise<void> {
   let host: UiHost | null = null
   try {
     scenario.seed(dsc)
+    // 宿主的启动工作目录（必填）：界面看到的「当前工作区」因此由场景决定，不是本次检出。
+    const workdir = seedHostWorkdir(home, scenario.hostWorkdir)
+    // 两处预加载可能同时要（05：钉时钟 + 钉工作目录），合并到同一条 NODE_OPTIONS 里。
+    const preloads: string[] = [HOST_CWD_PRELOAD]
+    const preloadEnv: Record<string, string> = { DSC_DOM_HOST_CWD: workdir }
+    if (scenario.hostPinnedNow !== undefined) {
+      preloads.push(HOST_CLOCK_PRELOAD)
+      preloadEnv['DSC_DOM_HOST_NOW'] = String(scenario.hostPinnedNow)
+    }
     const cdpPort = await freePort()
     host = await startUiHost({
       label: scenario.slug,
@@ -863,8 +1014,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
         // 端点解析要求 apiKeyEnv 真有值；给假串只是为了“已配置”这一支，不发请求。
         DSC_DOM_DEMO_KEY: 'dom-demo-key',
         DSC_DOM_SPARE_KEY: 'dom-spare-key',
-        // 页面时钟钉死的场景，宿主时钟必须钉在同一个时刻（否则相对时间会出现负数）。
-        ...(scenario.hostPinnedNow === undefined ? {} : pinnedHostEnv(scenario.hostPinnedNow)),
+        ...(preloads.length === 0 ? {} : hostPreloadEnv(preloads, preloadEnv)),
       },
     })
     const resultPath = join(home, 'dom-shot.json')
@@ -901,7 +1051,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
       )
     }
     if (!shot.error && (shot.text ?? '') === '') throw new Error(`[${scenario.slug}] 驱动写了空读数`)
-    const golden = toGolden(scenario, shot, home, currentBranch())
+    const golden = toGolden(scenario, shot, home, currentBranch(), workdir)
     // `DSC_DOM_DEBUG=1` 时把归一后的文本打出来：golden 红了先看这一份，不必再去翻临时目录。
     if (process.env['DSC_DOM_DEBUG'] === '1') console.log(`\n=== ${scenario.slug} ===\n${golden}`)
     for (const needle of scenario.expectText ?? []) {

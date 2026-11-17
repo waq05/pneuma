@@ -333,6 +333,10 @@ app.whenReady().then(async () => {
     }
     // 等壳把第一帧挂上：比 `readyState` 更贴近「界面真的能操作了」。
     await waitFor(cdp, `document.querySelector(${JSON.stringify(bootSelector)}) !== null`, 60_000, `首帧选择器 ${bootSelector}`)
+    // 启动占位（index.html 的 `#boot-splash`）在第一帧后淡出、240ms 后从 DOM 移除；淡出那
+    // 一小段里它仍算 `innerText` 的一部分（opacity 0 照样在渲染树里）。它是启动过程的东西、
+    // 不属于被测界面——不等它走干净，读数会时不时多出「PNEUMA / 正在启动…」与 5 个元素。
+    await waitFor(cdp, `document.getElementById('boot-splash') === null`, 30_000, '启动占位退场')
 
     for (const action of actions) {
       if (action === null || typeof action !== 'object') throw new Error(`动作形状不对：${JSON.stringify(action)}`)
