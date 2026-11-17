@@ -7,8 +7,13 @@
 
 复制下面的骨架，按顺序填；填不出来的写「查不到」，不要留空。
 
+**描述只写现象，原因与方案写进「解决」**（BUG-0015 起按这个形状写）：复现、期望、实际、证据是
+报告时就知道的东西；什么导致的、怎么修、怎么验，属于事后才知道的，一起塞进「解决」。
+分开放有两个好处——报告时不用猜原因（猜的必须标「这是猜的」，否则事后看成了结论），
+读者先对上的是现象，再看根因，不会被一个错误的初步判断带偏（BUG-0001 当年就猜错过一次）。
+
 ```
-## BUG-000N：一句话说清用户遇到什么
+## BUG-000N：一句话说清用户遇到什么（只写现象，不写原因）
 
 - **状态**：待修 / 修复中 / 已修 / 不修（附理由）
 - **严重度**：P0 阻断（功能不可用）/ P1 高（主要路径受影响）/ P2 中（有替代路径）/ P3 低
@@ -17,7 +22,7 @@
 
 **复现**
 1. ……
-2. 探针：`node desktop/shots/_xxx.mjs`（能一条命令跑出来的必须给）
+2. 探针：`node scripts/<话题>-test.mjs`（能一条命令跑出来的必须给）
 
 **期望**：……
 **实际**：……
@@ -25,11 +30,12 @@
 **证据**
 - 报错原文 / 采样数据 / 截图路径
 
-**初步定位**（推测要标出来）
-- `文件:行号`：……
+### 解决（2026-MM-DD）
 
-**修复方向**：……
-**验收**：跑哪条命令、看哪几个判据
+**原因**：……
+**方案**：改了哪些文件、为什么这么改（修完了才知道的，写这里）
+**怎么验的**：跑哪条命令、看哪几个判据、结果是什么
+**提交**：`<短 hash>`
 ```
 
 ---
@@ -52,6 +58,8 @@
 | BUG-0012 | 等宽文本里的中文落到宋体，代码块与工具输出发灰发糊 | P2 | 已修（2026-11-17） | Windows 上所有走 `--dsc-font-mono` 的地方：代码块、行内代码、工具输出 |
 | BUG-0013 | 字号只能整体缩放、字体不可选，正文调不到舒服的大小 | P2 | 已修（2026-11-17） | 设置 → 外观：字体不可配；调到 135% 会连带放大侧栏与标题 |
 | BUG-0014 | 过程正文 12px + 54% 灰，对比度约 3.9:1 | P3 | 不修（设计取舍，留记录） | 会话流里的过程正文、工具行、卡片行的可读性 |
+| BUG-0015 | 搜索服务填好了 key，`web_search` 每次仍回 HTTP 401 | P1 | 已修（2026-11-17） | 联网搜索（Tavily / 博查 / Serper 三条路都中） |
+| BUG-0016 | 没填 key 时 `web_search` 从工具表里消失，模型改用 curl 撞沙箱 TLS | P2 | 已修（2026-11-17） | 联网搜索的默认状态；会话里任何「上网查一下」 |
 
 ---
 
@@ -779,3 +787,108 @@ node scripts/settings-embed-slot-test.mjs
 后者会牵动所有用同一档灰的次要文字（时间、说明、角标），要跟主题层一起评估。
 
 **验收**：改完用取色脚本量 `.entry-note` 的前景/背景，对比度 ≥ 4.5:1；并复查深色与 claude 两套主题。
+
+---
+
+## BUG-0015：搜索服务填好了 key，`web_search` 每次仍回 HTTP 401，一条结果都搜不到
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P1（有替代路径：可以让我直接抓网页，但「搜索」这条主路径整个不可用）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：在插件中心给「联网搜索」填过 Tavily / 博查 / Serper 任何一家 key 的人。因为填不填 key
+  都一样失败，第一反应通常是「key 填错了」「服务挂了」「额度用完了」——排查方向被带偏。
+
+**复现**
+
+1. 插件中心 → 联网搜索 → 搜索服务选 Tavily，填一个好用的 key，保存。
+2. 会话里让模型查一条公开消息（例如某个库的最新版本号）。
+3. 工具结果回 `HTTP 401：{"detail":{"error":"Unauthorized: missing or invalid API key."}}`。
+
+**期望**：返回标题 + 链接 + 摘要的结果清单。
+
+**实际**：每次调用都 401，换哪家提供方都一样。
+
+**证据**
+
+- 修复前 `src/packages/web-search/index.ts:222-227` 已经把鉴权头算好了
+  （`{ authorization: 'Bearer <key>' }` 或 `{ 'X-API-KEY': <key> }`），
+  但 `index.ts:228-231` 调 `search()` 时**没把它传下去**。
+- 修复前 `search()` 的签名里没有这个参数，三个 `postJson(...)` 的第二参都写死空对象：
+  `index.ts:135-137`（tavily）、`index.ts:154-156`（博查）、`index.ts:166`（serper）。
+- 于是请求里既没有 `authorization` 也没有 `X-API-KEY`，服务端按未鉴权处理，回 401。
+
+### 解决（2026-11-17）
+
+**原因**：key 取到了、头也拼好了，但 `search()` 的入参里没这一项，调用点想传都传不进去。
+TypeScript 不会为「算出来没用」报错（那个变量在声明处活了一次就没人读），所以编译、门禁、
+源码形状断言全绿，只有真发一次请求才炸。
+
+**方案**：
+
+- 把 key 挪进请求对象（`SearchRequest`），由 `search()` 自己拼鉴权头（`authHeaders()`）。
+  这样「少传 key」是**编不过**的，同类「参数算了却没传」不会再从数据面漏出去。
+- 三个 `postJson(...)` 改成收 `auth`，不留空头的写法。
+- 补一条请求面探针 `src/packages/web-search/tests/web-search-request.test.mjs`：用假 ctx +
+  假 fetch 把工具真跑一遍，断言 `authorization === 'Bearer test-key-123'`、切到 serper 时换成
+  `X-API-KEY`。以前的包级测试只对源码做形状断言，挡不住运行期丢参数。
+
+**怎么验的**：`node src/packages/web-search/tests/web-search-request.test.mjs` → **18/18 通过，
+退出码 0**；`pnpm run check:plugin` → **退出码 0**（93 包 / 143 用例 / 1752 断言全过）。
+
+**提交**：`9d4db04f`
+
+---
+
+## BUG-0016：没填 key 时 `web_search` 从工具表里消失，模型改用 curl 抓网页并报 SEC_E_NO_CREDENTIALS
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：填上 key 立刻正常；但用户看到的是「网络不通」的假象）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：装好、用默认配置、还没给「联网搜索」填 key 的人。会话里任何一句「上网查一下」
+  都会落到 shell 里的 curl 上。
+
+**复现**
+
+1. 不动插件配置：`~/.dsc/plugins.json` 里 `web-search` 是开着的，但没有 `apiKey` / `apiKeyEnv`，
+   环境变量与 `~/.dsc/credentials.yaml` 里也没有对应 key。
+2. 会话里说「查一下 X 的最新版本」，模型拿不到 `web_search`，于是 `bash` + `curl https://…`。
+3. 沙箱里回：`curl: (35) schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030e)`。
+
+**期望**：模型看得见 `web_search`，调用后拿到一句「还没配 key，去哪填」，把原因转述给用户。
+
+**实际**：工具整个不在工具表里，提示词里也没有搜索这回事。模型改用 curl，撞上沙箱的 TLS 限制，
+用户看到的是一句网络错误。
+
+**证据**
+
+- 修复前 `src/packages/web-search/index.ts:179-182`：`syncTool()` 开头
+  `if (resolveKey(config) === '') return () => {}`——没 key 就什么都不注册。
+- 修复前 `index.ts:239-249`：提示词也在没 key 时返回空串（`resolveKey(readConfig()) === '' ? '' : …`），
+  模型连「这里本来有搜索」都不知道。
+- 本机 30 个会话的 `session.jsonl` 里 `web_search` 调用 **0 次**；启动时那句 notice
+  （「联网搜索已启用，但还没配搜索服务的 key」）**一次都没出现**——两条独立证据都指向「工具不在场」。
+- 同一环境下 `node -e "fetch('https://www.baidu.com')"` 与 `git ls-remote https://…` 都通，
+  只有走 Windows Schannel 的 `curl.exe` / `Invoke-WebRequest` 失败——所以「网络不通」是假象。
+
+### 解决（2026-11-17）
+
+**原因**：两件事叠在一起。① 没 key 就把工具撤掉，模型失去「我能搜」这个信号，只能改用 shell；
+② 沙箱的受限令牌（Low 完整性 + 限制 SID）拿不到用户凭据，走 Schannel 的 curl 因此报
+`SEC_E_NO_CREDENTIALS`，而 Node 自己的 TLS 栈不受影响。
+
+**方案**：
+
+- 工具改成**稳定注册**：一直挂在工具表里；没取到 key 时调用回一句可照做的错
+  （写明 `DEEPSEEK_API_KEY` / `~/.dsc/credentials.yaml` / 插件中心，并明说别用 curl）。提示词同样常驻。
+- 新增 `web-fetch` 插件（工具 `web_fetch`）：抓取搬到宿主进程，HTML 转 Markdown，不依赖任何 key，
+  模型不必再碰 shell；提示词里写明「别用 curl，沙箱里会报 SEC_E_NO_CREDENTIALS」。
+
+**怎么验的**：
+
+- `node src/packages/web-search/tests/web-search-request.test.mjs` → **18/18**（其中三条钉的就是：
+  没 key 时工具仍在场、调用回可照做的错、启动 notice 提到 `DEEPSEEK_API_KEY`）。
+- `node src/packages/web-fetch/tests/web-fetch.test.mjs` → **25/25**。
+- 真机（进程内、临时 HOME）：`web_fetch` 抓 `https://example.com` → HTTP 200 + Markdown；
+  `http://github.com` → 明确报「被重定向到 https://…（跨域，不自动跟随）」；`file://` → 拦住。
+
+**提交**：`9d4db04f`（web-search 侧）、`b2f55c30`（web-fetch 侧）
