@@ -91,10 +91,13 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 2. **快照层的会话回放已闭环**（B45，2026-11-17）：`tests/snapshots/session/basic-turn/`
    `session.jsonl` 已入库（2 行 / 496 字节，模型输出经人审），回放连跑两次各 4 passed；
    TUI 帧 30 与浏览器 11 是实跑的。夜跑设 `DSC_SNAPSHOT_STRICT=1`，缺录制即红。
-    **已知红**：浏览器 DOM 快照里 01 / 02 / 04 / 05 / 07 / 09 / 10 七条 golden 与当前
-    运行时的界面对不上（少一个「更改」页签：`dom.buttons` 35→30、`dom.elements` 315→262），
-    TUI 30 条与会话回放 4 条全绿；`git diff HEAD -- ui-shell src lib` 为空、golden 未动，
-    与本轮 13 个提交无关（属 HEAD 自带红）。需 golden 负责人判断「重录」还是「UI 真漏了页签」；CI 上是否同样红要等夜跑/手动触发的实证。
+    **原先的七条已知红已消除**（2026-11-17）：浏览器 DOM 快照 01/02/04/05/07/09/10 曾因
+    「界面所处状态没钉死」而红（状态面板那行「更改」读的是宿主 cwd 的 git 状态，golden 钉的
+    其实是「录基准那一刻检出恰好是脏的」）。现在场景自己造固定分支 + 固定两条未提交改动的
+    种子 git 仓库（`hostWorkdir: 'dirty-repo'`），03/06/08/11 钉 `empty`；7 份 golden 只改了
+    `# 稳定：` 说明，正文与计数逐字节未变。判据：干净树 11 passed、故意弄脏跟踪文件再跑仍
+    11 passed、全量 45 passed，均 exit 0。
+3. **e2e / snapshot / coverage 只在夜跑跑**（B46 部分闭环）：`verify.yml` 已有 `snapshot`、
    `e2e`、`coverage`、`probe` 四个夜跑 job，并由 `all-nightly-passed` 汇总；PR 门上刻意
    不跑这四道（进了 needs 会因为 skipped 把每个 PR 判红）。
 4. **live 层从未对真模型执行过**（K6）：开发机没有 `DSC_LIVE_API_KEY`，只验了
