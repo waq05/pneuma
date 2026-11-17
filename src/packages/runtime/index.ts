@@ -22,7 +22,13 @@ import {
 import { buildUsageStats } from '@pneuma/runtime/core/usage-log.js'
 import { sideAskOnce } from '@pneuma/runtime/core/side-ask.js'
 import { shellCommandRejection, shellCommands } from '@pneuma/commands-core/commands-completion.js'
-import type { DscRuntime, SettingsMutation } from '@pneuma/runtime/contract.js'
+import type { DscRuntime, SettingsMutation, UiPrefsView } from '@pneuma/runtime/contract.js'
+import {
+  FONT_SIZE_PX_DEFAULT,
+  fontScaleFromTextSizePx,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '@pneuma/runtime/contract.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 
 /**
@@ -655,7 +661,22 @@ export const runtimePlugin: Plugin.Object = {
 
       setUiPrefs(patch) {
         const current = ctx.settings.prefs().ui
-        ctx.settings.setPrefs({ ui: { ...current, ...patch } })
+        // 字号的真源是 px；倍率是派生值。写盘前先把两者对齐，别等下一次读档——
+        // 同一次会话里旧消费方（手机远程、没升级的插件）读 `getUiPrefs().fontSize`
+        // 会读到旧数，表现就是「设置里显示 16px、远程那边还是 14px」。
+        const next: Partial<UiPrefsView> = { ...patch }
+        if (next.textSizePx !== undefined) {
+          // 先归一再派生：插件可能发 30 或 16.6，落盘的 px 与派生的倍率必须同源，
+          // 否则会出现「设置页显示 30px、正文按 22px 画」这种要等下次读档才对齐的偏差。
+          next.textSizePx = normalizeTextSizePx(next.textSizePx)
+          next.fontSize = fontScaleFromTextSizePx(next.textSizePx)
+        } else if (next.fontSize !== undefined) {
+          // 旧插件还在发倍率：顺手换算成 px 一起写，免得下一次读档把它的改动吃掉
+          // （读档以 textSizePx 为准，只发倍率的话下一次启动就退回原值）。
+          next.textSizePx = textSizePxFromLegacy(next.fontSize) ?? FONT_SIZE_PX_DEFAULT
+          next.fontSize = fontScaleFromTextSizePx(next.textSizePx)
+        }
+        ctx.settings.setPrefs({ ui: { ...current, ...next } })
         // 分组展开态与会话拖拽顺序是点一下/拖一下就写一次的高频静默写入，
         // 弹回执反而吵：这两类补丁直接返回，不进下面的文案链。
         // 面板几何同理（拖完松手一次），而且它只可能是壳发的——用户看不见任何回执才好。
@@ -680,6 +701,11 @@ export const runtimePlugin: Plugin.Object = {
                   ? '已保存工作区顺序'
                   : patch.themeMode !== undefined ||
                       patch.fontSize !== undefined ||
+                      // 字号（px 真源）与两套字体也属于外观：改完要给一句「已保存外观设置」，
+                      // 否则会掉到最后的「已保存工作区名字」，用户以为改错了地方。
+                      patch.textSizePx !== undefined ||
+                      patch.textFontFamily !== undefined ||
+                      patch.codeFontFamily !== undefined ||
                       patch.density !== undefined ||
                       patch.buttonScale !== undefined
                     ? '已保存外观设置'

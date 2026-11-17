@@ -246,7 +246,19 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
  */
 export type AppearancePatch = {
   themeMode?: 'dark' | 'light' | 'claude' | 'system'
+  /**
+   * 字号缩放倍数。
+   *
+   * @deprecated 由 {@link AppearancePatch.textSizePx} 取代；旧插件仍可能发，壳会忽略它。
+   *   两者同时出现时以 `textSizePx` 为准（倍率只是 `textSizePx ÷ 14` 的派生值）。
+   */
   fontSize?: number
+  /** 正文 px（10–22，默认 14）：字号的真源。 */
+  textSizePx?: number
+  /** 正文字体列表；空串 = 用内置栈。壳按 `normalizeFontList` 归一后再写 CSS 变量。 */
+  textFontFamily?: string
+  /** 代码字体列表；空串 = 用内置栈。 */
+  codeFontFamily?: string
   density?: 'compact' | 'standard' | 'roomy'
 }
 
@@ -433,6 +445,22 @@ export { FileIcon, fileIconName } from '@dsc/ui-primitives'
 export { estimateTextTokens } from '@dsc/ui-core'
 // 文本差异算法也转出去（工具卡的「将做的改动」要用；与宿主算轮尾差异同一份实现）。
 export { diffLines, type DiffResult } from '@dsc/ui-core'
+/**
+ * 字体与字号的归一（`contract/fonts.ts`）也进插件面：设置页要画字号滑杆（px）与
+ * 正文 / 代码两套字体列表，写回时得先归一成存得下的形状。
+ *
+ * 为什么必须转这一份而不是让设置页自己夹：夹取范围与归一规则在宿主、壳、设置页三处
+ * 各写一遍就会漂——「设置页显示 16px、界面画 14px」这种偏差只在特定路径出现，编译期看不见。
+ */
+export {
+  FONT_LIST_MAX_CHARS,
+  FONT_SIZE_PX_DEFAULT,
+  FONT_SIZE_PX_MAX,
+  FONT_SIZE_PX_MIN,
+  normalizeFontList,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '@dsc/ui-core'
 /**
  * 模型能力枚举与中文标签（设置 → 模型页的思考档位 / 档位字段 / 输入模态三组勾选读它）：
  * 与宿主发请求时用的 `core/model-caps.ts` 是**同一份文件**（见 src/packages/ui-core/index.ts 的说明），

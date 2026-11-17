@@ -380,13 +380,25 @@
   --dsc-tip-delay: 200ms;
   --dsc-tip-warm: 300ms;
 
-  /* ── 字体 ── */
-  --dsc-font-ui:
+  /* ── 字体 ──
+     两条都是「用户变量在前、内置栈在后」，写法固定为：
+       --dsc-font-<轴>: var(--dsc-font-{text,code}, 内置栈), 内置栈;
+     这样用户填的字体优先，缺字形时后面的内置栈接着兜（fallback 是按字形回落的）。
+     用户没填时壳会**删掉** `--dsc-font-text` / `--dsc-font-code`（不能写空串，空串会让
+     整条 font-family 非法），于是 `var()` 取兜底、只剩一遍内置栈。 */
+  --dsc-font-ui-default:
     'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
     'Hiragino Sans GB', system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
-  --dsc-font-mono:
+  --dsc-font-ui: var(--dsc-font-text, var(--dsc-font-ui-default)), var(--dsc-font-ui-default);
+
+  /* 等宽栈里显式垫中文无衬线，位置必须在 monospace 之前。理由是 Windows 的 Consolas
+     没有中文字形，等宽栈又一族都不认中文，浏览器最后只能按 monospace 的默认中文
+     （宋体）去画——代码块里的中文注释于是又细又糊。dsh 与 zcode 的等宽栈都在
+     monospace 前插了 `Microsoft YaHei` / `PingFang SC`，这里照同一处修。 */
+  --dsc-font-mono-default:
     'JetBrains Mono', 'Cascadia Mono', 'Sarasa Mono SC', Consolas, 'DejaVu Sans Mono', Menlo,
-    ui-monospace, monospace;
+    ui-monospace, 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', monospace;
+  --dsc-font-mono: var(--dsc-font-code, var(--dsc-font-mono-default)), var(--dsc-font-mono-default);
   --dsc-font-kbd: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 

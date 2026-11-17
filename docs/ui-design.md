@@ -95,6 +95,18 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 
 字号全部走 `--dsc-font-scale`，所以「外观 → 字号」改一档全局跟着变。
 
+2026-11 起这一档的**真源是正文字号 px**（10–22，默认 14）：设置页滑杆调的是「正文多少像素」，
+`--dsc-font-scale = px ÷ 14` 由 `contract/fonts.ts` 的 `fontScaleFromTextSizePx` 算出来，
+下面这些基准再乘它。存 px 不存倍率的原因：基准从 13 改到 14 之后，旧倍率会和「设置页写的
+14px」对不上，而用户嘴里说的本来就是 px。
+
+字体也不再只有一套：`--dsc-font-ui` 与 `--dsc-font-mono` 都写成
+`var(--dsc-font-text, 内置栈), 内置栈` / `var(--dsc-font-code, 内置栈), 内置栈` 的形状，
+用户填的字体优先、内置栈按字形兜底。空串时壳会**删掉** `--dsc-font-text` / `--dsc-font-code`
+（不能写空串，空串会让整条 `font-family` 非法、退回浏览器默认字体）。等宽栈在 `monospace`
+之前显式垫了 `Microsoft YaHei UI` / `PingFang SC` / `Noto Sans SC`：Windows 的 Consolas
+没有中文字形，不垫就落到宋体。
+
 | 令牌 | 基准 | 用在哪 |
 | --- | --- | --- |
 | `--dsc-fs-body` / `--dsc-lh-body` | 13 / 18 px | 正文、会话标题；模型长文另用 `--dsc-fs-prose`（14 / 22 px）那一档 |
@@ -404,13 +416,15 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 ## 10. 外观设置与主题
 
-「外观」三项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density`），
-设置界面改完立刻生效并落盘。**「按钮大小」那条轴已经退场**：`--dsc-btn-scale` 不再写值，
+「外观」存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `textSizePx` / `textFontFamily` /
+`codeFontFamily` / `density`；`fontSize` 仍写盘，但只是 `textSizePx ÷ 14` 的派生值，给没升级的
+消费方读），设置界面改完立刻生效并落盘。**「按钮大小」那条轴已经退场**：`--dsc-btn-scale` 不再写值，
 `styles.css` 用固定尺寸覆盖了旧的 `calc(Npx * var(--dsc-btn-scale))`；旧存档里存着 `buttonScale`
 的读得到就忽略（`src/packages/ui-runtime/ui/appearance.ts:15-16,130`），照着它调不会有任何效果。
 
-1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale`，
-   样式表据此换色、换字号；
+1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` /
+   `--dsc-font-scale`（由 `textSizePx` 算出）/ `--dsc-font-text` / `--dsc-font-code`，
+   样式表据此换色、换字号、换字体；
 2. 同一份外观写一份 localStorage 镜像，`main.tsx` 首帧和 `App.tsx` 的 `uiPrefs` 初值都读它——
    这样宿主返回真实设置之前不会先闪一次默认深色；
 3. `pushNativeChrome()` 把 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 算成 `#rrggbb` 通过

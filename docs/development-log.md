@@ -17421,6 +17421,43 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
 **怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据
 「插件层算的私有临时目录 = 后端授权的那条 temp 根」。
 
+### 2026-11-17 外观加「正文字体 / 代码字体」，字号改存像素
+
+**起因**：用户报「会话字体辨识度不高」。查下来不是字体选错了，是三层叠加：过程正文 12px + 54%
+灰（`--dsc-text-tertiary-a`，对 `#faf9f5` 约 3.9:1）、卡片行 11px 同一档灰、等宽栈里没有中文字形
+（Windows 上 Consolas 不带中文，最后一族是裸 `monospace`，中文落到宋体）。三处里前两处是设计
+取舍，第三处是真 bug。
+
+**改法**：
+1. 字号真源从「倍率 0.85–1.35」改成 `ui.textSizePx`（10–22，默认 14）。`fontSize` 保留在
+   `UiPrefsView` 里，但每次读档都由 px 重算（= px ÷ 14），只给没升级的消费方读；旧档只写了倍率
+   或 `'sm'|'md'|'lg'` 的，读档时一次性换算成 px，下一次写盘起就只有 px。
+2. 新增 `ui.textFontFamily` / `ui.codeFontFamily`（逗号分隔的 CSS 字体列表，空串 = 内置栈）。
+   归一函数 `normalizeFontList` 与 px↔倍率换算都放在 `src/contract/fonts.ts`，宿主读档、壳落地、
+   设置页三处共用一份——以前字号倍率在这三处各夹一次，改基准时漏一处就会「设置页 16px、界面 14px」。
+3. `tokens.css` 把两条字体令牌拆成「默认栈 + 用户变量前缀」：
+   `--dsc-font-ui: var(--dsc-font-text, 默认), 默认`、`--dsc-font-mono: var(--dsc-font-code, 默认), 默认`；
+   等宽默认栈在 `monospace` 前插 `Microsoft YaHei UI / Microsoft YaHei / PingFang SC / Noto Sans SC`。
+   空串时壳 `removeProperty`，**不写空串**——`var()` 的兜底只在变量未定义时生效，空串会让整条
+   `font-family` 非法、退回浏览器默认字体。
+4. 设置页：外观区加两行字体输入框（草稿 + 失焦/回车提交 + Esc 还原，提交时把归一结果回填给
+   用户看），字号滑杆从百分比改成 px（10–22，步长 1）。
+
+**怎么验的**：
+- `node scripts/ui-font-prefs-test.mjs` → **40/40 通过**（旧档迁移、夹取、字体串归一、写盘往返）。
+- `node scripts/ui-font-apply-test.mjs` → **41/41 通过**（假 `document` 上跑真 `applyAppearance`：
+  空串删变量、px→倍率、老镜像迁移、tokens 接线）。
+- `pnpm run check:ui` → **83/83 通过**；`node scripts/ui-locale-test.mjs` → 全部通过（56 个包）。
+- `pnpm run build`、`pnpm run build:ui`、`pnpm --dir desktop typecheck`、`node scripts/check-core.mjs`
+  见当次交接（内核门禁里有几条与本次无关的既有红，逐条写在交接里）。
+
+**顺带修的**：`scripts/ui-sidebar-order-test.mjs` 找 esbuild 只认 `desktop/node_modules/.pnpm`；
+四个项目收进一个 pnpm workspace 之后干净 checkout 里虚拟仓在仓库根，这条探针于是直接判失败。
+改成三处都找（根 / desktop / ui-shell），原因写在函数注释里。
+
+**留下的一句**：`textSizePx` 只到 22px、默认 14px；代码字号还没有独立档（`--dsc-fs-code` 仍按
+倍率跟随），要独立得再开一轮——`contract/fonts.ts` 里把基准与范围都收在一处，加一档只动那里。
+
 ### 2026-11-17 技能市场秒开：进程内缓存、skills.sh 搜索态与刷新打通
 
 **报上来的三件事**（三张界面截图）：技能页「市场」每次点都要转很久、换源也要再等；skills.sh 源点开是一张
