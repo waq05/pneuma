@@ -46,6 +46,9 @@
 | BUG-0006 | 在某个工作区里新建会话，那个目录整块跳到侧栏顶部 | P2 | 已修（2026-11-17） | 侧栏工作区分组的顺序 |
 | BUG-0007 | 工作区文件夹图标点开/关后一直是灰色三角，看不出展开态 | P3 | 已修（2026-11-17） | 侧栏工作区行的图标与悬停换位 |
 | BUG-0008 | 影子 git 的回合快照偶发记 0 条，回滚会漏文件 | P2 | 待修 | `checkpoint` 的回合账本与「回滚到回合前」 |
+| BUG-0009 | README 的包数与默认关数量落后于磁盘 | P3 | 已修（2026-11-17） | 文档口径：读者照 README 数包会数不对 |
+| BUG-0010 | superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91 | P3 | 已修（2026-11-17） | 英文界面下这个包的标题与说明仍是中文；`plugin-locale-test` 必红 |
+| BUG-0011 | 设置分区探针的断言停在两处 onChanged，代码已经是三处 | P3 | 已修（2026-11-17） | 不是产品行为，是探针口径漂移；`check:plugin` 必红 |
 
 ---
 
@@ -503,6 +506,108 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
 
 - 连跑 10 次 `node --test --test-isolation=none src/packages/checkpoint/tests/checkpoint.test.mjs` 全绿。
 - 人为让 `add -A` 空转（例如先把文件标成 `assume-unchanged` 再改内容）时，新判据必须判红。
+
+---
+
+## BUG-0009：README 的包数与默认关数量落后于磁盘
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（文档骗人，不影响功能；但它是唯一不编译就能对外说谎的地方）
+- **发现**：2026-11-17 跑 `check-core` 时 `readme-test` 2/26 失败
+- **影响**：读者照 README 数包会数少一个；「默认关 12 个」与实际 13 个不符，照着数插件中心会对不上
+
+**复现**
+
+```sh
+node scripts/readme-test.mjs
+```
+
+失败原文：`功能包数写的是磁盘上的数 — README 79 / 磁盘 80`、`默认关的个数与包清单一致 — README 12 / 包清单 13`。
+
+**期望**：README 写的包数、默认关个数与 `src/packages/` 磁盘现状一致。
+
+**实际**：README 停在 `superagent-webhook` 加进来之前的口径：79 个功能包、默认关 12、总包数 91、功能档 17。
+
+**证据**
+
+- 磁盘实测：92 个包目录 = 80 个功能包 + 12 个库包；默认关 13 个（官方 10 + 实验 3）。
+- 漂移位置：`README.md:161`（功能包数与默认关）、`:163`（功能档与官方档计数）、`:235`（架构树里的包数）。
+
+### 修复（2026-11-17）
+
+**改了什么**：三处数字按磁盘对齐——功能包 `79→80`、默认关 `12→13`、总包数 `91→92`；
+「17 个功能档」改「18 个」、「9 个在官方档」改「10 个」并补上 Super Agent Webhook。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/readme-test.mjs` → **26/26 通过，退出码 0**。
+
+---
+
+## BUG-0010：superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（英文界面下这个包的标题与说明仍是中文；同时让 `plugin-locale-test` 必红）
+- **发现**：2026-11-17 跑 `check-core` 时 `plugin-locale-test` 3 条失败
+- **影响**：把界面语言切成英文的人，在插件中心看到「Super Agent Webhook」这一档的中文说明；
+  另外这条探针红着，`check:plugin` / `check-core` 都过不去
+
+**复现**
+
+```sh
+node scripts/plugin-locale-test.mjs
+```
+
+失败原文：`包目录数与门禁口径一致（91） <- 92`、`全部包都声明了 ./locale/*.json 键 <- 91/92`、
+`整体有合法的 title/description 译本 <- superagent-webhook: 清单没声明 ./locale/*.json；缺 locale/en.json`。
+
+**期望**：每个功能包都声明 `./locale/*.json`，且有 `locale/en.json`（`title` ≤24 字符、`description` ≤80 字符）。
+
+**实际**：`superagent-webhook` 是全仓唯一缺译本的功能包——`package.json` 里没有 `./locale/*.json` 导出，
+也没有 `locale/` 目录；探针里的包数还写死成 91。
+
+**证据**
+
+- `src/packages/superagent-webhook/package.json`（修复前只有 `.`、`./cordis.patch.yml`、`./package.json` 三个导出）。
+- `scripts/plugin-locale-test.mjs:89` 写死 `ids.length === 91`，磁盘是 92。
+
+### 修复（2026-11-17）
+
+**改了什么**：给包补 `./locale/*.json` 导出、`files` 里的 `locale/**`，新增 `locale/en.json`（两行：title / description）；
+探针的包数口径 `91→92`（含两处注释）。顺带把 `superagent` 的英文 description 从 86 字符压到 76——它超了探针新加的 80 字符上限。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/plugin-locale-test.mjs` → **38/38 通过，退出码 0**；
+`node scripts/plugin-standard-check.mjs` → 0 条问题。
+
+---
+
+## BUG-0011：设置分区探针的断言停在两处 onChanged，代码已经是三处
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P3（不涉及产品行为，是探针口径漂移；但它让 `check:plugin` 必红，挡合并）
+- **发现**：2026-11-17 跑 `check-core` 时 `settings-embed-slot-test` 1 条失败
+- **影响**：合并前门禁红，且失败信息写成「：3」，容易被误读成产品多调用了一次
+
+**复现**
+
+```sh
+node scripts/settings-embed-slot-test.mjs
+```
+
+失败原文：`写回成功后通知父页重取分区清单（两处：保存与按钮动作）：3`。
+
+**期望**：探针断言的口径与代码现状一致。
+
+**实际**：代码里 `onChanged?.()` 有三处，探针写死两处。
+
+**证据**
+
+- `src/packages/ui-settings/ui/ui.tsx:501`（子分区字段保存后）、`:548`（按钮动作后）、`:736`（通用字段保存后）。
+- 第三处由 `1bf3f53e`（设置字段补 fact 与 rows 并接通四个界面）引入，是两类保存 + 一个动作，不是重复调用。
+
+### 修复（2026-11-17）
+
+**改了什么**：断言与标签都改成三处（`两处保存与按钮动作`），不删任何一处调用。提交 `4193bbaf`。
+
+**怎么验的**：`node scripts/settings-embed-slot-test.mjs` → **31/31 通过，退出码 0**。
 
 ---
 
