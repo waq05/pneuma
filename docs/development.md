@@ -660,8 +660,10 @@ node desktop/shots/_verify-pages-packaged.mjs      # 设置、插件、技能三
 node desktop/shots/_verify-sandbox-write-packaged.mjs  # 命令真在系统级沙箱里跑：写根内成、写根外 EPERM
 # 共用壳 `desktop/shots/_pkg-harness.mjs`：隔离 HOME + 本地假端点 + CDP + 截图。
 # 新场景写成它的一个 `withApp({id, fake}, ctx => …)` 函数，不要再抄一遍启动逻辑。
-# HOME 落在系统临时目录（C 盘）：受限令牌后端要给可写根设完整性标签，D 盘的新建目录设不了
-# （`icacls /setintegritylevel` 直接 Access is denied），HOME 放仓库里会让沙箱用例集体假红。
+# 经 withApp 起的场景，HOME 落在系统临时目录（C 盘）：受限令牌后端要给可写根设完整性标签，
+# D 盘的新建目录设不了（`icacls /setintegritylevel` 直接 Access is denied），HOME 放仓库里
+# 会让沙箱用例集体假红。少数老探针（如 `_verify-pages-packaged.mjs`）自己建 HOME 且还在仓库里，
+# 它们不碰沙箱 ACL，暂时无碍；新写的别再学。
 # 工具卡里的输出默认折着，验命令结果别读界面文本（命令原文也会被画出来，容易自己骗自己）：
 # 读会话 jsonl 里 `type:"tool"` 那条，那是真实的 stdout 与退出码。
 # 验收里发现的问题登记在 docs/bugs.md（BUG-0001 起），修完在那条下面补验收命令。

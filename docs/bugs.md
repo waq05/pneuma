@@ -40,7 +40,8 @@
 | --- | --- | --- | --- | --- |
 | BUG-0001 | 装好第一次让 numa 跑命令，沙箱打 ACL 失败，命令不执行 | P0 | 已修（2026-11-17） | `bash` 等所有要执行命令的工具 |
 | BUG-0002 | 侧栏「技能」「插件」点了不换页 | P1 | 已修（2026-11-17） | 技能页、插件中心两个一级入口 |
-| BUG-0003 | 设置里没有「运行日志」分组 | P2 | 已修（2026-11-17） | 日志级别与上限没法在界面上改 |
+| BUG-0003 | 设置里没有「运行日志」分组 | P2 | 已修（2026-11-17） | 日志级别与上限没法在设置页改 |
+| BUG-0004 | 附加可写根写相对路径时，围栏与 ACL 按两个不同的 cwd 落点 | P2 | 待修（2026-11-17 复核发现） | 配了相对路径附加根的人：围栏放行、实际写入仍被拒 |
 
 ---
 
@@ -101,17 +102,20 @@
 自检之所以一直绿，是因为 `scripts/sandbox-win-token-test.mjs` 里替它建好了目录，注释还写着
 「真实宿主里由插件建」——那句话是错的。
 
-**改了什么**：`ensureAuthorized` 在打 ACL 之前对每个可写根 `mkdirSync(path, { recursive: true })`，
-建不出来才降级，理由写明是哪条路径。
-（[backend.ts:276-292](src/packages/sandbox/win/backend.ts#L276-L292)）
+**改了什么**：`ensureAuthorized` 在打 ACL 之前只给**私有临时目录**（`side === 'temp'`）`mkdirSync`，
+建不出来才降级，理由写明是哪条路径；工作区与附加根**不替用户建**（它们是既有路径，配错了要让人
+看见，别悄悄造目录再打上可继承的低完整性标签）。
+（[backend.ts:279-303](src/packages/sandbox/win/backend.ts#L279-L303)）
 
 **怎么验的**
 
 | 命令 | 结果 |
 | --- | --- |
-| `node tmp-repro/repro-temp-acl.mjs`（修前 exit 1，报错误 2） | 修后 exit 0，`plan()` 不再返回 null，无降级细节 |
-| `node scripts/sandbox-win-token-test.mjs` | **90 通过 / 0 失败**，新增 3 条 BUG-0001 回归判据「前置目录不存在 / plan 仍换执行体 / 后端自己把目录建出来」 |
+| `node scripts/sandbox-win-token-test.mjs` | **93 通过 / 0 失败**：新增 3 条「临时目录不存在 → 后端自己建、plan 仍换执行体」+ 3 条「附加根不存在 → 不替用户建、按降级并说明、降级前 temp 照建」 |
 | `node desktop/shots/_verify-sandbox-write-packaged.mjs`（打包版，读会话 jsonl 的工具结果） | **PASS**：`CWD=D:\dsc INSIDE_OK OUTSIDE_DENIED EPERM`，写根内文件真的落盘，写根外被系统层拒，界面无降级提示 |
+
+修前的最小复现（当时 exit 1、报 Win32 错误 2）是一个临时脚本，现在被上面那 3 条自检判据覆盖，
+不再需要单独脚本——`tmp-repro/` 不进版本库，写在文档里谁也复现不了。
 
 **顺带修了探针**：`desktop/shots/_pkg-harness.mjs` 的 HOME 从仓库里挪到系统临时目录（C 盘）。
 这台机器的 D 盘**不许给新建目录设完整性标签**（`icacls /setintegritylevel` 直接 Access is denied），
@@ -186,7 +190,8 @@
 `getSnapshot()` 读到的也一直是 null。
 
 **改了什么**：state 里存**启动图帧**，每次渲染现算「在不在」，entryId 与答案不会再错位
-（[ui-sessions/ui/ui.tsx:167-190](src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留。
+（[ui-sessions/ui/ui.tsx:167-190](src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留
+（现在是同文件第 226 行，修前在第 220 行）。
 
 **怎么验的**
 
@@ -202,9 +207,10 @@
 ## BUG-0003：设置里没有「运行日志」分组
 
 - **状态**：已修（2026-11-17）
-- **严重度**：P2（日志照写，只是界面上改不了级别与上限）
+- **严重度**：P2（日志照写，只是设置页改不了级别与上限）
 - **发现**：2026-11-17，打包版
-- **影响**：想看日志、想开 `debug` 级别排障的人，在设置里找不到入口。
+- **影响**：想在设置里统一改日志配置的人找不到入口（插件中心那张卡片详情页里还能改，
+  但「设置 → 运行日志」这条路断了，log/README 写的就是这条路）。
 
 **复现**
 
@@ -245,7 +251,7 @@
 `src/packages/log/README.md:40` 写的是「设置 → 运行日志」能改，文档与界面这一处对不上。
 
 **改了什么**：`ctx.settings.registerSection(section, { inSettings: true })`
-（[log/index.ts:346](src/packages/log/index.ts#L346)），并就近写清为什么必须声明。
+（[log/index.ts:349](src/packages/log/index.ts#L349)），并就近写清为什么必须声明。
 
 **怎么验的**
 
@@ -254,6 +260,40 @@
 | `node desktop/shots/_diag-settings-sections2.mjs` | 修前左栏 9 项、没有运行日志；修后 **10 项**，多出「运行日志」（排在「工作区」与「关于」之间，order 880） |
 | `node desktop/shots/_diag-log-section.mjs` | 点进去字段全在：记录级别（当前 `info`）、日志目录、保留多少天、单文件上限、目录总量上限、当前文件（真实路径）、「立即清理」按钮可点 |
 | `node desktop/shots/_verify-features-packaged.mjs` | 第 [6] 段 3 条全绿；整份 **14 通过 / 0 失败 / 3 不适用** |
+
+---
+
+## BUG-0004：附加可写根写相对路径时，围栏与 ACL 按两个不同的 cwd 落点
+
+- **状态**：待修
+- **严重度**：P2（只在「附加可写根填相对路径」时撞上；绝对路径没这个问题）
+- **发现**：2026-11-17，修 BUG-0001 时的复核发现（同一片代码，独立成因）
+- **影响**：用户在附加可写根里写 `rel/sub` 这类相对路径时，策略层按**会话 cwd** 放行，
+  受限令牌后端按**宿主进程 cwd** 打 ACL，于是围栏说「可以写」、系统层仍然拒。
+
+**复现**
+
+1. 设置 → 插件中心 → 文件与命令围栏，附加可写根填一个相对路径（例如 `rel-out`）。
+2. 让模型跑一条往 `<会话cwd>/rel-out/x.txt` 写的命令。
+3. 围栏放行，但命令里那次写返回 `EPERM`。
+
+**期望**：相对路径按「会话工作目录」解析，围栏与 ACL 落到同一处（帮助文案就是这么说的）。
+
+**实际**：两处落点不同——策略层 `src/packages/sandbox/policy.ts:677` 用
+`canonicalizePath(value, { win32, cwd })` 按会话 cwd 展开；后端
+`src/packages/sandbox/win/backend.ts:207-210` 直接拿原始串传给 `grantWrite`，
+相对路径由宿主进程的 cwd 决定（打包版就是安装目录），于是 ACL 打在另一个地方。
+（顺带一个相邻的坑：附加根写成**已存在的文件**时，`mkdirSync` 会抛 `EEXIST`——BUG-0001 修完
+只对 temp 建目录之后，这条路回到「打 ACL 失败 → 降级」，不会再抛。）
+
+**证据**：`src/packages/sandbox/locale/ui.zh.json:20` 的帮助文案、
+`policy.ts:677` 与 `backend.ts:207-210` 的对照；复核者用一次性探针确认了两处解析结果不同。
+
+**修复方向**：在 `src/packages/sandbox/index.ts:530` 一带先把附加根绝对化（按当前会话 cwd），
+再交给后端；或者后端复用 `canonicalizePath` 并在 `plan()` 里按 `run.cwd` 解析。
+两处必须用同一个函数，别各写一套。
+
+**验收**：自检里加一条「附加根给相对路径时，围栏允许的路径与 ACL 授权的路径是同一个绝对路径」。
 
 ---
 
