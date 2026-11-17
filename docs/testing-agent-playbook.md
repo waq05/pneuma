@@ -33,7 +33,7 @@ pnpm run test:live ── live       真模型（要 key，没 key 整层 skip�
 pnpm run test:coverage ─ 五层全跑 + 覆盖率门
 ```
 
-快照层的会话场景默认整段 skip（当前仓库没有 `session.jsonl`）：收集期打一条 `console.warn`，要让它变红用 `DSC_SNAPSHOT_STRICT=1`。
+快照层的会话场景已有一份真录制入库（回放必跑）；录制文件丢了或指纹对不上时会红。`DSC_SNAPSHOT_STRICT=1` 让「整段 skip、一个用例都没跑」也变红（夜跑已开这个开关）。
 
 ---
 
@@ -45,7 +45,7 @@ pnpm run test:coverage ─ 五层全跑 + 覆盖率门
 | 会话落盘、插件加载、内核装配、工具执行 | `pnpm run test:int` | 要起真内核，必须读 `lib/`（命令自带 build） |
 | React 组件、样式、交互 | `pnpm exec vitest run --project ui <文件>` | jsdom 渲染，不启 Electron |
 | ink 终端界面 | `pnpm run test:tui` | 假终端抓帧，不能用 jsdom |
-| TUI 帧、浏览器 DOM 的整屏结构 | `pnpm run test:snapshot` | golden 逐字节比，改结构必须更新 golden；会话场景默认 skip + warn，要让它红用 `DSC_SNAPSHOT_STRICT=1` |
+| TUI 帧、浏览器 DOM 的整屏结构、会话回放 | `pnpm run test:snapshot` | golden 逐字节比，改结构必须更新 golden；会话回放已有录制入库，指纹（请求形状）对不上会 409，改提示词/工具 schema 要重录 |
 | 真入口（`bin/dsc.js`）行为 | `pnpm run test:cli` | 必须 spawn 真进程，先 build |
 | 真产物形状（`lib/ui/plugins/*/client.js`、SDK 类型树） | `pnpm run test:built` | 故意绕开 `src` 别名验产物 |
 | 真 Electron 全链路、真宿主 | `pnpm run test:e2e` | 单条 10–60 秒，不进 PR 门 |

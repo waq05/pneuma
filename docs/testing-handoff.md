@@ -16,7 +16,7 @@
 | **P1b 包级测试** | ✅ | 119 条包级 `.test.mjs` → `.spec.ts`（806 条用例），旧脚手架拆净 |
 | **P2 内核探针** | ✅ | 122 → 7：能迁的迁进 unit/integration，剩下的 7 条是机制上迁不走的（§4） |
 | **P3 ui 层** | ✅ | 九组代理迁移 + 四批渲染测试（R1/R2/R3a/R3b）+ 收尾对账；check-ui 80 → 42（全部是 jsdom 够不到的产物审计/源码闸/CSS） |
-| **P4 快照层** | ✅ 部分 | TUI 帧 golden 30 份、**浏览器 DOM 快照 10 份**、覆盖率基线冻结；**会话录制未入库**，会话回放场景默认 skip 并打 warn，`DSC_SNAPSHOT_STRICT=1` 变红（B45 未闭环） |
+| **P4 快照层** | ✅ | TUI 帧 golden 30 份、浏览器 DOM 快照 11 份、**会话回放 1 场景已录制入库（B45 闭环，2026-11-17）**、覆盖率基线冻结 |
 | **P5 live/bench/契约** | ✅ | live 冒烟 5 条（独立 workflow + 防假绿）、性能基准 4 条（基线 + PR 门）、契约测试 3 份 |
 | **P6 CI/入口** | ✅ | integration 三片并行、Node 22/24 矩阵、真入口 e2e 8 条、flake 治理（K2+/K4）、聚合门（PR 门 `all-checks-passed` + 夜跑门 `all-nightly-passed`） |
 | **P7 收尾** | ✅ | 属性测试 17 条、覆盖率基线门、Windows 车道、文档定稿；**2026-11-16 审计**补 B44–B53 与 [90% 计划](testing-coverage-plan.md) |
@@ -36,7 +36,7 @@
 | --- | --- |
 | `pnpm test`（unit + ui + tui） | **295 文件 / 3251 条 / exit 0**（2026-11-16 审计复跑） |
 | `pnpm run test:int` | **114 文件 / 1883 通过 + 1 skip（ops 无 worker，B24）/ exit 0**（交接时记录，审计未重跑） |
-| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 11 全绿；**会话回放 1 场景默认 skip 并打 warn**（无 `session.jsonl`，B45 未闭环；`DSC_SNAPSHOT_STRICT=1` 时变红） |
+| `pnpm run test:snapshot` | TUI 帧 30 + 浏览器 11 + 会话回放 1 场景（4 条，已录制入库）；夜跑设 `DSC_SNAPSHOT_STRICT=1`，缺录制即红 |
 | `pnpm run test:cli` | 8 通过 + 1 显式 skip（C3 需要 PTY，B42/B50） |
 | `pnpm run test:e2e` | **8 文件 / 161 通过 + 1 skip / exit 0**（2026-11-16 审计复跑；B40 的 6 红已归零） |
 | `pnpm run typecheck:spec` | exit 0（2026-11-16 审计复跑，两份 tsconfig） |
@@ -88,9 +88,12 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 1. **e2e 已全绿**：B40 修完（`779498b7`），全量 `8 文件 / 161 通过 + 1 skip / exit 0`。
    原 6 条已知红（`ui-anchor`×5、`ui-plugin-disable`×1）全部转绿，不再是已知态。
-2. **快照层的会话回放其实没跑**（B45 未闭环）：`tests/snapshots/session/basic-turn/` 没有
-   `session.jsonl`，4 条用例默认整段 skip，收集期打一条 warn，`DSC_SNAPSHOT_STRICT=1` 时改为
-   一条必红用例；TUI 帧 30 与浏览器 11 是实跑的。
+2. **快照层的会话回放已闭环**（B45，2026-11-17）：`tests/snapshots/session/basic-turn/`
+   `session.jsonl` 已入库（2 行 / 496 字节，模型输出经人审），回放连跑两次各 4 passed；
+   TUI 帧 30 与浏览器 11 是实跑的。夜跑设 `DSC_SNAPSHOT_STRICT=1`，缺录制即红。
+   **已知红**：浏览器 DOM 快照里 01 / 07 / 09 三条 golden 与当前 `lib/ui` 产物对不上
+   （少一个「更改」页签与 5 个按钮），`git diff HEAD -- ui-shell src lib` 为空，与本轮
+   改动无关，需 golden 负责人判断「重录」或「UI 真漏了页签」。
 3. **e2e / snapshot / coverage 只在夜跑跑**（B46 部分闭环）：`verify.yml` 已有 `snapshot`、
    `e2e`、`coverage`、`probe` 四个夜跑 job，并由 `all-nightly-passed` 汇总；PR 门上刻意
    不跑这四道（进了 needs 会因为 skipped 把每个 PR 判红）。
@@ -125,7 +128,8 @@ CSS 与几何——jsdom 不应用样式表、不布局，产物层 vitest 主�
 
 **还欠（要拍板 / 下一阶段）**：
 
-- **B45**：会话回放没有录制文件，默认整段 skip 并打 warn，`DSC_SNAPSHOT_STRICT=1` 变红；要一份真会话入库。
+- **B45**：已闭环（2026-11-17 录制入库，夜跑开严格模式）；后续可补 tool-call / compact 场景。
+- **B54**：已修（覆盖率自检 + 夜跑并发分组）。
 - **B46**：CI 接 e2e / snapshot / coverage 三个入口——**夜跑已接**（三个 job + `all-nightly-passed` 汇总，2026-11-17）；仍欠「首次真跑验证」与 PR 侧是否要纳入其中某一道。
 - **B47**：覆盖率口径与阈值互斥，90% 计划见 [testing-coverage-plan.md](testing-coverage-plan.md)。
 - **B37-R / B48**：R3b 迁移后 13 条探针的 CSS 与源码残留；CSS 转真 Chromium computed-style。

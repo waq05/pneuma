@@ -197,7 +197,9 @@ jobs:
   snapshot:
     name: 快照层（TUI 帧 + 浏览器 DOM）
     # 设计 §7.4/§8：快照层是夜跑门。TUI 帧不需要显示器；浏览器 DOM 快照要真 Electron，
-    # Linux runner 上用 xvfb 起虚拟显示。会话回放当前没有录制文件（B45），会显式 skip。
+    # Linux runner 上用 xvfb 起虚拟显示。会话回放已有录制文件入库（B45，2026-11-17），
+    # 回放必跑；`DSC_SNAPSHOT_STRICT=1` 让「一个用例都没跑」变红（录制文件丢了或指纹
+    # 对不上时不再静默绿）。
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -215,6 +217,10 @@ jobs:
       - name: 编译内核与界面壳（浏览器快照读 lib/ui 产物）
         run: pnpm run build && pnpm -C ui-shell build
       - name: 快照层
+        # `DSC_SNAPSHOT_STRICT=1`：会话回放场景如果因为没录制文件而整段 skip，就改成
+        # 一条必红用例——夜跑上不允许「整层什么都没测」还报绿。
+        env:
+          DSC_SNAPSHOT_STRICT: '1'
         run: xvfb-run --auto-servernum pnpm run test:snapshot --reporter=default --reporter=junit --outputFile.junit=reports/snapshot.xml
       - name: 上传测试报告
         if: always()

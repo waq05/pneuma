@@ -582,7 +582,7 @@ export function expectGolden(actual: string, name: string, opts?: { update?: boo
 tests/snapshots/
 ├── session/
 │   └── basic-turn/
-│       └── scenario.snapshot.ts     # 录制文件 session.jsonl 未入库 → 默认整段 skip + 收集期 warn（B45）
+│       └── scenario.snapshot.ts     # 录制文件 session.jsonl 已入库（B45 闭环，2026-11-17）→ 回放必跑，指纹不符即 409
 ├── tui/
 │   ├── frame-kit.ts
 │   └── frames.snapshot.ts           # 30 个 TUI 整屏帧
@@ -917,7 +917,7 @@ jobs:
   "test:live": "vitest run --config vitest.live.config.ts",
   "test:built": "vitest run --config vitest.built.config.ts",
   "test:bench": "node tests/bench/run.mjs",
-  "test:coverage": "vitest run --coverage --project unit --project integration --project ui --project snapshot --project tui --hookTimeout=20000 --testTimeout=20000",
+  "test:coverage": "pnpm run test:coverage:run && node scripts/check-coverage-summary.mjs",
   "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit && tsc -p ui-shell/tsconfig.spec.json --noEmit"
 }
 ```
@@ -926,8 +926,8 @@ jobs:
 
 - `test` 纳入了 `tui`（121 条 TUI 用例要进 PR 门）；snapshot 不进 `test`（要 Electron、分钟级）。
 - `test:int` 前面加了 `pnpm run build`：integration 跑的是 `lib` 平面（D25）。
-- `test:snapshot` 不带 `--passWithNoTests`（一个测试文件都没匹配到时退出码 1）；会话场景默认整段
-  skip 并在收集期打 `console.warn`，设 `DSC_SNAPSHOT_STRICT=1` 时改为一条必红用例（B45）。
+- `test:snapshot` 不带 `--passWithNoTests`（一个测试文件都没匹配到时退出码 1）；会话场景已录制入库
+  （B45 闭环），`DSC_SNAPSHOT_STRICT=1` 让「整段 skip、一个用例都没跑」变红（夜跑已开）。
 - `test:e2e` / `test:cli` / `test:live` / `test:built` 各自独立 config，不挂主 projects。
 - `test:coverage` 显式全五 project（D40/B47），不是 `vitest run --coverage`。
 - `check:all` 链尾**没有**追加 `pnpm test`：CI 的 `core` job 已单列跑。

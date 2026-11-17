@@ -640,7 +640,7 @@ pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，161 �
 pnpm run test:cli                  # 真入口 bin/dsc.js 八条（先 build，约 5 秒）
 pnpm run test:live                 # 真模型冒烟 5 条（无 DSC_LIVE_API_KEY 时整层跳过，不算失败）
 pnpm run test:bench                # 性能基准 4 条，7 次中位数 vs tests/bench/baseline.json（runner 不符只记录）
-pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升；文件缺：本地放行、CI 报错；文件坏：一律报错）
+pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升；文件缺：本地放行、CI 报错；文件坏：一律报错；跑完自动校验「四指标都有代码被执行」，否则红）
 pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
 
 # ── 探针通道（Vitest 表达不了的那批；不是主入口）────────────────────────────

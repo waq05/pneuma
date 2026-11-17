@@ -75,7 +75,7 @@ check('勾选框是画的', read(TODO_VIEW).includes('tc-todo-box'))
 | **unit** | 一个函数/一个模块，不碰网络和磁盘 | 毫秒 | 303 个 `.spec.ts`，跑 `pnpm test` |
 | **integration** | 几个模块 + 假模型，起真内核 | 秒 | 114 个 `.int.spec.ts`，跑 `pnpm run test:int`（先 build） |
 | **ui** | React 组件与交互 | 百毫秒 | 155 个，jsdom，跑 `pnpm run test:ui` |
-| **snapshot** | TUI 整屏帧、浏览器 DOM 的 golden | 秒–分钟 | 3 个场景文件，跑 `pnpm run test:snapshot`；其中会话场景本仓库没有录制文件，默认整段 skip 并打一条 warn，`DSC_SNAPSHOT_STRICT=1` 可让它变红 |
+| **snapshot** | TUI 整屏帧、浏览器 DOM 的 golden、会话回放 | 秒–分钟 | 3 个场景文件，跑 `pnpm run test:snapshot`；会话回放已有一份真录制入库（`session.jsonl`），回放必跑，指纹对不上会当场 409。`DSC_SNAPSHOT_STRICT=1` 让「一个用例都没跑」变红（夜跑已开） |
 | **tui** | ink 终端界面（假终端抓帧） | 百毫秒 | 16 个，跑 `pnpm run test:tui` |
 
 四条独立通道（不在 `pnpm test` 里，各有前提）：
