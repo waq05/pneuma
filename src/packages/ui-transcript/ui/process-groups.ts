@@ -107,7 +107,7 @@ export interface StepGroup {
    *
    * 为什么不直接用 `[startIndex, endIndex]` 这个区间：区间会把中间那条 **system**
    * 行（错误提示、宿主通知、「已恢复会话」）一起算成组员，结果是被收进组体、随组体一起
-   * 藏起来——而 system 恰恰是不该被折叠藏掉的那类（见 {@link TURN_PROCESS_INDEPENDENT}）。
+   * 藏起来——而 system 恰恰是不该被折叠藏掉的那类（见 round-fold.tsx 的 `TURN_INDEPENDENT`）。
    * 现在由分组时实际收进组的条目决定，区间只作为读位置用。
    */
   members: readonly number[]
@@ -204,28 +204,20 @@ export function seatPlan(ats: readonly number[], grouping: StepGrouping): SeatPl
 }
 
 /**
- * 不进整轮过程区、也不该被整轮折叠藏起来的条目类型
- * （逐项对照 dsh 的 `TURN_PROCESS_INDEPENDENT_KINDS`，contract/turn-process.ts:20-34）。
+ * 系统提示卡与上下文注入卡在分组器里的待遇：**不进组，但封组**。
  *
- * 两件事共用这一份表，别的地方别再各写一遍：
- * - **整轮折叠**：这些条目落在过程区的下标区间里也不挂 `hidden`（dsh 的
- *   `TURN_PROCESS_INDEPENDENT_KINDS` 就是给整轮折叠用的）；
- * - 渲染层据此把它们排到「过程区之后」那一组，不参与阶段分组。
+ * 为什么不进组：它们不是执行步骤，是请求侧的两张账单（模型当时收到的提示与注入）。塞进组体
+ * 等于让「这一阶段干了什么」里混进一条与动作无关的读数。
  *
- * 为什么 `system` 在这里：dsc 的 system 条目混了错误提示、宿主通知、「已恢复会话」三种东西，
- * 收起过程不能把「这一轮出错了」也一起藏掉——用户会以为那一轮只是正常答完了。
+ * 为什么封组（而不是当它们不存在、让组跨过去）：组员是**连续摆放**的——渲染层在组头那个位置
+ * 一次铺完整个组，夹在组员中间、又不在组里的行会被挤到整组之后。这两条目恰好可能在轮中途出现
+ * （一次多步轮的每一跳都会重新组装请求，注入内容一变就多一条卡），不封组的话卡片会从原来的
+ * 位置跳到这一阶段所有工具调用的下面（与 system 那条同一个成因，见上面那段注释）。
+ *
+ * 注意别和「整轮折叠」混：这两张卡自 2026-11-17 起**跟着整轮一起收**（口径在
+ * `round-fold.tsx` 的 `TURN_INDEPENDENT` / `isRoundProcessKind`）。二级分组把它们当边界、
+ * 整轮折叠把它们当过程内容，两件事互不影响。
  */
-export const TURN_PROCESS_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = new Set([
-  'user',
-  'plan',
-  'system',
-  'turn-end',
-  'turn-max-tokens',
-  // 系统提示 / 上下文注入（2026-11-10）：请求侧的两张账单，不是执行步骤。表要与
-  // round-fold.tsx 的 TURN_INDEPENDENT 逐项一致（那张才是渲染层真正读的，这份是同义副本）。
-  'system-prompt',
-  'context-injection',
-])
 
 /**
  * 工具名 → 过程类别。
@@ -746,7 +738,7 @@ export function groupSteps(
       // - turn-end / turn-max-tokens：轮尾标记与长度上限提示，都是轮级的独立事件；
       // - model-retry：模型重试。它是二级分组的边界，但**整轮折叠仍然包含它**
       //   （dsh 的原话：「二级分组把模型重试视为分隔节点，但整轮折叠仍包含重试行」）——
-      //   所以它不在 TURN_PROCESS_INDEPENDENT 那张表里。
+      //   所以它只在这里当边界，不进 `round-fold.tsx` 的 `TURN_INDEPENDENT`。
       if (
         entry.kind === 'text'
         || entry.kind === 'plan'
@@ -769,16 +761,8 @@ export function groupSteps(
         flush(true)
         continue
       }
-      // 系统提示卡与上下文注入卡：**不进组、但封组**，与 system 同一条路。
-      //
-      // 为什么不进组：它们不是执行步骤，是请求侧的两张账单（模型当时收到的提示与注入）。
-      // 塞进组体等于让「这一阶段干了什么」里混进一条与动作无关的读数。
-      //
-      // 为什么封组（而不是当它们不存在、让组跨过去）：组员是**连续摆放**的——渲染层在组头
-      // 那个位置一次铺完整个组，夹在组员中间、又不在组里的行会被挤到整组之后。这两条目
-      // 恰好可能在轮中途出现（一次多步轮的每一跳都会重新组装请求，注入内容一变就多一条卡），
-      // 不封组的话卡片会从原来的位置跳到这一阶段所有工具调用的下面（与 system 那条同一个
-      // 成因，见上面那段注释）。封组之后它原地待着，前面那一段过程也收口成完整的一阶段。
+      // 系统提示卡与上下文注入卡：**不进组、但封组**，与 system 同一条路
+      //（口径与理由见本文件上面那段「在分组器里的待遇」注释）。
       if (entry.kind === 'system-prompt' || entry.kind === 'context-injection') {
         flush(true)
         continue
