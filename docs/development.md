@@ -480,7 +480,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `presets/` | 预设（模式）插件（`src/packages/config-core/presets.ts:41`） | 自定义模式，一份 `<名字>.md`（frontmatter + 提示词正文）；出厂四个模式首次启动会各写一份到这里，之后读盘，用户改过的不覆盖 |
 | `plugins/*.js` | 用户 | 自定义插件 |
 | `skills/` | 技能中心（安装） | 用户级技能目录，每个子目录一份 `SKILL.md` |
-| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时（skills.sh 这类搜索型源按关键词各存一份） |
+| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时（skills.sh 这类搜索型源按关键词各存一份）；联网失败时回退旧清单（不看这 1 小时）。界面另有进程内缓存 + 后台预取：离开技能页再回来不重抓 |
 | `cache/session-index.json` | session-search 插件（`src/packages/session-search/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
 | `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（0.9.0 起并进 hooks 插件的「外部命令（codex 事件名）」组，与安全钩子的 `hooks.json` 各读各的） |
@@ -738,7 +738,7 @@ id 存、存活集合取全部会话）、连接（`plugin-config-enable` 的插
 exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
-（`src/packages/ui-skills/ui/ui.tsx:121`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
+（`src/packages/ui-skills/ui/ui.tsx:305`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
 `diag`（同文件 `:899`）、`theme`（`src/packages/ui-runtime/ui/appearance.ts:221`）、
 `panels`（`src/packages/ui-primitives/ui/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
 `panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
@@ -925,7 +925,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 应用白名单 | 空串 = 不限 | `src/packages/computer-use/index.ts:54` |
 | 看屏免审批 | 默认关 | `src/packages/computer-use/index.ts:56` |
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
-| 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/packages/config-core/market.ts:10` |
+| 技能市场清单缓存 | 新鲜期 1 小时，三层：界面进程内（键=源名+关键词，24 条上限）→ 宿主内存（键=源名+源地址，32 条上限）→ `~/.dsc/cache/`。过期先显示旧结果再后台刷新；联网失败回退旧清单（不受 1 小时限制），三层全空才报错 | `src/packages/config-core/market.ts:10`、`src/packages/skills/index.ts`（`entriesCache`） |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/packages/computer-use/index.ts:72` |
 | 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/packages/sandbox/policy.ts:87-89`、`src/packages/permission-core/permission-scope.ts` |
 | 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/packages/sandbox/policy.ts:61` |
@@ -1025,7 +1025,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/packages/approval/index.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
-| `market.ts` | 四类源：GitHub 目录（trees + raw）、索引 JSON、ClawHub（`/api/v1/skills` 榜单；安装先换一次 zip 下载地址，整包解开写盘）、skills.sh（**只有搜索**，`q` 少于 2 字符直接报错；安装时在仓库树里找 `<技能名>/SKILL.md` 所在目录）。GitHub 源「补描述」走一个**总预算 6 秒**的独立阶段（`ENRICH_BUDGET_MS`，单请求 4 秒）：描述只用于展示，取不到就保留占位，不让挂掉的文件域名把整次浏览拖过界面 30 秒上限。缓存 1 小时（搜索型源按「源 + 关键词」各存一份）、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
+| `market.ts` | 四类源：GitHub 目录（trees + raw）、索引 JSON、ClawHub（`/api/v1/skills` 榜单；安装先换一次 zip 下载地址，整包解开写盘）、skills.sh（**只有搜索**，`q` 少于 2 字符直接报错；安装时在仓库树里找 `<技能名>/SKILL.md` 所在目录）。GitHub 源「补描述」走一个**总预算 6 秒**的独立阶段（`ENRICH_BUDGET_MS`，单请求 4 秒）：描述只用于展示，取不到就保留占位，不让挂掉的文件域名把整次浏览拖过界面 30 秒上限。缓存 1 小时（搜索型源按「源 + 关键词」各存一份）、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN`。**2026-11-17 起**整次浏览再加一道 **15 秒总预算**（`BROWSE_BUDGET_MS`，每一跳都用 `budgetedTimeout` 扣掉已花时间，补描述与总预算取小）：超预算就交已经拿到的条目（描述留占位），不再顶到界面 invoke 的 30 秒超时；联网失败（超时 / HTTP 错 / 解析失败）回退**磁盘旧清单**——1 小时 TTL 只决定「要不要联网」，不决定「失败后还能不能用」，盘上完全没缓存才抛错（不拿空数组冒充成功）。回退原因经 `onFallback` 交给 `skills/index.ts`，写进 `MarketBrowseResult.error`（items 非空 + error 存在 = 界面「这次没取到新结果，先显示上次的」软提示）；界面「刷新」经 ui-methods 的第三参 boolean → runtime → `browseMarket(source, refresh, query)`，跳过两层新鲜缓存强制联网。`options.budgetMs` 只给自检覆盖总预算 |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |
 | `version.ts` | 版本号从包名 `pneuma`（兼容旧名 `dsc-tui`）的 `package.json` 往上找（`:12-13`、`:23`）。**改包名要同步 `PACKAGE_NAMES`**，否则「关于」分区显示 `0.0.0` |
 
