@@ -44,7 +44,7 @@
  */
 import { spawn } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -52,6 +52,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { DscCoreConfig } from '@pneuma/runtime/core/config.js'
 import { hashChatMessages } from './support/hash.js'
+import { createTempDir } from './support/tmp-dir.js'
 
 /** `tests/harness.ts` 所在目录与仓库根：golden、CLI 入口都从仓库根定位。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -141,7 +142,7 @@ export function tempHome(prefix = 'dsc-test-'): { home: string; restore: () => v
   // 先记住原值：restore 要还成「原来是什么」，包括「原来根本没设」。
   const original = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
   // 不 try/catch：建不出来就让调用方看到原始错误，而不是带着未隔离的环境继续跑。
-  const home = mkdtempSync(join(tmpdir(), prefix))
+  const home = createTempDir(prefix)
   process.env.HOME = home
   process.env.USERPROFILE = home
   let restored = false
@@ -929,7 +930,7 @@ export function tempRepo(prefix = 'dsc-repo-'): { dir: string; restore: () => vo
   if (prefix.includes('/') || prefix.includes('\\') || prefix.includes('..')) {
     throw new TypeError('tempRepo：prefix 不能带路径分隔符或 ..（会把仓库建到临时目录外）')
   }
-  const dir = mkdtempSync(join(tmpdir(), prefix))
+  const dir = createTempDir(prefix)
   const git = (args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
   }
@@ -1189,7 +1190,7 @@ export function runCli(args: string[], opts: RunCliOptions = {}): Promise<RunCli
   if (!existsSync(CLI_ENTRY)) {
     throw new Error(`runCli：找不到 CLI 入口 ${CLI_ENTRY}`)
   }
-  const home = mkdtempSync(join(tmpdir(), 'dsc-cli-'))
+  const home = createTempDir('dsc-cli-')
   const env: NodeJS.ProcessEnv = { ...process.env }
   // 继承来的 DSC_HOME 指到真实目录时，HOME 换了也没用（path-policy 优先读它）。
   delete env.DSC_HOME

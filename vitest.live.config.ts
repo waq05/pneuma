@@ -30,6 +30,8 @@ export default defineConfig({
   },
   test: {
     name: 'live',
+    // 真模型冒烟也会建临时 HOME；收尾口径与主配置一致（全绿清、有红留）。
+    globalSetup: ['tests/setup/global-clean.ts'],
     include: ['tests/live/**/*.live.spec.ts'],
     environment: 'node',
     // 一条请求 + 一次工具往返就可能 60s 以上；给到 3 分钟，红的就该是真红。

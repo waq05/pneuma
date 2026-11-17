@@ -101,6 +101,13 @@ export default defineConfig({
     },
   },
   test: {
+    /**
+     * 每轮开跑前清扫过期临时目录。
+     *
+     * 正常收尾由 `tests/support/tmp-dir.ts` 在 worker 退出时做（全绿才删，失败保留）；
+     * 这条只补「被强杀 / CI 取消」留下的残留，门槛 24 小时，不误伤正在并行跑的另一份。
+     */
+    globalSetup: ['tests/setup/global-clean.ts'],
     // 覆盖率（P3 第 3 项）：只出报告不设门（概要设计 §9.1——先看清盲区分布，
     // P4 冻结基线、P6 逐目录抬杠）。纯类型文件与入口不算覆盖面。
     coverage: {

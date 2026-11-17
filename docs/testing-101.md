@@ -123,12 +123,17 @@ test('距上次写清单过了 7 轮，返回 7', () => {
 本仓库的硬规矩：**任何会在用户目录写文件的测试，必须走临时 HOME**。
 
 ```ts
-const home = mkdtempSync(join(tmpdir(), 'dsc-xxx-'))
+import { tempHome } from '../harness.js'
+
+const { home, restore } = tempHome()   // 内部走 createTempDir('dsc-test-')
 process.env.HOME = home
-process.env.USERPROFILE = home   // Windows 认这个
+process.env.USERPROFILE = home          // Windows 认这个
+afterAll(restore)
 ```
 
 理由不是洁癖：测试往真实 `~/.dsc` 写，会污染用户正在用的会话，而且并行跑会互相踩。
+
+**临时目录的收尾**（`tests/support/tmp-dir.ts`）：全绿时 worker 退出就删；本文件有任一条红就保留，路径打到 stderr；`DSC_KEEP_TMP=1` 强制保留。被强杀留下的残留，下一轮开跑时由 `tests/setup/global-clean.ts` 清掉超过 24 小时的。想立刻清就 `pnpm run clean:test-tmp`。自己建目录时用 `createTempDir('dsc-xxx-')`，不要直接 `mkdtempSync`——后者不进登记表，退出时不会收尾。
 
 ### 3.5 假外部：只 mock 贵的和不确定的
 

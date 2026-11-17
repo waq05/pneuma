@@ -18,10 +18,10 @@
  * @module dsc/tests/cli/support
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 仓库根（`tests/cli/support.ts` 往上两级）。 */
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -35,9 +35,9 @@ export interface CliHome {
   dscHome: string
 }
 
-/** 建临时主目录（不删：红了要留着看会话日志）。 */
+/** 建临时主目录（收尾按成败处理：全绿删、有红留，见 `tests/support/tmp-dir.ts`）。 */
 export function makeHome(): CliHome {
-  const home = mkdtempSync(join(tmpdir(), 'dsc-cli-e2e-'))
+  const home = createTempDir('dsc-cli-e2e-')
   const dscHome = join(home, '.dsc')
   mkdirSync(dscHome, { recursive: true })
   return { home, dscHome }

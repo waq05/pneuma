@@ -52,7 +52,8 @@
     "test:tui": "vitest run --project tui",
     "test:bench": "node tests/bench/run.mjs",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "test:cli": "vitest run --config vitest.cli.config.ts"
+    "test:cli": "vitest run --config vitest.cli.config.ts",
+    "clean:test-tmp": "node scripts/clean-test-tmp.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.1.0",

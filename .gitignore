@@ -36,3 +36,7 @@ desktop/dist-run.log
 desktop/dist-next*/
 tmp-repro/
 coverage/
+
+# 手跑 build / coverage 的重定向日志，以及 CI 的 JUnit 报告（本机与 Actions 产物，不入库）
+*.log
+reports/

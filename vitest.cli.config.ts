@@ -28,6 +28,8 @@ export default defineConfig({
   },
   test: {
     name: 'cli',
+    // 临时 HOME 的收尾（全绿才清）与新主进程共享同一套判定。
+    globalSetup: ['tests/setup/global-clean.ts'],
     include: ['tests/cli/**/*.cli.e2e.ts'],
     environment: 'node',
     // 单条上限 60s（设计 §11.1）；C7/C8 要等 TUI 落盘，给足。

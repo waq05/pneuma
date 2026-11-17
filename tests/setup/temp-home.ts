@@ -17,17 +17,16 @@
  *
  * ## 刻意不做的事
  *
- * - **不删目录**：失败时要留着翻。临时目录里躺着这次跑的会话日志与 `.lock`，
- *   断言红在哪一条、磁盘被写成什么样，全靠它。
+ * - **不在文件末尾直接删目录**：失败时要留着翻。收尾统一交给 `tests/support/tmp-dir.ts`
+ *   在 worker 退出时判断——本文件全绿才删，有一条红就原样保留，路径打到 stderr。
+ *   `DSC_KEEP_TMP=1` 可强制保留。
  * - **不吞异常**：`mkdtempSync` 建不出来就让它抛。吞掉的话后续用例会落到真实主目录，
  *   而这正是本文件要防的事故；而且事故现场在测试结果里看不出来（用例照样绿）。
  *
  * @module dsc/tests/setup/temp-home
  */
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterAll } from 'vitest'
+import { createTempDir } from '../support/tmp-dir.js'
 
 /** 先记住原值：还原要还原成「原来是什么」，不能一律设成空串（空串会让 homedir 退到别处）。 */
 const original = {
@@ -46,7 +45,7 @@ const original = {
   original.HOME ?? original.USERPROFILE ?? undefined
 
 /** 临时主目录；`mkdtempSync` 自带原子性，同机并发跑多个测试文件不会撞名。 */
-const home = mkdtempSync(join(tmpdir(), 'dsc-int-home-'))
+const home = createTempDir('dsc-int-home-')
 
 process.env.HOME = home
 process.env.USERPROFILE = home
