@@ -27,10 +27,15 @@
  * 更麻烦的是进程树：`worker → git（launcher）→ git.exe（真正干活）`，launcher 先退出，
  * 真正握着锁的那个进程的父进程已经不在进程表里——按「worker 的子进程」去找找不到它。
  *
- * 所以这一层用 **Restart Manager**（Windows 自带的「谁在用这个文件」接口，koffi 直接调
- * `rstrtmgr.dll`）精确定位持有者：先把目录里能删的文件删掉，只剩被占的那几个；用 RM 查出
- * 打开它们的 pid；收掉这些进程；句柄释放后再删目录。只要路径来自本轮的临时目录，杀掉的
- * 就一定是占着**我们**文件的进程，不会误伤并行的另一轮。
+ * 所以这一层用 **Restart Manager**（Windows 自带的「谁在用这个文件」接口）精确定位持有者：
+ * 先把目录里能删的文件删掉，只剩被占的那几个；查出打开它们的 pid；收掉这些进程；句柄释放
+ * 后再删目录。只要路径来自本轮的临时目录，杀掉的就一定是占着**我们**文件的进程，不会误伤
+ * 并行的另一轮。
+ *
+ * RM 的查询与收进程放在**独立子进程**里做（`rm-release.mjs`），本进程不调 koffi：原生绑定
+ * 一旦与系统库 ABI 不符，越界写坏的是调用进程的原生堆，进程退出时会以 `0xC0000374`
+ * （STATUS_HEAP_CORRUPTION）把退出码改成负数——测试全绿也像崩了（2026-11-17 实测 6/10 次）。
+ * 隔到子进程后最坏只死子进程；父进程按「这轮收不掉」走跨轮登记表兜底。
  *
  * ## 跨轮兜底：`dsc-run-<pid>.dirs` 登记表
  *
@@ -40,7 +45,7 @@
  *
  * @module dsc/tests/support/tmp-clean
  */
-import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import type { Dirent } from 'node:fs'
 import {
   appendFileSync,
@@ -53,6 +58,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** 临时目录前缀：测试建的主目录一律用它，清理时按它认领。 */
 export const TEMP_PREFIX = 'dsc-'
@@ -193,103 +199,68 @@ export function collectLockedFiles(dir: string): string[] {
 
 // ── Restart Manager：谁打开着这些文件 ───────────────────────────────────────
 
-/** koffi 的最小子集（只声明本文件用到的入口，不拉整包类型）。 */
-interface KoffiLike {
-  load(name: string): { func(definition: string): (...args: unknown[]) => unknown }
-  struct(name: string, fields: Record<string, unknown>): unknown
-  array(type: unknown, count: number): unknown
-  alloc(type: unknown, count: number): unknown
-  encode(pointer: unknown, type: unknown, value: unknown): void
-  decode(pointer: unknown, type: unknown, count?: number): unknown
-}
+/**
+ * 子进程执行体（`rm-release.mjs`）：查占用者并收掉。
+ *
+ * 为什么用 `import.meta.url` 定位而不是 `process.cwd()`：测试跑在临时 HOME 下，cwd 还会被
+ * `createTempDir` / `removeTempDir` 改来改去，按 cwd 拼路径必然找不到。
+ */
+const RM_RELEASE_SCRIPT = fileURLToPath(new URL('./rm-release.mjs', import.meta.url))
 
-interface RestartManagerApi {
-  /** 查这些文件正被哪些进程打开；不可用时返回 null。 */
-  holders(paths: readonly string[]): number[] | null
-}
+/** 子进程硬超时。RM 被安全软件挂住时不能把测试进程一起卡死；超时就当这一轮收不掉。 */
+const RM_RELEASE_TIMEOUT_MS = 10_000
 
-/** 懒加载：只有真的删不掉时才碰 FFI，正常跑一次都不加载。 */
-let restartManagerCache: RestartManagerApi | null | undefined
+/** `rm-release.mjs` 写在 stdout 上的回话（一行 JSON）。 */
+interface RmReleaseReply {
+  killed?: unknown
+  failed?: unknown
+  skipped?: unknown
+  reason?: unknown
+}
 
 /**
- * 加载 Windows Restart Manager 绑定（`rstrtmgr.dll`）。
+ * 在独立子进程里查出「打开着这些文件」的进程并收掉，返回确认收掉的 pid。
  *
- * 为什么用它而不是遍历进程表猜：实测真正握着 `index.lock` 的 git 进程的父进程（git 的
- * launcher）已经退出，按「worker 的子进程」根本找不到它；`Get-CimInstance` 也看不到
- * 文件句柄。Restart Manager 是系统自带的「谁在用这个文件」接口，按文件查 pid，精确。
+ * ## 为什么必须隔一个进程
  *
- * 非 Windows、或 koffi 不可用（裁剪安装）时返回不可用：删不掉的目录交给跨轮登记表。
+ * Restart Manager 是原生调用。参数与系统库 ABI 不符时，越界写进去的是**调用进程的原生堆**；
+ * 堆损坏当场不报错，要等下一次堆操作或进程退出才以 `0xC0000374`
+ * （STATUS_HEAP_CORRUPTION）炸掉，落在 vitest 上就是把退出码改成 `-1073740940`——测试全绿
+ * 也像崩了。隔到子进程后最坏情况只是这个子进程死：父进程读得到它崩溃前 `writeSync` 落盘的
+ * `killed`；读不到就当「这轮收不掉」，走 `dsc-run-<pid>.dirs` 登记表兜底。
+ *
+ * ## 失败一律当「没收到」
+ *
+ * 非 Windows、koffi 缺失（裁剪安装）、超时、子进程崩溃、回话不是合法 JSON 或 `killed`
+ * 不是数组，全部返回空数组。调用方据此走下一轮或下一轮运行。
  */
-function restartManager(): RestartManagerApi | null {
-  if (restartManagerCache !== undefined) return restartManagerCache
-  if (process.platform !== 'win32') {
-    restartManagerCache = null
-    return null
-  }
-  try {
-    const require = createRequire(import.meta.url)
-    const koffi = require('koffi') as KoffiLike
-    const lib = koffi.load('rstrtmgr.dll')
-    const filetime = koffi.struct('FILETIME', { dwLowDateTime: 'uint32', dwHighDateTime: 'uint32' })
-    const uniqueProcess = koffi.struct('RM_UNIQUE_PROCESS', {
-      dwProcessId: 'int32',
-      ProcessStartTime: filetime,
-    })
-    const processInfo = koffi.struct('RM_PROCESS_INFO', {
-      Process: uniqueProcess,
-      strAppName: koffi.array('char16_t', 256),
-      strServiceName: koffi.array('char16_t', 64),
-    })
-    const RmStartSession = lib.func('uint32 RmStartSession(_Out_ uint32_t *pSessionHandle, int dwSessionFlags, char16_t *strSessionKey)')
-    const RmEndSession = lib.func('uint32 RmEndSession(uint32_t pSessionHandle)')
-    const RmRegisterResources = lib.func(
-      'uint32 RmRegisterResources(uint32_t pSessionHandle, uint32_t nFiles, const char16_t **rgsFilenames, uint32_t nApplications, void *rgApplications, uint32_t nServices, char16_t **rgsServiceNames)',
-    )
-    const RmGetList = lib.func(
-      'uint32 RmGetList(uint32_t dwSessionHandle, _Out_ uint32_t *pnProcInfoNeeded, _Inout_ uint32_t *pnProcInfo, RM_PROCESS_INFO *rgAffectedApps, _Inout_ uint32_t *lpdwRebootReasons)',
-    )
-    restartManagerCache = {
-      holders(paths: readonly string[]): number[] | null {
-        const session = koffi.alloc('uint32_t', 1)
-        if (Number(RmStartSession(session, 0, `dsc-rm-${String(Date.now())}`)) !== 0) return null
-        const handle = koffi.decode(session, 'uint32_t')
-        try {
-          if (Number(RmRegisterResources(handle, paths.length, paths, 0, null, 0, null)) !== 0) return null
-          const needed = koffi.alloc('uint32_t', 1)
-          const count = koffi.alloc('uint32_t', 1)
-          const reasons = koffi.alloc('uint32_t', 1)
-          koffi.encode(count, 'uint32_t', 0)
-          koffi.encode(reasons, 'uint32_t', 0)
-          // 先拿所需条数（ERROR_MORE_DATA = 234），再按条数取。
-          let rc = Number(RmGetList(handle, needed, count, null, reasons))
-          if (rc === 0) return []
-          if (rc !== 234) return null
-          const size = koffi.decode(needed, 'uint32_t') as number
-          if (size <= 0) return []
-          const infos = koffi.alloc(processInfo, size)
-          koffi.encode(count, 'uint32_t', size)
-          rc = Number(RmGetList(handle, needed, count, infos, reasons))
-          if (rc !== 0) return null
-          const list = koffi.decode(infos, processInfo, size) as { Process: { dwProcessId: number } }[]
-          return list.map((info) => Number(info.Process.dwProcessId)).filter((pid) => Number.isInteger(pid) && pid > 0)
-        } finally {
-          RmEndSession(handle)
-        }
-      },
-    }
-    return restartManagerCache
-  } catch {
-    restartManagerCache = null
-    return null
-  }
-}
-
-/** 谁打开着这些文件（Windows Restart Manager；其它平台或不可用返回空数组）。 */
-export function processesHoldingFiles(paths: readonly string[]): number[] {
+function releaseHoldersThroughRm(paths: readonly string[], exclude: readonly number[]): number[] {
+  if (process.platform !== 'win32') return []
   if (paths.length === 0) return []
-  const api = restartManager()
-  if (api === null) return []
-  return api.holders(paths) ?? []
+  try {
+    const run = spawnSync(process.execPath, [RM_RELEASE_SCRIPT], {
+      input: JSON.stringify({ paths, exclude: [...exclude, process.pid] }),
+      encoding: 'utf8',
+      timeout: RM_RELEASE_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    })
+    // 超时 / 起不来：`error` 非空或 `signal` 非空。stdout 即使有半截也不可信。
+    if (run.error !== undefined || run.signal !== null) return []
+    const line = (run.stdout ?? '')
+      .split('\n')
+      .map((text) => text.trim())
+      .filter((text) => text !== '')
+      .pop()
+    if (line === undefined) return []
+    const reply = JSON.parse(line) as RmReleaseReply
+    if (!Array.isArray(reply.killed)) return []
+    return reply.killed
+      .map((value) => Number(value))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+  } catch {
+    return []
+  }
 }
 
 export interface ReleaseResult {
@@ -309,6 +280,9 @@ export interface ReleaseResult {
  * 为什么要多轮：一次可能不只一个持有者（git 的 `add` 与 `ls-files` 快照并存），也可能
  * 刚查到持有者它就自己退了。每轮都是「清掉能删的文件 → 查持有者 → 收掉新出现的 →
  * 再删」，最多 4 轮；每轮之间给句柄释放留一拍。
+ *
+ * 收进程走 `releaseHoldersThroughRm`（独立子进程），本进程不碰 Restart Manager：
+ * 即使原生绑定把子进程的堆写坏，也只死子进程，vitest 的退出码不受影响。
  */
 export function removeTempDirOrRelease(dir: string): ReleaseResult {
   if (removeTempDir(dir)) return { removed: true, killed: [] }
@@ -317,16 +291,11 @@ export function removeTempDirOrRelease(dir: string): ReleaseResult {
   for (let round = 0; round < 4; round += 1) {
     const locked = collectLockedFiles(dir)
     // 被占的只有文件时按文件查；一个都查不出来时再拿目录本身兜一次（cwd / 目录句柄）。
-    const holders = locked.length > 0 ? processesHoldingFiles(locked) : processesHoldingFiles([dir])
-    const fresh = [...new Set(holders)].filter((pid) => pid !== process.pid && !killed.includes(pid))
-    for (const pid of fresh) {
-      try {
-        process.kill(pid, 'SIGKILL')
-        killed.push(pid)
-      } catch {
-        // 已退出 / 没权限：忽略，交给下一轮或下一轮运行兜底。
-      }
-    }
+    const targets = locked.length > 0 ? locked : [dir]
+    // 父进程自己、以及父进程的上层，可能正握着临时目录：绝不收，否则等于替测试进程自杀。
+    // 已经收掉的也在排除表里，免得同一个 pid 反复出现。
+    const fresh = releaseHoldersThroughRm(targets, [process.pid, process.ppid, ...killed])
+    for (const pid of fresh) killed.push(pid)
     // 刚杀完要给句柄释放留一拍；只是持有者自己退了、没杀到东西，也等一小拍再试。
     sleepSync(fresh.length > 0 ? 150 : 80)
     if (removeTempDir(dir)) return { removed: true, killed }
