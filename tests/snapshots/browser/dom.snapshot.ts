@@ -56,6 +56,26 @@ import {
 } from '../../e2e/support/host.js'
 
 const DRIVER = join(ROOT, 'tests', 'snapshots', 'browser', 'drivers', 'dom-shot.cjs')
+/** 宿主进程的钉死时钟预加载（`node --require`；理由见该文件头注释）。 */
+const HOST_CLOCK_PRELOAD = join(ROOT, 'tests', 'snapshots', 'browser', 'drivers', 'pin-host-clock.cjs')
+
+/**
+ * 把宿主进程的时钟钉到 `at`：在 `NODE_OPTIONS` 里追加一个 `--require` 预加载（原有 flags
+ * 保留），预加载读 `DSC_DOM_HOST_NOW` 后替换宿主进程的 `Date`。
+ *
+ * 为什么走 `NODE_OPTIONS`：宿主是 `startUiHost` 起的**子进程**
+ * （`tests/e2e/support/host.ts:102`），测试进程里的 `vi.setSystemTime` 管不到它；而页面侧
+ * 的 `Date` 由 `bootScript` 单独钉。两侧同一个时刻，页面算相对时间才恒为非负。
+ */
+function pinnedHostEnv(at: number): Record<string, string> {
+  // 路径按 NODE_OPTIONS 的解析规则加引号：检出目录带空格时也不能散架。
+  const requireFlag = `--require "${HOST_CLOCK_PRELOAD.replaceAll('\\', '/')}"`
+  const existing = process.env['NODE_OPTIONS']
+  return {
+    NODE_OPTIONS: existing === undefined || existing === '' ? requireFlag : `${existing} ${requireFlag}`,
+    DSC_DOM_HOST_NOW: String(at),
+  }
+}
 
 const fresh = probeFreshness()
 if (!fresh.ok) console.warn(skipReason(fresh))
@@ -125,6 +145,12 @@ interface Scenario {
   height?: number
   /** 首帧前注入页面的脚本（驱动注册后补一次 reload）；「页面时钟钉死」这类能力走这里。 */
   bootScript?: string
+  /**
+   * 宿主进程的钉死时刻（毫秒）：给了就用 `--require` 预加载把宿主的 `Date` / `Date.now()`
+   * 也钉到这个值。页面侧走 `bootScript`，两侧必须**同一个**锚——否则页面的相对时间会
+   * 因为宿主时钟往后跑而变负，整行消失（见 `drivers/pin-host-clock.cjs` 的注释）。
+   */
+  hostPinnedNow?: number
   actions: BrowserAction[]
   counts: CountSpec[]
   /** 真 Chromium 的 computed style（CSS 残留的替代断言；见 B37-R）。 */
@@ -525,6 +551,10 @@ const SCENARIOS: readonly Scenario[] = [
       writeUsage(dsc)
     },
     bootScript: PIN_CLOCK_BOOT,
+    // 宿主进程的时钟也钉到同一个 SNAP_NOW：侧栏「当前未落盘会话」的 createdAt 来自宿主
+    // 进程（`Session.create` 的 `Date.now()`），只钉页面会让页面的相对时间变成负数，
+    // 那一行的 `<time>` 从 2026-11-17 本地正午起整行消失（详见 pin-host-clock.cjs）。
+    hostPinnedNow: SNAP_NOW,
     actions: [
       { type: 'wait', selector: '.app' },
       {
@@ -833,6 +863,8 @@ async function runScenario(scenario: Scenario): Promise<void> {
         // 端点解析要求 apiKeyEnv 真有值；给假串只是为了“已配置”这一支，不发请求。
         DSC_DOM_DEMO_KEY: 'dom-demo-key',
         DSC_DOM_SPARE_KEY: 'dom-spare-key',
+        // 页面时钟钉死的场景，宿主时钟必须钉在同一个时刻（否则相对时间会出现负数）。
+        ...(scenario.hostPinnedNow === undefined ? {} : pinnedHostEnv(scenario.hostPinnedNow)),
       },
     })
     const resultPath = join(home, 'dom-shot.json')
