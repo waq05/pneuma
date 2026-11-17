@@ -28,10 +28,30 @@ on:
     - cron: '0 18 * * *'
   workflow_dispatch:
 
-# 同一个分支连着推两次，取消上一次——门禁只关心最终状态。
+# 同一个分支连着推两次，取消上一次——门禁只关心最终状态（PR / push 行为不变）。
+#
+# B54-②：夜跑必须和推门分组，否则推一次主干就把夜跑取消。schedule 的 github.ref 就是
+# 默认分支，与 push 主干同组；凌晨（18:00 UTC = 北京 02:00）正在跑的夜跑被一次推门
+# 取消后，夜跑末尾的 all-nightly-passed 永远拿不到结论——「夜跑红了」没有任何 check
+# 变红，等于夜跑门不存在。
+#
+# 分组：schedule 与 workflow_dispatch 跑的是同一整套夜跑 job（snapshot / e2e /
+# coverage / probe），都归 verify-nightly，与 push / PR 的 verify-<ref> 天然隔离，
+# 互相取消不到；手动触发走同一组，顺带保证同一时刻只有一份夜跑。
+# push / pull_request 仍按 github.ref 分组，连推多次只留最后一次。
+#
+# 表达式说明（四个事件的推演见 B54 验收，别凭感觉改）：
+#   GitHub 表达式里 `&&` / `||` 返回的是操作数本身，不是布尔；`&&` 优先级高于 `||`，
+#   所以 A || B 必须加括号，否则 `A || B && 'nightly'` 会被解析成 A || (B && 'nightly')，
+#   schedule 时返回布尔 true，组名变成字符串 "true"。这里写成
+#   `(A || B) && 'nightly' || github.ref`：A/B 为真时得 'nightly'，否则 false || ref = ref。
+#
+# cancel-in-progress：schedule 取 false——新的 schedule 遇到还没跑完的夜跑就排队（同一
+# 时刻仍只有一份夜跑），且夜跑不参与推门的互相取消；其余事件（push / PR / 手动触发）
+# 保持 true，推门「连推只跑最后一次」不变，手动重跑则取消旧的夜跑，省 runner。
 concurrency:
-  group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  group: verify-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'nightly' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   core:
@@ -256,8 +276,14 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: 编译内核与界面壳
         run: pnpm run build && pnpm -C ui-shell build
+      # B54-①：覆盖率报告之后必须过自检（一行都没覆盖到就红）。为什么不直接调链式的
+      # test:coverage：pnpm 会把本行追加的参数拼到整条 script 串末尾，`&& node 自检`
+      # 后面的参数会落到自检脚本上，vitest 反而拿不到 --reporter / --outputFile。
+      # 所以跟 integration 分片同一个处理：调只跑 vitest 的 test:coverage:run，自检单独一步。
       - name: 覆盖率（阈值来自 coverage-baseline.json）
-        run: xvfb-run --auto-servernum pnpm run test:coverage --reporter=default --reporter=junit --outputFile.junit=reports/coverage.xml
+        run: xvfb-run --auto-servernum pnpm run test:coverage:run --reporter=default --reporter=junit --outputFile.junit=reports/coverage.xml
+      - name: 覆盖率自检（B54-①：一行都没覆盖到就红）
+        run: pnpm run check:coverage-summary
       - name: 上传覆盖率报告与测试报告
         if: always()
         uses: actions/upload-artifact@v4
