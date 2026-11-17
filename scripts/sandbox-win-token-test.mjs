@@ -465,6 +465,7 @@ if (process.platform !== 'win32') {
     console.log(`  SKIP ${skipReason}`)
   } else {
     note(`探测结果：${probe.detail}`)
+    await runMissingTempRootCase(backend)
     await runIntegration(backend)
     await runMultiWorkspaceCase(backend)
     await runLargeOutputCase()
@@ -490,8 +491,8 @@ async function runIntegration(backend) {
     const insideFile = join(workspace, 'inside.txt')
     const outsideFile = join(outsideRoot, 'outside.txt')
 
-    // 私有临时目录在真实宿主里由插件建（`src/packages/sandbox/index.ts:213-218`）；
-    // grantWrite 要打在真实存在的目录上，不存在的话第一次 plan 就整体降级
+    // 私有临时目录现在由后端在授权前自己建（见 runMissingTempRootCase）。
+    // 这里照旧先建好，让这一段只验「里外写入的边界」，失败时能分清是谁的问题。
     const tmpRoot = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
     if (tmpRoot === undefined) {
       skipReason = 'writeRootsFor 没算出私有临时目录（后端接口变了？）'
@@ -641,7 +642,7 @@ async function runMultiWorkspaceCase(backend) {
   const handleRef = { current: null }
   try {
     const workspaces = [join(sandboxRoot, 'multi-a'), join(sandboxRoot, 'multi-b')]
-    /** 每个工作区的私有 temp 目录：真实宿主里由插件建，这里照 writeRootsFor 建 */
+    /** 每个工作区的私有 temp 目录：后端也会自己建，这里先建好只是为了让这一段只验多工作区口径 */
     const temps = []
     for (const workspace of workspaces) {
       mkdirSync(workspace, { recursive: true })
@@ -754,6 +755,59 @@ async function runMultiWorkspaceCase(backend) {
       }
     }
     if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
+  }
+}
+
+/**
+ * 回归（BUG-0001）：私有临时目录还不存在时，后端**自己**把它建出来，不许整体降级。
+ *
+ * 修前：`<DSC_HOME>/sandbox/tmp/<工作区哈希>` 谁都不建（宿主建的那份带会话 id，是另一个
+ * 路径），`GetNamedSecurityInfoW` 对不存在的路径返 Win32 错误 2 → 第一次 plan 就降级，
+ * 于是全新安装后第一次跑命令就退回「只有策略围栏、没有换执行体」。
+ *
+ * 判据：新工作区第一次 plan() 返回非 null；临时目录在 plan 之后真的存在；
+ * 细节里不许出现 ACL 失败。
+ *
+ * @param {{ createWindowsTokenRunner: Function, writeRootsFor: Function }} backend 编译产物里的后端导出。
+ */
+async function runMissingTempRootCase(backend) {
+  console.log('')
+  console.log('── 集成：私有临时目录不存在时后端自己建（BUG-0001 回归）')
+  const details = []
+  const workspace = join(sandboxRoot, 'fresh-workspace')
+  mkdirSync(workspace, { recursive: true })
+  const tempRoot = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
+  if (tempRoot === undefined) {
+    skipReason = 'writeRootsFor 没算出私有临时目录（后端接口变了？）'
+    console.log(`  SKIP ${skipReason}`)
+    return
+  }
+  check('前置：这个工作区的临时目录此刻不存在', !existsSync(tempRoot.path), tempRoot.path)
+
+  const handle = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    networkAccess: () => false,
+    onDetail: (message) => details.push(String(message)),
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle.runner.plan(run, base)
+    check(
+      '临时目录缺失时 plan() 仍然给出换执行体的计划（没降级）',
+      planned !== null,
+      planned === null ? details.join(' / ') || '没有给出原因' : 'ok',
+    )
+    check('后端自己把临时目录建出来了', existsSync(tempRoot.path), tempRoot.path)
+    check('细节里没有 ACL 相关失败', !details.some((line) => /ACL/.test(line)), details.join(' / ') || '(无)')
+  } finally {
+    handle.dispose()
   }
 }
 

@@ -256,6 +256,9 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
    *
    * 不能「授权过一次就短路」：清单会随着不同会话的调用继续增长（见 scopeOf），
    * 新补进来的根必须在这一次调用之前授权好。已授权的根在 grants 里有记录，重复调用只花几次查找。
+   *
+   * 授权前自己把目录建出来（`mkdirSync`）：ACL 能打的只有真实存在的路径，而私有临时目录
+   * 在第一次调用之前谁都没建过。建成失败才降级，理由写清是哪一条。
    */
   const ensureAuthorized = (): boolean => {
     if (degraded) return false
@@ -275,6 +278,15 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       const boundNow = bound
       for (const root of roots) {
         if (grants.has(root.path)) continue
+        // 授权的前提是目录**真存在**：GetNamedSecurityInfoW 对不存在的路径返回 Win32 错误 2，
+        // 整条后端当场降级。私有临时目录 `<DSC_HOME>/sandbox/tmp/<工作区哈希>` 在第一次跑命令
+        // 之前没有任何人建过（宿主建的临时目录带会话 id，是另一个路径），所以这一步必须在这里做，
+        // 不能指望调用方（2026-11-17 修 BUG-0001：全新安装后第一次跑命令，沙箱直接失效）。
+        try {
+          mkdirSync(root.path, { recursive: true })
+        } catch (error) {
+          throw new Error(`建可写根「${root.path}」（能力 SID ${root.sid}）失败：${describeError(error)}`)
+        }
         try {
           grants.set(root.path, grantWrite(boundNow, root.path, root.sid, LOCK_DIR))
         } catch (error) {
