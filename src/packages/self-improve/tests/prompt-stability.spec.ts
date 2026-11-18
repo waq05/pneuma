@@ -186,7 +186,7 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, requireAppro
     logger: { debug: () => undefined },
   }
 
-  const wired = {
+  const wired: Wired = {
     ctx: ctx as unknown as Wired['ctx'],
     tools,
     prompts,

@@ -157,7 +157,7 @@ function fakeCtx(): Wired {
     },
   }
 
-  const wired = {
+  const wired: Wired = {
     ctx: ctx as unknown as Wired['ctx'],
     tools,
     prompts,
