@@ -23,10 +23,10 @@ import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
-import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
+import { pruneImagesBatch, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
 import { buildSystemPromptParts, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
 import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
-import { pruneToolResults } from './tool-result-prune.js'
+import { DEFAULT_TOOL_RESULT_PRUNE, pruneToolResultsBatch } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
@@ -85,6 +85,25 @@ function readEnvRefreshMs(passed: unknown): number {
   const num = Number(raw.envRefreshMs)
   if (!Number.isFinite(num) || num < 0) return DEFAULT_ENV_FACTS_REFRESH_MS
   return Math.round(num)
+}
+
+/**
+ * 批量落点状态（P2a）的会话上限：只记最近碰到的这么多个会话，超了丢最老的（Map 插入顺序）。
+ * 每个 key 只有几十字节，64 个会话的表在常驻进程里可以忽略；真正要防的是历史会话无限堆积。
+ */
+const STICKY_SESSION_LIMIT = 64
+
+/** 取某个会话的粘性集合；还没有就建一个空集，到上限先丢最老的会话。 */
+function stickyKeys(store: Map<string, ReadonlySet<string>>, sessionId: string): ReadonlySet<string> {
+  const kept = store.get(sessionId)
+  if (kept !== undefined) return kept
+  if (store.size >= STICKY_SESSION_LIMIT) {
+    const oldest = store.keys().next().value
+    if (oldest !== undefined) store.delete(oldest)
+  }
+  const fresh = new Set<string>()
+  store.set(sessionId, fresh)
+  return fresh
 }
 
 export const promptPlugin: Plugin.Object = {
@@ -237,6 +256,11 @@ export const promptPlugin: Plugin.Object = {
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
+    /** 按会话记「已经切过的工具结果 key」：只增不减，保证前缀一次断完就稳定。 */
+    const prunedToolResults = new Map<string, ReadonlySet<string>>()
+    /** 按会话记「已经卸掉的图片 key」：语义同上。 */
+    const offloadedImages = new Map<string, ReadonlySet<string>>()
+
     // 内置投影：历史里超长的工具结果只留头尾（2026-10-30，对标 dsh 的
     // compaction-tool-result-pruner）。PTC 模式下 run_code 常把整份文件原文返回，
     // 那些字留在历史里每轮重发——实测一个会话里工具结果合计 43K token。
@@ -244,9 +268,22 @@ export const promptPlugin: Plugin.Object = {
     // 为什么是「确定性修剪」而不是每轮按当时情况重算：前缀缓存要求逐字节一致。
     // 同一条结果只要越过「最近 4 条」这道线，就永远切成同一段文本；前缀只在它第一次
     // 越线的那一轮失效一次，之后完全稳定。切掉的部分明说省了多少、原文去哪儿找。
+    //
+    // P2a（2026-11-18）批量化：逐条越线就切 = 每条一次前缀断点。改成按会话攒一批
+    // （「粘性已切集合」，key 见 tool-result-prune.ts 的文件头），新增候选合计可省
+    // 字符 ≥ TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS 才一起切；已切条目继续切。
+    // 状态只在内存里：进程重启后第一次请求会重新攒一批，代价是那一次多断一下。
+    // loop.ts 的 invariant 会把这条链再跑一遍（checkRequestInvariant），同一份历史
+    // 第二次进来时候选已在集合里，输出与第一次逐字节相同。
     projections.set('tool-result-prune', {
       order: 560,
-      fn: (messages) => pruneToolResults(messages),
+      fn: (messages, session) => {
+        const owner = session ?? requestSession
+        const sessionId = owner.meta.id
+        const batch = pruneToolResultsBatch(messages, DEFAULT_TOOL_RESULT_PRUNE, stickyKeys(prunedToolResults, sessionId))
+        if (batch.added.length > 0) prunedToolResults.set(sessionId, batch.kept)
+        return batch.messages
+      },
     })
     // 内置投影三：每轮按龄/按预算卸载图片（0.6.68 WS2，口径见 core/image-diet）。
     // 用户贴的图、工具结果里的图、电脑控制的历史截图在长会话里每轮重发，一张 JPEG 截图
@@ -258,12 +295,21 @@ export const promptPlugin: Plugin.Object = {
     // 排在 env-facts（600）**之前**：env-facts 会往末尾追加一条 user 环境快照，而本投影
     // 按「最近几个用户回合」决定哪些图还留着——若落在它之后，那条合成快照会白占一格，
     // keepRounds 的口径就比字面保守一格（更早的图被多卸一轮）。先卸图、再补快照，口径才对得上。
+    //
+    // P2a（2026-11-18）批量化：逐张越线就卸 = 每张一次前缀断点。改成按会话攒一批
+    // （「粘性已卸集合」，key = image_url.url 的 sha256 前 16 位），新增候选的 url 字符数
+    // 合计 ≥ IMAGE_DIET_BATCH_SAVED_CHARS 才一起卸；已卸的图继续卸。状态只在内存里。
     projections.set('image-diet', {
       order: 550,
-      fn: (messages) => {
+      fn: (messages, session) => {
         // 现读配置：设置分区保存后下一轮就生效，不必重启宿主（照 readBudget 的做法）。
         const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))
-        return config.enabled ? pruneImages(messages, config) : messages
+        if (!config.enabled) return messages
+        const owner = session ?? requestSession
+        const sessionId = owner.meta.id
+        const batch = pruneImagesBatch(messages, config, stickyKeys(offloadedImages, sessionId))
+        if (batch.added.length > 0) offloadedImages.set(sessionId, batch.kept)
+        return batch.messages
       },
     })
     // 内置投影四（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让

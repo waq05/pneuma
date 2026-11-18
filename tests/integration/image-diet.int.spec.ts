@@ -71,8 +71,14 @@ let ctx: { plugin(plugin: unknown, config: unknown): Promise<unknown>; on(event:
 const text = (value: string): ChatContentPart => ({ type: 'text', text: value })
 /** 一张图（data URL，够断言用，不解码）。 */
 const image = (url: string): ChatContentPart => ({ type: 'image_url', image_url: { url } })
-/** 夹具里的第 n 张图。 */
-const url = (n: number): string => `data:image/png;base64,IMG${String(n)}`
+/**
+ * 夹具里的第 n 张图。
+ *
+ * url 故意拉到 20000 字符（批量阈值 `IMAGE_DIET_BATCH_SAVED_CHARS` = 16384）：
+ * P2a 起「该卸的图要攒够一批才卸」，单张自己就超过阈值时照旧立即卸。这里验的是
+ * 按预算/按龄的**判定**与投影链顺序，不是攒批本身（攒批在 src/core 的 batch spec）。
+ */
+const url = (n: number): string => `data:image/png;base64,${'A'.repeat(20_000)}${String(n)}`
 /** 消息的内容片段。 */
 const parts = (message: ChatMessage | undefined): ChatContentPart[] =>
   Array.isArray(message?.content) ? message.content : []
@@ -197,17 +203,18 @@ describe('⑧ 投影链：电脑控制正在跑时最新那张截图不许被卸
     // 截图」的投影已降级为不登记。挂上它才能钉住「截图走通用规则而不是专有文案」。
     const computerUse: ComputerUseModule = await import('@pneuma/runtime/packages/computer-use/index.js')
     await ctx.plugin(computerUse.computerUsePlugin, {})
+    // 用 2x 号段的 url：粘性已卸集合按会话记，和前面 ⑦ 的图错开，免得「已卸」把本段要留的图也带走。
     out = rewrite([
       { role: 'user', content: '点一下那个按钮' },
-      shot('s1', url(1)),
-      shot('s2', url(2)),
-      shot('s3', url(3)),
+      shot('s1', url(21)),
+      shot('s2', url(22)),
+      shot('s3', url(23)),
     ])
   })
 
   test('最新那张截图仍在（图像本身随请求发送）', () => {
     const shots = out.filter((message) => parts(message).some((part) => part.type === 'text' && part.text.startsWith('屏幕截图')))
-    expect(imageUrls(shots[shots.length - 1])).toEqual([url(3)])
+    expect(imageUrls(shots[shots.length - 1])).toEqual([url(23)])
   })
 
   test('更老的截图被卸载成占位，用的是通用占位文案', () => {
@@ -229,7 +236,7 @@ describe('⑨ 投影链：与 drop-images 并存（模型不收图 → 最终无
     services.llm.setModel('test', 'm-text')
     try {
       const out = rewrite([
-        { role: 'user', content: [text('看图'), ...Array.from({ length: 6 }, (_, index) => image(url(index + 1)))] },
+        { role: 'user', content: [text('看图'), ...Array.from({ length: 6 }, (_, index) => image(url(31 + index)))] },
       ])
       expect(imageDiet.countImageParts(out)).toBe(0)
       const userMessage = out.find((message) => message.role === 'user')
@@ -243,7 +250,7 @@ describe('⑨ 投影链：与 drop-images 并存（模型不收图 → 最终无
 
 describe('⑩ 投影链：设置改了就生效（现读配置）', () => {
   test('预算改成 1 → 只留最近 1 张；总开关关掉 → 一张都不动；越界写入被夹到 20', async () => {
-    const input: ChatMessage[] = [{ role: 'user', content: [text('三张'), image(url(1)), image(url(2)), image(url(3))] }]
+    const input: ChatMessage[] = [{ role: 'user', content: [text('三张'), image(url(41)), image(url(42)), image(url(43))] }]
     try {
       await services.settings.save('image-diet', 'userImageBudget', 1)
       expect(imageDiet.countImageParts(rewrite(input))).toBe(1)

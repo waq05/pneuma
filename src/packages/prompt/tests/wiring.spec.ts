@@ -233,11 +233,24 @@ describe('命名投影链', () => {
     expect(folded[0]).toMatchObject({ role: 'system', content: 'A\n\nB' })
     expect(folded.filter((message) => message.role === 'system')).toHaveLength(1)
 
-    const long = 'x'.repeat(9_000)
+    // P2a 起是批量落点：单条候选自己就得能省出阈值（16K 字符）才会当场切。
+    // 9K 的正文切开只省约 3.8K，不够一批——那正是这一轮要的语义，所以这里用 30K。
+    const long = 'x'.repeat(30_000)
     const recent = Array.from({ length: 4 }, () => ({ role: 'tool', content: '最近的结果' }))
     const pruned = h.service.rewrite([{ role: 'tool', content: long }, ...recent])
     expect(String(pruned[0]?.content)).toContain('省掉了')
     expect(String(pruned[0]?.content).length).toBeLessThan(long.length)
+  })
+
+  test('tool-result-prune 批量落点：同一份历史投影两次逐字节相同（invariant 的二次派生）', () => {
+    const h = fakeCtx()
+    const long = 'x'.repeat(30_000)
+    const recent = Array.from({ length: 4 }, () => ({ role: 'tool', content: '最近的结果' }))
+    const messages: Message[] = [{ role: 'tool', content: long }, ...recent]
+    const first = h.service.rewrite(messages)
+    const second = h.service.rewrite(messages)
+    // 第二次进来时 key 已在粘性集合里：输出必须与第一次逐字节相同，否则 invariant 每轮误报。
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
   })
 
   test('drop-images：模型不声明图片输入时换成一句说明；声明了原样保留', () => {
