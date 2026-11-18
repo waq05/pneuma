@@ -16,6 +16,7 @@ import {
   IMAGE_DIET_BATCH_MIN_IMAGES,
   IMAGE_DIET_PLACEHOLDER,
   countImageParts,
+  imageDietKey,
   pruneImagesBatch,
 } from './image-diet.js'
 
@@ -174,5 +175,43 @@ describe('③ 位置漂移（压缩改下标）：hash 兜底认旧决定', () =
     expect(countImageParts(after.messages)).toBe(0)
     expect(placeholders(after.messages[1])).toBe(1)
     expect(placeholders(after.messages[3])).toBe(1)
+  })
+
+  test('同图重复 + 位置漂移：hash 兜底关闭，不误卸新位置的那张', () => {
+    const sameUrl = url(7)
+    const hash = imageDietKey(sameUrl)
+    // 旧决定：曾在位置 0 卸过这张图（消息形状已经变了）。
+    const kept = new Set([`p:0:1:${hash}`])
+    const messages: ChatMessage[] = [
+      { role: 'user', content: [text('旧'), image(sameUrl)] },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: [text('新'), image(sameUrl)] },
+    ]
+    const after = pruneImagesBatch(messages, GENEROUS, kept)
+    expect(after.added).toHaveLength(0)
+    // 位置 0 精确命中 → 卸；位置 2 同 hash 但本 hash 出现两次 → 不兜底 → 留。
+    expect(countImageParts(after.messages)).toBe(1)
+    expect(imagesIn(after.messages[2])).toBe(1)
+  })
+
+  test('压缩后历史变短：旧集合作废，重发的同一张图不被误卸', () => {
+    const sameUrl = url(8)
+    const hash = imageDietKey(sameUrl)
+    // 旧决定：曾在「4 条消息」的版本里卸过这张图（位置 0）。
+    const kept = new Set([`p:0:1:${hash}`])
+    // 压缩后只剩 2 条消息：旧图那条消息整条没了，用户又贴回同一张图，位置 1、只出现一次。
+    const compacted: ChatMessage[] = [
+      { role: 'assistant', content: '（压缩摘要）' },
+      { role: 'user', content: [text('又贴回来了'), image(sameUrl)] },
+    ]
+    // 做决定时历史有 4 条 > 现在 2 条 → 集合作废，这一轮一张都不卸（新图必须留着）。
+    const after = pruneImagesBatch(compacted, GENEROUS, kept, IMAGE_DIET_BATCH_MIN_IMAGES, 4)
+    expect(after.reset).toBe(true)
+    expect(after.added).toHaveLength(0)
+    expect(countImageParts(after.messages)).toBe(1)
+    // 对照组：不传做决定时的长度（等同于历史没变短）→ 会走 hash 兜底误卸。这就是作废要拦的路径。
+    const noReset = pruneImagesBatch(compacted, GENEROUS, kept, IMAGE_DIET_BATCH_MIN_IMAGES)
+    expect(noReset.reset).toBe(false)
+    expect(countImageParts(noReset.messages)).toBe(0)
   })
 })

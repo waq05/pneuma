@@ -315,6 +315,48 @@ describe('命名投影链', () => {
     expect(resumed.states).toHaveLength(0)
   })
 
+  test('历史压缩变短：旧批量集合作废并写回空集合，重发的同 url 图不被误卸', () => {
+    const first = recordingSession('sess-shrink')
+    // 声明图片能力：否则 drop-images（900）会把图全剥，看不到 image-diet 的决定。
+    const plugin = fakeCtx({ session: first.session, modalities: ['text', 'image'] })
+    const imageTool = (imageUrl: string): Message => ({
+      role: 'tool',
+      content: [
+        { type: 'text', text: '屏幕截图' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
+    })
+    const urlA = 'data:image/png;base64,IMG-A'
+    // 4 条工具图：工具图预算 2 张 → 前两张凑一批卸掉，state 记下「做决定时 4 条消息」。
+    plugin.service.rewrite(
+      [imageTool(urlA), imageTool('data:image/png;base64,IMG-B'), imageTool('data:image/png;base64,IMG-C'), imageTool('data:image/png;base64,IMG-D')],
+      first.session,
+    )
+    const stored = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)?.payload as
+      | { length?: number; keys?: string[] }
+      | undefined
+    expect(stored?.keys).toHaveLength(2)
+    expect(stored?.length).toBe(4)
+
+    // 压缩：历史缩成 2 条，旧图所在消息整条没了；用户又贴回同一张图（当前位置 1，只出现一次）。
+    const compacted: Message[] = [
+      { role: 'assistant', content: '（压缩摘要）' },
+      { role: 'user', content: [{ type: 'text', text: '又贴一次' }, { type: 'image_url', image_url: { url: urlA } }] },
+    ]
+    const after = plugin.service.rewrite(compacted, first.session)
+    // 变短那一轮不卸新图：它按预算该留，不能被旧 hash 兜底带走。
+    const images = after.flatMap((message) =>
+      Array.isArray(message.content) ? message.content.filter((part) => (part as { type?: string }).type === 'image_url') : [],
+    )
+    expect(images).toHaveLength(1)
+    // 作废后的空集合写回状态（长度 = 本轮的 2），下一轮历史变长也不会让旧决定复活。
+    const rewritten = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)?.payload as
+      | { length?: number; keys?: string[] }
+      | undefined
+    expect(rewritten?.keys).toHaveLength(0)
+    expect(rewritten?.length).toBe(2)
+  })
+
   test('drop-images：模型不声明图片输入时换成一句说明；声明了原样保留', () => {
     const image: Message = { role: 'user', content: [{ type: 'text', text: '看图' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } }] }
     const blind = fakeCtx({ modalities: [] })

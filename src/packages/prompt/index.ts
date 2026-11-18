@@ -23,10 +23,10 @@ import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
-import { pruneImagesBatch, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
+import { IMAGE_DIET_BATCH_MIN_IMAGES, pruneImagesBatch, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
 import { buildSystemPromptParts, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
 import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
-import { DEFAULT_TOOL_RESULT_PRUNE, pruneToolResultsBatch } from './tool-result-prune.js'
+import { DEFAULT_TOOL_RESULT_PRUNE, pruneToolResultsBatch, TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
@@ -87,8 +87,16 @@ function readEnvRefreshMs(passed: unknown): number {
   return Math.round(num)
 }
 
-/** 批量落点状态：只存 key 列表；hash 用于「没变就不写」（照 env-facts 的 noteEnvFacts）。 */
-type StickyBatchState = { hash: string; keys: string[] }
+/**
+ * 批量落点状态：key 列表 + 做决定时的消息条数；hash 用于「没变就不写」（照 env-facts 的 noteEnvFacts）。
+ *
+ * 为什么还要存 `length`（2026-11-18 复核补）：只认「该 hash 本轮只出现一次」的兜底，
+ * 无法区分「压缩把旧消息挪了位」与「压缩把旧消息整条删了、用户又贴回同一张图」。
+ * 后者若还拿旧决定认，就会把本轮最新、本该按预算保留的那张图误卸。记下做决定时的
+ * 消息条数后，投影一看到 `messages.length < length`（历史被压缩/回退变短）就把整个
+ * 粘性集合作废、按空集合重新攒批——压缩本身已经断过一次前缀，这里只多一次恢复。
+ */
+type StickyBatchState = { hash: string; length: number; keys: string[] }
 
 declare module '@pneuma/runtime/core/session.js' {
   interface SessionStateMap {
@@ -105,16 +113,23 @@ declare module '@pneuma/runtime/core/session.js' {
  * 为什么落会话状态而不是放进程内存（P2a 返工，2026-11-18）：投影结果必须能由
  * 「日志原文 + 命名投影」复算——换个进程、拿同一份日志重放，输出要逐字节相同。
  * 存的是排序后的 key 列表（位置 key 只增不减），hash 去重避免每轮往日志里写一条。
+ *
+ * 「可复算」的精确含义：复算的是**当前请求的最新一份**。审计更早的历史请求时，
+ * 拿到的状态是那之后各批的并集（只增不减），不是当时那一份；要逐帧复算得按日志
+ * 重放一遍请求序列。
+ *
+ * @param length 做决定时的消息条数；历史之后变短（压缩/回退）就据此作废旧集合。
  */
 function noteStickyBatch(
   owner: Session,
   id: 'tool-result-prune-batch' | 'image-diet-batch',
   keys: ReadonlySet<string>,
+  length: number,
 ): void {
   const list = [...keys].sort()
-  const hash = createHash('sha256').update(list.join('\n')).digest('hex').slice(0, 16)
+  const hash = createHash('sha256').update(`${String(length)}\n${list.join('\n')}`).digest('hex').slice(0, 16)
   if (owner.state(id)?.hash === hash) return
-  owner.appendState(id, { hash, keys: list })
+  owner.appendState(id, { hash, length, keys: list })
 }
 
 export const promptPlugin: Plugin.Object = {
@@ -271,12 +286,19 @@ export const promptPlugin: Plugin.Object = {
      * 批量落点状态（P2a）：已切过的工具结果 key / 已卸掉的图片位置 key，都落成**会话状态**
      * 而不是进程内 Map——换进程重放同一份日志时先读回来，投影输出才能逐字节复算
      * （「日志原文 + 命名投影可复算」）。条目名见本文件顶部的 SessionStateMap 声明合并。
+     *
+     * 连 `length` 一起读回来交给批量函数：`messages.length` 比做决定时短 = 历史被压缩/
+     * 回退过，旧集合作废（见 tool-result-prune / image-diet 的 `decidedAtLength` 参数），
+     * 否则旧 hash 兜底会把压缩后重发的同一张图误卸。
      */
-    const readSticky = (owner: Session, id: 'tool-result-prune-batch' | 'image-diet-batch'): ReadonlySet<string> => {
-      const stored = owner.state(id)?.keys
+    const readSticky = (
+      owner: Session,
+      id: 'tool-result-prune-batch' | 'image-diet-batch',
+    ): { keys: ReadonlySet<string>; length: number | undefined } => {
+      const stored = owner.state(id)
       const keys = new Set<string>()
-      if (Array.isArray(stored)) for (const key of stored) if (typeof key === 'string' && key !== '') keys.add(key)
-      return keys
+      if (Array.isArray(stored?.keys)) for (const key of stored.keys) if (typeof key === 'string' && key !== '') keys.add(key)
+      return { keys, length: typeof stored?.length === 'number' ? stored.length : undefined }
     }
 
     // 内置投影：历史里超长的工具结果只留头尾（2026-10-30，对标 dsh 的
@@ -297,8 +319,16 @@ export const promptPlugin: Plugin.Object = {
       order: 560,
       fn: (messages, session) => {
         const owner = session ?? requestSession
-        const batch = pruneToolResultsBatch(messages, DEFAULT_TOOL_RESULT_PRUNE, readSticky(owner, 'tool-result-prune-batch'))
-        if (batch.added.length > 0) noteStickyBatch(owner, 'tool-result-prune-batch', batch.kept)
+        const sticky = readSticky(owner, 'tool-result-prune-batch')
+        const batch = pruneToolResultsBatch(
+          messages,
+          DEFAULT_TOOL_RESULT_PRUNE,
+          sticky.keys,
+          TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS,
+          sticky.length,
+        )
+        // 推进了要写回；历史变短（集合作废）也要写回，否则下一轮历史又变长就查不回来了。
+        if (batch.added.length > 0 || batch.reset) noteStickyBatch(owner, 'tool-result-prune-batch', batch.kept, messages.length)
         return batch.messages
       },
     })
@@ -324,8 +354,10 @@ export const promptPlugin: Plugin.Object = {
         const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))
         if (!config.enabled) return messages
         const owner = session ?? requestSession
-        const batch = pruneImagesBatch(messages, config, readSticky(owner, 'image-diet-batch'))
-        if (batch.added.length > 0) noteStickyBatch(owner, 'image-diet-batch', batch.kept)
+        const sticky = readSticky(owner, 'image-diet-batch')
+        const batch = pruneImagesBatch(messages, config, sticky.keys, IMAGE_DIET_BATCH_MIN_IMAGES, sticky.length)
+        // 推进了要写回；历史变短（集合作废）也要写回，否则下一轮历史又变长就查不回来了。
+        if (batch.added.length > 0 || batch.reset) noteStickyBatch(owner, 'image-diet-batch', batch.kept, messages.length)
         return batch.messages
       },
     })

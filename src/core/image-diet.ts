@@ -29,11 +29,18 @@
  *     hash 认旧决定——出现多次时不认，免得又把最新那张误伤；
  *   - 本轮新候选：只有整批够张数才并入集合并按位置卸。
  *
- * ## 状态可复算
+ * ## 状态可复算（2026-11-18 复核补）
  *
  * 粘性集合不放在进程内存里，而是落成会话状态（`appendState('image-diet-batch', ...)`，
  * 见 packages/prompt/index.ts 的 noteStickyBatch）：换进程重放同一份日志时先读回来，
- * 投影输出与当时逐字节相同，「日志原文 + 命名投影可复算」才成立。
+ * 投影输出与当时逐字节相同，「日志原文 + 命名投影可复算」才成立。复算的是当前请求的
+ * 最新一份；审计更早的历史请求时拿到的是那之后各批的并集。
+ *
+ * 状态里还记着**做决定时的消息条数**：本轮 `messages.length` 比它短，说明历史被压缩/
+ * 回退过，旧位置集合整份作废、按空集合重新攒批（见 `pruneImagesBatch` 的
+ * `decidedAtLength`）。为什么不能只靠「该 hash 本轮只出现一次」：压缩可能把旧图那条
+ * 消息整条删掉，用户又贴回同一张图，那一次出现也是唯一的——继续认旧 hash 就会把
+ * 本轮最新、按预算该留的图误卸。压缩已经断过一次前缀，这里最多再多断一次。
  *
  * @module dsc/core/image-diet
  */
@@ -105,6 +112,11 @@ export interface ImageDietBatch {
   kept: ReadonlySet<string>
   /** 本次新并入集合的位置 key（没到张数时为空）。 */
   added: readonly string[]
+  /**
+   * 历史比做决定时变短（压缩/回退）→ 旧粘性集合作废、本轮按空集合重新攒批。
+   * 调用方据此把「作废后的空集合」写回状态，别让旧决定在历史重新变长后复活。
+   */
+  reset: boolean
 }
 
 /**
@@ -324,22 +336,36 @@ function applyImageDietDecided(messages: readonly ChatMessage[], kept: ReadonlyS
  * @param options 卸载口径；不传用缺省
  * @param kept 该会话的粘性已卸位置集合（只增不减）
  * @param minImages 批量最小张数；缺省用 {@link IMAGE_DIET_BATCH_MIN_IMAGES}
+ * @param decidedAtLength 上次做决定时的消息条数（会话状态里记着）；本轮 `messages.length`
+ *   比它短说明历史被压缩/回退，旧集合作废、按空集合重新攒批（详见 {@link ImageDietBatch.reset}）
  */
 export function pruneImagesBatch(
   messages: readonly ChatMessage[],
   options: ImageDietOptions = DEFAULT_IMAGE_DIET,
   kept: ReadonlySet<string> = new Set(),
   minImages: number = IMAGE_DIET_BATCH_MIN_IMAGES,
+  decidedAtLength?: number,
 ): ImageDietBatch {
+  // 历史变短 = 压缩/回退把旧消息删了或挪了：旧位置决定不再可信，整份作废。
+  // 不只看「该 hash 唯一即可认」——压缩可能把旧图那条消息整个删掉，用户又贴回同一张图，
+  // 那一次出现也是唯一的；继续认旧 hash 就会把新一轮最新、按预算该留的图误卸。
+  // 压缩本身已经断过一次前缀，这里按空集合重来最多多断一次。
+  const reset = decidedAtLength !== undefined && messages.length < decidedAtLength
+  const base: ReadonlySet<string> = reset ? new Set<string>() : kept
   const candidates = collectImageDietCandidates(messages, options)
-  const added = candidates.filter((candidate) => !kept.has(candidate.key))
+  const added = candidates.filter((candidate) => !base.has(candidate.key))
   if (added.length < Math.max(1, minImages)) {
     // 没凑够一批：本批一张都不卸（新候选先攒着），但已卸的位置必须继续卸（前缀稳定）。
-    return { messages: applyImageDietDecided(messages, kept), kept, added: [] }
+    return { messages: applyImageDietDecided(messages, base), kept: base, added: [], reset }
   }
-  const next = new Set(kept)
+  const next = new Set(base)
   for (const candidate of added) next.add(candidate.key)
-  return { messages: applyImageDietDecided(messages, next), kept: next, added: added.map((candidate) => candidate.key) }
+  return {
+    messages: applyImageDietDecided(messages, next),
+    kept: next,
+    added: added.map((candidate) => candidate.key),
+    reset,
+  }
 }
 
 /**

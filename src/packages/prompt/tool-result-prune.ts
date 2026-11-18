@@ -25,6 +25,8 @@
  * 一旦切过，后面每轮都必须继续切，否则同一段前缀在两次请求间翻转——那正是缓存杀手。
  * 集合落成会话状态（`tool-result-prune-batch`，写回见 packages/prompt/index.ts 的
  * noteStickyBatch）：换进程重放同一份日志时先读回来，投影输出仍逐字节相同。
+ * 状态里还记着做决定时的消息条数，本轮历史变短（压缩/回退）就整份作废、重新攒批
+ * （`pruneToolResultsBatch` 的 `decidedAtLength`），免得旧决定在压缩后的新历史上复活。
  *
  * 作用点：请求投影链（见 plugins/prompt.ts 的 `tool-result-prune`），只改**发给模型的
  * 那一份**；会话日志里永远是原文，重放与审计都不受影响（dsh 的 pruner 同款口径）。
@@ -60,17 +62,18 @@ export const DEFAULT_TOOL_RESULT_PRUNE: ToolResultPruneOptions = {
  *
  * ## 单位是字符，不是 token；回本模型（2026-11-18 修正口径）
  *
- * 16,384 字符换算成 token 大约 4–6K（中英混排/代码各不相同），**不是**「一次断点的量级」。
- * 真正的账是：
+ * 16,384 字符换算成 token 大约 4–6K（**按英文 / 代码估，中文更高**），**不是**
+ * 「一次断点的量级」。真正的账是：
  *   - 切一批造成一次前缀断点：从被切的消息起，后面整段后缀要重读一次，损失 ≈
  *     `0.9 × 清理点之后的后缀 token`（0.9 是实测缓存未命中比例的经验系数，留 1 成余量）；
  *   - 攒批多留的原文在每一轮请求里都在花：每轮多付 ≈ `0.9 × 已攒字符换算的 token`；
  *   - 所以只有当「一次断点损失 ÷ 每轮省下的 token」小于「清理点之后还会发多少轮请求」时，
  *     这一批才回本。工具密集会话一轮内后缀通常是 10–20K token 量级，16,384 字符
- *     （≈4–6K token）的第一批大约 2–4 轮内回本；后续批越大回本越快。
+ *     （按英文/代码 ≈4–6K token）的第一批大约 2–4 轮内回本；后续批越大回本越快。
  *
- * 数值取 16,384 还有一条硬约束：与已合入的 microcompact 批量口径保持一致，也让
- * 「单条大结果（动辄几十 K 字符）自己就能成批」，不会被阈值永远压着不切。
+ * 数值取 16,384 是**启发式**：恰为单条工具结果修剪线（8192 字符）的两倍，且让
+ * 「单条大结果（动辄几十 K 字符）自己就能成批」，不会被阈值永远压着不切；
+ * 它没有与 microcompact 等其它模块的常量对齐（那边是另一套按 token 的口径）。
  */
 export const TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS = 16_384
 
@@ -92,6 +95,11 @@ export interface ToolResultPruneBatch {
   kept: ReadonlySet<string>
   /** 本次新并入集合的 key（没到阈值时为空）。 */
   added: readonly string[]
+  /**
+   * 历史比做决定时变短（压缩/回退）→ 旧粘性集合作废、本轮按空集合重新攒批。
+   * 调用方据此把「作废后的空集合」写回状态，别让旧决定在历史重新变长后复活。
+   */
+  reset: boolean
 }
 
 /** 被切掉的那段占位。写清「省了多少」与「原文去哪儿找」，别让模型当成结果本来就短。 */
@@ -194,30 +202,35 @@ export function applyToolResultPrune(
  * @param options 口径；缺省用 {@link DEFAULT_TOOL_RESULT_PRUNE}
  * @param kept 该会话的粘性已切集合（只增不减）
  * @param minSaved 批量阈值（字符）；缺省用 {@link TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS}
+ * @param decidedAtLength 上次做决定时的消息条数（会话状态里记着）；本轮 `messages.length`
+ *   比它短说明历史被压缩/回退，旧集合作废、按空集合重新攒批（与 image-diet 同一条规矩）
  */
 export function pruneToolResultsBatch(
   messages: readonly ChatMessage[],
   options: ToolResultPruneOptions = DEFAULT_TOOL_RESULT_PRUNE,
   kept: ReadonlySet<string> = new Set(),
   minSaved: number = TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS,
+  decidedAtLength?: number,
 ): ToolResultPruneBatch {
+  const reset = decidedAtLength !== undefined && messages.length < decidedAtLength
+  const base: ReadonlySet<string> = reset ? new Set<string>() : kept
   const candidates = collectToolResultPruneCandidates(messages, options)
   const added: string[] = []
   const seen = new Set<string>()
   let saved = 0
   for (const candidate of candidates) {
-    if (kept.has(candidate.key) || seen.has(candidate.key)) continue
+    if (base.has(candidate.key) || seen.has(candidate.key)) continue
     seen.add(candidate.key)
     added.push(candidate.key)
     saved += candidate.savedChars
   }
   if (added.length === 0 || saved < minSaved) {
     // 没到阈值：本批一条都不切，但已切的条目必须继续切（前缀稳定）。
-    return { messages: applyToolResultPrune(messages, options, kept), kept, added: [] }
+    return { messages: applyToolResultPrune(messages, options, base), kept: base, added: [], reset }
   }
-  const next = new Set(kept)
+  const next = new Set(base)
   for (const key of added) next.add(key)
-  return { messages: applyToolResultPrune(messages, options, next), kept: next, added }
+  return { messages: applyToolResultPrune(messages, options, next), kept: next, added, reset }
 }
 
 /**
