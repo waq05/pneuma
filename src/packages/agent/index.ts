@@ -30,6 +30,7 @@ import { createDshSessionEventBridge } from '@pneuma/runtime/core/dsh-compat/ses
 import { clearReadLedger } from '@pneuma/runtime/core/path-policy.js'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import type { AgentService, TurnSignal } from '@pneuma/runtime/services/types.js'
+import { CacheProbe, sortToolSchemas } from './cache-probe.js'
 
 /**
  * 切走之后最多留几个空闲会话（见 {@link rememberIdle}）。
@@ -58,6 +59,13 @@ export const agentPlugin: Plugin.Object = {
     const attached = new Map<string, Session>()
     /** 当前查看的 agent。不变量：它的会话就是 ctx.session.current() 那个对象。 */
     let active: MiniAgent | null = null
+    /**
+     * 缓存归因探针（按会话记上一次请求前缀，`DSC_CACHE_PROBE=1` 才工作）。
+     *
+     * 放在 apply 的闭包里而不是模块级：模块级单例会跨插件实例串会话（测试里每个假 ctx
+     * 都会 apply 一次，状态互串会让断点张冠李戴）。
+     */
+    const cacheProbe = new CacheProbe()
 
     const turnSignal = (session: Session): TurnSignal => ({
       sessionId: session.meta.id,
@@ -110,6 +118,9 @@ export const agentPlugin: Plugin.Object = {
             // 已被 appendUsageRecord 自己吞掉，不能影响对话轮次。这一步的墙钟读数
             // （lm/ft/d）同一条出账：界面按整个会话累计算输出速度与首字延迟。
             if (event.type === 'usage') {
+              // 这一次请求的前缀断点（探针关着时恒为 undefined，整段零开销）：
+              // 与 token 同一行落盘，事后按会话翻 usage.jsonl 就能看到「哪一段变了」。
+              const breakPoint = cacheProbe.take(session.meta.id)
               appendUsageRecord({
                 provider: ctx.llm.providerOf(session),
                 model: ctx.llm.modelOf(session),
@@ -121,6 +132,7 @@ export const agentPlugin: Plugin.Object = {
                 ...(event.llmMs === undefined ? {} : { lm: event.llmMs }),
                 ...(event.ttftMs === undefined ? {} : { ft: event.ttftMs }),
                 ...(event.decodeMs === undefined ? {} : { d: event.decodeMs }),
+                ...(breakPoint === undefined ? {} : { bp: breakPoint }),
               })
               // dsh 的计费插件（cost-meter 这类）不听用量日志，而是在 `llm/stream`
               // 这个 waterfall 事件上包一层流读 usage chunk。这里把同一次调用的用量
@@ -185,8 +197,16 @@ export const agentPlugin: Plugin.Object = {
             lastInjections = []
             return taken
           },
-          // 发请求走 llm 服务的适配器表：端点声明什么协议就由谁的适配器去说
-          stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
+          // 发请求走 llm 服务的适配器表：端点声明什么协议就由谁的适配器去说。
+          // 这一层同时还做两件事（都不改协议形状）：
+          // 1. 工具定义按名字字典序排好再发：同一组工具不论插件注册先后，序列化逐字节相同；
+          // 2. 开了 `DSC_CACHE_PROBE=1` 时记下这次请求的前缀签名，与上次比出断点，
+          //    由上面的 usage 落盘分支取走。关着时 observe 直接返回，不算任何 hash。
+          stream: (api, request, handlers) => {
+            const shaped = sortToolSchemas(request)
+            cacheProbe.observe(shaped.sessionId ?? session.meta.id, shaped)
+            return ctx.llm.stream(api, shaped, handlers)
+          },
           // 完全闲下来又不是当前查看的：就地收摊（释放写租约与内存）。正被查看的
           // 留着——用户下一句话还得靠它。
           //

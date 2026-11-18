@@ -23,7 +23,7 @@ import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
 import { emptySegments, type RequestSegments } from '../core/token-estimate.js'
-import type { CompactionMark, SubagentCardView, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
+import type { CompactionMark, SubagentCardView, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry, TurnUsageView } from '../contract.js'
 import type { UserFileAttachment } from '../core/attachments.js'
 
 /** 工具卡条目（替换对象实现不可变更新）。 */
@@ -579,11 +579,12 @@ export class Transcript {
    * 本轮累计的 `usage` 字段：非零才带。
    * 为什么零就不带：一次请求都还没回过用量时，硬写 `{0,0}` 会让界面把「还没数」
    * 当成「这一轮真的一分没花」，而带不带这个字段是能给界面区分的信号。
+   * 缓存两栏跟着 turnUsage 走：端点没上报过就不带（同上，不写 0 冒充「全未命中」）。
    */
-  private turnUsageField(): { usage?: { inputTokens: number; outputTokens: number } } {
+  private turnUsageField(): { usage?: TurnUsageView } {
     const { inputTokens, outputTokens } = this.turnUsage
     if (inputTokens === 0 && outputTokens === 0) return {}
-    return { usage: { inputTokens, outputTokens } }
+    return { usage: { ...this.turnUsage } }
   }
 
   /**
@@ -911,7 +912,11 @@ export class Transcript {
           outputTokens: this.usage.outputTokens + event.outputTokens,
           // 缓存命中明细只在端点上报了的请求上累计：没上报的请求既不加命中也不加
           // 未命中，命中率才不会被稀释（口径与 core/usage-log 的 ch/cm 一致）。
-          ...(event.cacheHitTokens === undefined && event.cacheMissTokens === undefined
+          // 判据要看「这一笔没上报**且**之前也没累计过」才省略；只看这一笔就省略的话，
+          // 同一会话里只要有一笔没上报，前面已累计的命中数会被这块新对象整个丢掉。
+          ...(this.usage.cacheHitTokens === undefined &&
+          event.cacheHitTokens === undefined &&
+          event.cacheMissTokens === undefined
             ? {}
             : {
                 cacheHitTokens: (this.usage.cacheHitTokens ?? 0) + (event.cacheHitTokens ?? 0),
@@ -922,6 +927,15 @@ export class Transcript {
         this.turnUsage = {
           inputTokens: this.turnUsage.inputTokens + event.inputTokens,
           outputTokens: this.turnUsage.outputTokens + event.outputTokens,
+          // 缓存两栏的口径与上面会话累计一致（同上：没上报的请求不清零已累计的数）。
+          ...(this.turnUsage.cacheHitTokens === undefined &&
+          event.cacheHitTokens === undefined &&
+          event.cacheMissTokens === undefined
+            ? {}
+            : {
+                cacheHitTokens: (this.turnUsage.cacheHitTokens ?? 0) + (event.cacheHitTokens ?? 0),
+                cacheMissTokens: (this.turnUsage.cacheMissTokens ?? 0) + (event.cacheMissTokens ?? 0),
+              }),
         }
         // context 条的权威占用读数 = 最近一次请求的 prompt_tokens（含缓存命中，
         // 服务端口径）；费用分桶按笔归属到请求当时的模型，峰谷看用量发生的时刻。

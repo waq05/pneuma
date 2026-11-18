@@ -189,3 +189,32 @@ describe('⑥ 设置页聚合（aggregateUsage / buildUsageStats）', () => {
     expect(stats.models.map((model) => model.key)).toEqual(['p/m'])
   })
 })
+
+describe('⑦ 缓存归因字段（bp）的读回', () => {
+  beforeAll(() => {
+    // ⑤ 结尾故意留了一条没有换行的半截行；先补换行，否则下一条记录会跟它粘成一行、
+    // 被当成坏行整行丢掉（这正是 readUsageRecords 要跳过的那种行）。
+    appendFileSync(log.usageLogFile(), '\n', 'utf8')
+    log.appendUsageRecord({ provider: 'p', model: 'm', i: 10, o: 1, sid: 'sess-probe', ch: 5, cm: 5, bp: { at: 2, role: 'assistant' } })
+    log.appendUsageRecord({ provider: 'p', model: 'm', i: 20, o: 2, sid: 'sess-probe', bp: { at: -1, tools: true } })
+    // 形状坏的行（at 不是数字）：整条记录照收（token 有效），归因字段当没有。
+    appendFileSync(
+      log.usageLogFile(),
+      '{"t":1,"provider":"p","model":"m","i":3,"o":1,"sid":"sess-probe","bp":{"at":"x"}}\n',
+      'utf8',
+    )
+  })
+
+  test('bp 原样透传，形状坏的丢掉', () => {
+    const rows = log.readUsageRecords().filter((record) => record.sid === 'sess-probe')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]?.bp).toEqual({ at: 2, role: 'assistant' })
+    expect(rows[1]?.bp).toEqual({ at: -1, tools: true })
+    expect(Object.hasOwn(rows[2]!, 'bp')).toBe(false)
+  })
+
+  test('聚合口径不受 bp 影响（只认 token）', () => {
+    const stats = log.aggregateUsage(log.readUsageRecords().filter((record) => record.sid === 'sess-probe'))
+    expect(stats).toMatchObject({ totalInputTokens: 33, totalOutputTokens: 4, totalTurns: 3, totalCacheHitTokens: 5 })
+  })
+})

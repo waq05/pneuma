@@ -91,6 +91,8 @@ interface Harness {
   stream: (api: string, request: StreamRequest, handlers: StreamHandlers) => Promise<StreamResult>
   /** 与 `ctx.prompt.rewrite` 同一条投影链（测试里直接驱动投影）。 */
   rewrite: (messages: ChatMessage[], session?: SessionT) => ChatMessage[]
+  /** 每轮系统提示正文；缓存探针用例靠改它制造「system 变」的断点。 */
+  systemText: string
 }
 
 function newSession(id: string): SessionT {
@@ -129,6 +131,7 @@ function fakeCtx(): Harness {
   const harness = {
     session,
     rewrite,
+    systemText: '系统提示',
     setSession(next: SessionT): void {
       harness.session = next
     },
@@ -151,7 +154,7 @@ function fakeCtx(): Harness {
       forceCompact: async () => false,
     },
     prompt: {
-      systemPromptParts: () => ({ text: '系统提示', sections: [] }),
+      systemPromptParts: () => ({ text: harness.systemText, sections: [] }),
       rewrite,
       registerProjection(
         _id: string,
@@ -373,6 +376,50 @@ describe('一轮完整回合', () => {
       cm: 2,
       sid: session.meta.id,
     })
+    // 探针默认关（`DSC_CACHE_PROBE` 没设）：断点字段一个都不写。
+    expect(Object.hasOwn(JSON.parse(line), 'bp')).toBe(false)
     expect(session.messages.some((message) => message.role === 'user' && message.content === '你好')).toBe(true)
+  })
+})
+
+describe('缓存归因探针', () => {
+  /** usage.jsonl 里属于这条会话的请求行（工具行没有 i/o，顺手排掉）。 */
+  const usageRows = (session: SessionT): Array<Record<string, unknown>> => {
+    const file = join(HOME, 'usage', 'usage.jsonl')
+    if (!existsSync(file)) return []
+    return readFileSync(file, 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((row) => row['sid'] === session.meta.id && row['k'] !== 'tool')
+  }
+
+  test('开启时只给「真变了」的请求写断点：首请求与只追加都不写', async () => {
+    process.env['DSC_CACHE_PROBE'] = '1'
+    try {
+      const harness = fakeCtx()
+      const service = serviceOf(harness)
+      const session = harness.session
+      const followup = (text: string): void => service.followup(text, undefined, undefined, 'notice')
+
+      followup('第一问')
+      await until(() => usageRows(session).length >= 1)
+      followup('第二问')
+      await until(() => usageRows(session).length >= 2)
+      // 换一版系统提示：下一轮的前缀断在第 0 条（system）。
+      harness.systemText = '系统提示（改过）'
+      followup('第三问')
+      await until(() => usageRows(session).length >= 3)
+
+      const rows = usageRows(session)
+      // 会话第一次请求没有可比的上一次。
+      expect(rows[0]?.['bp']).toBeUndefined()
+      // 第二轮只是历史多了一条 user 消息：纯追加，不写断点。
+      expect(rows[1]?.['bp']).toBeUndefined()
+      // 第三轮系统提示变了：断在下标 0，来源标记 sys、角色 system。
+      expect(rows[2]?.['bp']).toEqual({ at: 0, role: 'system', sys: true })
+    } finally {
+      delete process.env['DSC_CACHE_PROBE']
+    }
   })
 })
