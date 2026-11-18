@@ -87,23 +87,34 @@ function readEnvRefreshMs(passed: unknown): number {
   return Math.round(num)
 }
 
-/**
- * 批量落点状态（P2a）的会话上限：只记最近碰到的这么多个会话，超了丢最老的（Map 插入顺序）。
- * 每个 key 只有几十字节，64 个会话的表在常驻进程里可以忽略；真正要防的是历史会话无限堆积。
- */
-const STICKY_SESSION_LIMIT = 64
+/** 批量落点状态：只存 key 列表；hash 用于「没变就不写」（照 env-facts 的 noteEnvFacts）。 */
+type StickyBatchState = { hash: string; keys: string[] }
 
-/** 取某个会话的粘性集合；还没有就建一个空集，到上限先丢最老的会话。 */
-function stickyKeys(store: Map<string, ReadonlySet<string>>, sessionId: string): ReadonlySet<string> {
-  const kept = store.get(sessionId)
-  if (kept !== undefined) return kept
-  if (store.size >= STICKY_SESSION_LIMIT) {
-    const oldest = store.keys().next().value
-    if (oldest !== undefined) store.delete(oldest)
+declare module '@pneuma/runtime/core/session.js' {
+  interface SessionStateMap {
+    /** 已经切过的工具结果 key（key 口径见 packages/prompt/tool-result-prune.ts 的文件头）。 */
+    'tool-result-prune-batch': StickyBatchState
+    /** 已经卸掉的图片位置 key（口径见 core/image-diet.ts 的文件头）。 */
+    'image-diet-batch': StickyBatchState
   }
-  const fresh = new Set<string>()
-  store.set(sessionId, fresh)
-  return fresh
+}
+
+/**
+ * 把「已经切/卸过的 key 集合」落成会话状态：集合变了才追加一条，重放会话时最后一条生效。
+ *
+ * 为什么落会话状态而不是放进程内存（P2a 返工，2026-11-18）：投影结果必须能由
+ * 「日志原文 + 命名投影」复算——换个进程、拿同一份日志重放，输出要逐字节相同。
+ * 存的是排序后的 key 列表（位置 key 只增不减），hash 去重避免每轮往日志里写一条。
+ */
+function noteStickyBatch(
+  owner: Session,
+  id: 'tool-result-prune-batch' | 'image-diet-batch',
+  keys: ReadonlySet<string>,
+): void {
+  const list = [...keys].sort()
+  const hash = createHash('sha256').update(list.join('\n')).digest('hex').slice(0, 16)
+  if (owner.state(id)?.hash === hash) return
+  owner.appendState(id, { hash, keys: list })
 }
 
 export const promptPlugin: Plugin.Object = {
@@ -256,10 +267,17 @@ export const promptPlugin: Plugin.Object = {
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
-    /** 按会话记「已经切过的工具结果 key」：只增不减，保证前缀一次断完就稳定。 */
-    const prunedToolResults = new Map<string, ReadonlySet<string>>()
-    /** 按会话记「已经卸掉的图片 key」：语义同上。 */
-    const offloadedImages = new Map<string, ReadonlySet<string>>()
+    /**
+     * 批量落点状态（P2a）：已切过的工具结果 key / 已卸掉的图片位置 key，都落成**会话状态**
+     * 而不是进程内 Map——换进程重放同一份日志时先读回来，投影输出才能逐字节复算
+     * （「日志原文 + 命名投影可复算」）。条目名见本文件顶部的 SessionStateMap 声明合并。
+     */
+    const readSticky = (owner: Session, id: 'tool-result-prune-batch' | 'image-diet-batch'): ReadonlySet<string> => {
+      const stored = owner.state(id)?.keys
+      const keys = new Set<string>()
+      if (Array.isArray(stored)) for (const key of stored) if (typeof key === 'string' && key !== '') keys.add(key)
+      return keys
+    }
 
     // 内置投影：历史里超长的工具结果只留头尾（2026-10-30，对标 dsh 的
     // compaction-tool-result-pruner）。PTC 模式下 run_code 常把整份文件原文返回，
@@ -272,16 +290,15 @@ export const promptPlugin: Plugin.Object = {
     // P2a（2026-11-18）批量化：逐条越线就切 = 每条一次前缀断点。改成按会话攒一批
     // （「粘性已切集合」，key 见 tool-result-prune.ts 的文件头），新增候选合计可省
     // 字符 ≥ TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS 才一起切；已切条目继续切。
-    // 状态只在内存里：进程重启后第一次请求会重新攒一批，代价是那一次多断一下。
+    // 集合落会话状态，每次推进后 hash 去重写回；重放时先读回来再算增量。
     // loop.ts 的 invariant 会把这条链再跑一遍（checkRequestInvariant），同一份历史
     // 第二次进来时候选已在集合里，输出与第一次逐字节相同。
     projections.set('tool-result-prune', {
       order: 560,
       fn: (messages, session) => {
         const owner = session ?? requestSession
-        const sessionId = owner.meta.id
-        const batch = pruneToolResultsBatch(messages, DEFAULT_TOOL_RESULT_PRUNE, stickyKeys(prunedToolResults, sessionId))
-        if (batch.added.length > 0) prunedToolResults.set(sessionId, batch.kept)
+        const batch = pruneToolResultsBatch(messages, DEFAULT_TOOL_RESULT_PRUNE, readSticky(owner, 'tool-result-prune-batch'))
+        if (batch.added.length > 0) noteStickyBatch(owner, 'tool-result-prune-batch', batch.kept)
         return batch.messages
       },
     })
@@ -297,8 +314,9 @@ export const promptPlugin: Plugin.Object = {
     // keepRounds 的口径就比字面保守一格（更早的图被多卸一轮）。先卸图、再补快照，口径才对得上。
     //
     // P2a（2026-11-18）批量化：逐张越线就卸 = 每张一次前缀断点。改成按会话攒一批
-    // （「粘性已卸集合」，key = image_url.url 的 sha256 前 16 位），新增候选的 url 字符数
-    // 合计 ≥ IMAGE_DIET_BATCH_SAVED_CHARS 才一起卸；已卸的图继续卸。状态只在内存里。
+    // （「粘性已卸位置集合」，位置 key 见 core/image-diet 的文件头）：新增候选凑到
+    // IMAGE_DIET_BATCH_MIN_IMAGES 张才一次卸一批；已卸的位置继续卸。
+    // 集合落会话状态，每次推进后 hash 去重写回；重放时先读回来再算增量。
     projections.set('image-diet', {
       order: 550,
       fn: (messages, session) => {
@@ -306,9 +324,8 @@ export const promptPlugin: Plugin.Object = {
         const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))
         if (!config.enabled) return messages
         const owner = session ?? requestSession
-        const sessionId = owner.meta.id
-        const batch = pruneImagesBatch(messages, config, stickyKeys(offloadedImages, sessionId))
-        if (batch.added.length > 0) offloadedImages.set(sessionId, batch.kept)
+        const batch = pruneImagesBatch(messages, config, readSticky(owner, 'image-diet-batch'))
+        if (batch.added.length > 0) noteStickyBatch(owner, 'image-diet-batch', batch.kept)
         return batch.messages
       },
     })

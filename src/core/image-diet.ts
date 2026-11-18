@@ -15,9 +15,25 @@
  *      「模型可见 ⟺ 日志可重建」照样成立（日志原文 + 这条命名投影就能复算）。
  *   2. 卸载只是把 `image_url` 部件**原地**换成一句占位文本，前后文本部件的顺序与内容都不动。
  *   3. **攒够一批再卸**（P2a，2026-11-18）：每卸一张图，缓存从那张图起整段失效——逐张
- *      越线逐次断点。改成「本会话第一次真正卸图之前，先把候选攒着；新增候选的 url 字符数
- *      合计 ≥ {@link IMAGE_DIET_BATCH_SAVED_CHARS} 才一次卸一批」。已卸过的图按 url 的
- *      sha256 前 16 位记进粘性集合，之后每轮继续卸（前缀保持稳定，只断这一次）。
+ *      越线逐次断点。改成「本会话第一次真正卸图之前，先把候选攒着；新增候选凑到
+ *      {@link IMAGE_DIET_BATCH_MIN_IMAGES} 张才一次卸一批」。
+ *
+ * ## 决定按「位置」记，不按「url」记（2026-11-18 修）
+ *
+ * 同一张图（同 url）完全可能在同一份历史里出现多次：用户把一张图重发一遍、电脑控制
+ * 连续截到同一个画面（像素一样、url 就一样）。若按 url 的 hash 在整段消息里无差别替换，
+ * 一次卸载决定会把**之后每一次出现**都带走，包括本轮最新、本该按预算保留的那张。
+ * 所以粘性集合存的是位置 key：`p:<messageIndex>:<partIndex>:<urlHash>`。
+ *   - 精确命中：这个位置的这张图上次已经卸过 → 继续卸（前缀稳定）；
+ *   - 位置漂移（压缩改了消息下标）：只有在「该 hash 在本轮消息里只出现一次」时才按
+ *     hash 认旧决定——出现多次时不认，免得又把最新那张误伤；
+ *   - 本轮新候选：只有整批够张数才并入集合并按位置卸。
+ *
+ * ## 状态可复算
+ *
+ * 粘性集合不放在进程内存里，而是落成会话状态（`appendState('image-diet-batch', ...)`，
+ * 见 packages/prompt/index.ts 的 noteStickyBatch）：换进程重放同一份日志时先读回来，
+ * 投影输出与当时逐字节相同，「日志原文 + 命名投影可复算」才成立。
  *
  * @module dsc/core/image-diet
  */
@@ -42,16 +58,18 @@ export interface ImageDietOptions {
 export const DEFAULT_IMAGE_DIET: ImageDietOptions = { userImageBudget: 4, toolImageBudget: 2, keepRounds: 2 }
 
 /**
- * 批量卸载阈值（字符）：新增候选的 url 字符数合计到这么多，才把这一批图一起卸掉。
+ * 一批至少攒多少张新候选才真正卸（默认 2 张）。
  *
- * 为什么是 16384：卸一张 = 缓存从那张起整段失效一次。图片在历史前部时一次断点能丢掉
- * 十几 K token 的前缀（见 docs/research/cache-vs-dsh.md §3）；攒批期间多发的图是这段
- * 时间的唯一成本。阈值取「一次断点的量级」——低于它不值当断，高于它断一次回本。
+ * **为什么按张数、不按字符数**：真实截图 / 照片的 data URL 一张就有 100~300KB base64，
+ * 任何「字符数阈值」单张都会越过——「单张够阈值就立即卸」等于一张一次断点，批量白做。
+ * 按张数最简单：一张先攒着，等下一张该卸的图（下一个老回合的图、下一次截图）来了，
+ * 一次性卸两张，一次断点换两张；被 keepRounds 硬规则判死的老图也走同一批，不单独立即卸。
  *
- * 单张图自己的 url 字符数 ≥ 阈值时，这一批立即成立：真实截图 / 照片的 data URL 通常
- * 一张就超过它，所以「一张大图」不会被压着不卸。
+ * 代价：如果整个会话只出现一张该卸的图、之后再也没有，它会一直留着（按预算/按龄它该走，
+ * 但为它单独断一次缓存不值）。这与 prune 的「按可省字符攒批」是同一个取舍，只是图片的
+ * 单位天然是「张」而不是「字」。
  */
-export const IMAGE_DIET_BATCH_SAVED_CHARS = 16_384
+export const IMAGE_DIET_BATCH_MIN_IMAGES = 2
 
 /** 设置分区里三个数字控件的取值区间（超出就夹回来）。 */
 export const IMAGE_DIET_RANGES = {
@@ -68,13 +86,13 @@ export interface ImageDietConfig extends ImageDietOptions {
 /** 没配过时的完整缺省（`enabled` 默认开：图片本来就该按龄卸载，不用用户先来点一下）。 */
 export const DEFAULT_IMAGE_DIET_CONFIG: ImageDietConfig = { enabled: true, ...DEFAULT_IMAGE_DIET }
 
-/** 一张待卸载的图：key 用于跨请求认「同一张图」，savedChars 是它占的 url 字符数。 */
+/** 一张待卸载的图：位置 + 内容指纹，两者一起构成本轮的落点。 */
 export interface ImageDietCandidate {
-  /** `image_url.url` 的 sha256 前 16 位：同 url 视为同一张图。 */
+  /** 粘性集合里的位置 key：`p:<messageIndex>:<partIndex>:<urlHash>`。 */
   key: string
-  /** 卸掉它省下的字符数（就是 url 的长度）。 */
-  savedChars: number
-  /** 候选所在的部件位置；不带跨请求记忆的一次性卸载按它精确落点（同 url 出现两次也能分开）。 */
+  /** 图片内容指纹（`image_url.url` 的 sha256 前 16 位）；位置漂移时用它认旧决定。 */
+  hash: string
+  /** 候选部件所在的绝对位置。 */
   messageIndex: number
   partIndex: number
 }
@@ -83,20 +101,31 @@ export interface ImageDietCandidate {
 export interface ImageDietBatch {
   /** 投影后的消息（没有本批与已卸条目时原样返回同一个引用）。 */
   messages: ChatMessage[]
-  /** 新的粘性集合（只增不减）；没到阈值时就是传入的那个引用。 */
+  /** 新的粘性集合（只增不减）；没到张数时就是传入的那个引用。 */
   kept: ReadonlySet<string>
-  /** 本次新并入集合的 key（没到阈值时为空）。 */
+  /** 本次新并入集合的位置 key（没到张数时为空）。 */
   added: readonly string[]
 }
 
 /**
- * 一张图的稳定 key：url 的 sha256 前 16 位。
+ * 一张图的内容指纹：url 的 sha256 前 16 位。
  *
  * 为什么用 hash 不用 url 本身：url 是几百 KB 的 base64，拿它当 Map 的 key 等于每轮
  * 都把这些字再存一遍；16 位十六进制够区分（同一会话里总图数远小于碰撞量级）。
  */
 export function imageDietKey(url: string): string {
   return createHash('sha256').update(url).digest('hex').slice(0, 16)
+}
+
+/** 位置 key：消息下标 + 部件下标 + 内容指纹。 */
+function positionKey(messageIndex: number, partIndex: number, hash: string): string {
+  return `p:${String(messageIndex)}:${String(partIndex)}:${hash}`
+}
+
+/** 从位置 key 里取回内容指纹；坏 key（手改日志等）返回空串，永远不会误匹配。 */
+function hashOfPositionKey(key: string): string {
+  const at = key.lastIndexOf(':')
+  return at === -1 ? '' : key.slice(at + 1)
 }
 
 /**
@@ -135,6 +164,9 @@ export function countImageParts(messages: readonly ChatMessage[]): number {
  *
  * 只认 user / tool 两种角色的图；assistant 正常历史里不带图（正文落库时只存文本），
  * 出现了也不属于这条契约的范围，原样留着。
+ *
+ * 同一张图可能出现多次，候选是**逐位置**给出的：同一 url 的两个位置是两个候选，
+ * 各自有各自的位置 key。
  *
  * @param messages - 组装好的请求消息（fold-system 之后的形状）。
  * @param options - 卸载口径；不传用缺省。
@@ -189,8 +221,7 @@ export function collectImageDietCandidates(
     if (dropped) dropBudget.set(index, flags)
   }
 
-  // 按消息 / 部件顺序产出候选：同一张图（同 url）可能出现多次，各自算一份字符数，
-  // 批量判断按 key 去重（见 pruneImagesBatch）。
+  // 按消息 / 部件顺序产出候选：同一张图（同 url）出现两次就是两个候选（位置不同）。
   const candidates: ImageDietCandidate[] = []
   for (let index = 0; index < messages.length; index += 1) {
     const parts = messages[index]!.content
@@ -202,8 +233,8 @@ export function collectImageDietCandidates(
       const piece = parts[part]!
       if (piece.type !== 'image_url') continue
       if (!dropAll && flags?.[part] !== true) continue
-      const url = piece.image_url.url
-      candidates.push({ key: imageDietKey(url), savedChars: url.length, messageIndex: index, partIndex: part })
+      const hash = imageDietKey(piece.image_url.url)
+      candidates.push({ key: positionKey(index, part, hash), hash, messageIndex: index, partIndex: part })
     }
   }
   return candidates
@@ -231,18 +262,47 @@ function applyImageDietAt(messages: readonly ChatMessage[], positions: ReadonlyS
   return changed ? out : (messages as ChatMessage[])
 }
 
-/** 把集合里这些 key 对应的图片换成占位；一个都没命中就原样返回同一个数组。 */
-function applyImageDiet(messages: readonly ChatMessage[], dropped: ReadonlySet<string>): ChatMessage[] {
-  if (dropped.size === 0) return messages as ChatMessage[]
+/**
+ * 按「已决定的位置」卸载：只替换命中的位置，不做任何「同 url 全场扫」。
+ *
+ * 一个位置算命中，需满足其一：
+ *   1. 位置 key（含 hash）精确在集合里：这个位置上次已经卸过 → 继续卸；
+ *   2. 该 hash 在本轮消息里**只出现一次**、且集合里有同 hash 的旧位置：压缩把消息下标
+ *      改了，位置对不上但图还是那一张 → 认旧决定（前缀稳定）。
+ *      同一 hash 出现多次时**不做**这条兜底——那正是「用户重发同一张图 / 连续截到同一
+ *      画面」的形状，按 hash 兜底会把最新那张也误伤。
+ */
+function applyImageDietDecided(messages: readonly ChatMessage[], kept: ReadonlySet<string>): ChatMessage[] {
+  if (kept.size === 0) return messages as ChatMessage[]
+  // 先数本轮每个 hash 出现几次，供「位置漂移兜底」判歧义。
+  const occurrences = new Map<string, number>()
+  for (const message of messages) {
+    const parts = message.content
+    if (parts === null || typeof parts === 'string') continue
+    for (const part of parts) {
+      if (part.type !== 'image_url') continue
+      const hash = imageDietKey(part.image_url.url)
+      occurrences.set(hash, (occurrences.get(hash) ?? 0) + 1)
+    }
+  }
+  const keptHashes = new Set<string>()
+  for (const key of kept) {
+    const hash = hashOfPositionKey(key)
+    if (hash !== '') keptHashes.add(hash)
+  }
   let changed = false
-  const out = messages.map((message) => {
+  const out = messages.map((message, messageIndex) => {
     const parts = message.content
     if (parts === null || typeof parts === 'string') return message
     if (!parts.some((part) => part.type === 'image_url')) return message
     let replaced = false
-    const nextParts: ChatContentPart[] = parts.map((part) => {
+    const nextParts: ChatContentPart[] = parts.map((part, partIndex) => {
       if (part.type !== 'image_url') return part
-      if (!dropped.has(imageDietKey(part.image_url.url))) return part
+      const hash = imageDietKey(part.image_url.url)
+      const exact = kept.has(positionKey(messageIndex, partIndex, hash))
+      // 位置漂移兜底：只有「这张图整段消息里只出现一次」时才认 hash，避免误伤重复图的新位置。
+      const drifted = !exact && occurrences.get(hash) === 1 && keptHashes.has(hash)
+      if (!exact && !drifted) return part
       replaced = true
       return { type: 'text', text: IMAGE_DIET_PLACEHOLDER }
     })
@@ -254,40 +314,32 @@ function applyImageDiet(messages: readonly ChatMessage[], dropped: ReadonlySet<s
 }
 
 /**
- * 批量落点：先算候选，只有「新增候选的 url 字符数合计 ≥ 阈值」才把它们并进粘性集合并卸掉；
- * 已卸过的图（`kept` 里的 key）每轮继续卸。
+ * 批量落点：先算候选，只有「新增候选张数 ≥ {@link IMAGE_DIET_BATCH_MIN_IMAGES}」才把它们
+ * 并进粘性位置集合并卸掉；已卸过的位置每轮继续卸。
  *
  * 同一份历史、同一份集合调两次，输出逐字节相同（loop.ts 的 invariant 会把投影链跑两遍）：
- * 第一次并集之后，第二次的新增候选为空，阈值判断落到「不改」；已卸条目照旧卸。
+ * 第一次并集之后，第二次的新增候选为空，张数判断落到「不改」；已卸位置照旧卸。
  *
  * @param messages 组装好的请求消息
  * @param options 卸载口径；不传用缺省
- * @param kept 该会话的粘性已卸集合（只增不减）
- * @param minSaved 批量阈值（url 字符数）；缺省用 {@link IMAGE_DIET_BATCH_SAVED_CHARS}
+ * @param kept 该会话的粘性已卸位置集合（只增不减）
+ * @param minImages 批量最小张数；缺省用 {@link IMAGE_DIET_BATCH_MIN_IMAGES}
  */
 export function pruneImagesBatch(
   messages: readonly ChatMessage[],
   options: ImageDietOptions = DEFAULT_IMAGE_DIET,
   kept: ReadonlySet<string> = new Set(),
-  minSaved: number = IMAGE_DIET_BATCH_SAVED_CHARS,
+  minImages: number = IMAGE_DIET_BATCH_MIN_IMAGES,
 ): ImageDietBatch {
   const candidates = collectImageDietCandidates(messages, options)
-  const added: string[] = []
-  const seen = new Set<string>()
-  let saved = 0
-  for (const candidate of candidates) {
-    if (kept.has(candidate.key) || seen.has(candidate.key)) continue
-    seen.add(candidate.key)
-    added.push(candidate.key)
-    saved += candidate.savedChars
-  }
-  if (added.length === 0 || saved < minSaved) {
-    // 没到阈值：本批一张都不卸，但已卸的图必须继续卸（前缀稳定）。
-    return { messages: applyImageDiet(messages, kept), kept, added: [] }
+  const added = candidates.filter((candidate) => !kept.has(candidate.key))
+  if (added.length < Math.max(1, minImages)) {
+    // 没凑够一批：本批一张都不卸（新候选先攒着），但已卸的位置必须继续卸（前缀稳定）。
+    return { messages: applyImageDietDecided(messages, kept), kept, added: [] }
   }
   const next = new Set(kept)
-  for (const key of added) next.add(key)
-  return { messages: applyImageDiet(messages, next), kept: next, added }
+  for (const candidate of added) next.add(candidate.key)
+  return { messages: applyImageDietDecided(messages, next), kept: next, added: added.map((candidate) => candidate.key) }
 }
 
 /**
@@ -295,19 +347,19 @@ export function pruneImagesBatch(
  *
  * 幂等：卸载后的位置只剩占位文本，再跑一遍找不到 image_url，输出逐字节相同。
  * 批量落点请用 {@link pruneImagesBatch}；这个入口留给不需要跨请求记忆的调用方与单测。
- * 给了 `kept` 就只卸集合里的图（候选仍未到阈值时保持原样），这样同一个函数既能单独用，
- * 也能给批量流程当「应用」那一半。
+ * 给了 `kept` 就只卸集合里已决定的位置（候选仍未凑够一批时保持原样），这样同一个函数
+ * 既能单独用，也能给批量流程当「应用」那一半。
  *
  * @param messages - 组装好的请求消息（fold-system 之后的形状）。
  * @param options - 卸载口径；不传用缺省。
- * @param kept - 粘性已卸集合；省略时等价于「本轮候选全部卸」。
+ * @param kept - 粘性已卸位置集合；省略时等价于「本轮候选全部卸」。
  */
 export function pruneImages(
   messages: readonly ChatMessage[],
   options: ImageDietOptions = DEFAULT_IMAGE_DIET,
   kept?: ReadonlySet<string>,
 ): ChatMessage[] {
-  if (kept !== undefined) return applyImageDiet(messages, kept)
+  if (kept !== undefined) return applyImageDietDecided(messages, kept)
   const candidates = collectImageDietCandidates(messages, options)
   if (candidates.length === 0) return messages as ChatMessage[]
   const positions = new Set(candidates.map((candidate) => `${String(candidate.messageIndex)}:${String(candidate.partIndex)}`))

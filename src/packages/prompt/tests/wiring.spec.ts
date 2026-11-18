@@ -39,11 +39,11 @@ interface InjectionReport {
   preview: string
 }
 
-/** 最小假会话：env-facts 的 hash 去重要真读真写。 */
+/** 最小假会话：env-facts 的 hash 去重与批量落点状态都要真读真写。 */
 interface FakeSession {
   meta: { id: string; cwd: string }
-  state(id: string): { hash?: string; text?: string } | undefined
-  appendState(id: string, payload: { hash: string; text: string }): void
+  state(id: string): { hash?: string; text?: string; keys?: string[] } | undefined
+  appendState(id: string, payload: { hash?: string; text?: string; keys?: string[] }): void
 }
 
 interface PromptService {
@@ -108,7 +108,31 @@ function recordingSession(id: string, cwd = ROOT): { session: FakeSession; state
     states,
     session: {
       meta: { id, cwd },
-      state: (key) => map.get(key) as { hash?: string; text?: string } | undefined,
+      state: (key) => map.get(key) as { hash?: string; text?: string; keys?: string[] } | undefined,
+      appendState: (key, payload) => {
+        map.set(key, payload)
+        states.push({ id: key, payload })
+      },
+    },
+  }
+}
+
+/**
+ * 用「已经落盘的会话状态」造一个**新进程里的会话**：只读得到旧状态，写走自己的账本。
+ * 用来验「日志原文 + 命名投影」可复算：换插件实例重放同一份历史，输出要逐字节相同。
+ */
+function resumedSession(
+  id: string,
+  persisted: ReadonlyMap<string, unknown>,
+  cwd = ROOT,
+): { session: FakeSession; states: Array<{ id: string; payload: unknown }> } {
+  const map = new Map(persisted)
+  const states: Array<{ id: string; payload: unknown }> = []
+  return {
+    states,
+    session: {
+      meta: { id, cwd },
+      state: (key) => map.get(key) as { hash?: string; text?: string; keys?: string[] } | undefined,
       appendState: (key, payload) => {
         map.set(key, payload)
         states.push({ id: key, payload })
@@ -251,6 +275,44 @@ describe('命名投影链', () => {
     const second = h.service.rewrite(messages)
     // 第二次进来时 key 已在粘性集合里：输出必须与第一次逐字节相同，否则 invariant 每轮误报。
     expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+
+  test('批量决定落会话状态：新进程读回同一份状态，投影输出逐字节相同', () => {
+    // 一份同时触发两条批量的历史：1 条超长工具结果（单条就够 16K 字符），4 条带图的
+    // 工具结果（工具图预算 2 张 → 前两张是候选，凑够 2 张一批）。
+    const imageTool = (n: number): Message => ({
+      role: 'tool',
+      content: [
+        { type: 'text', text: `屏幕截图 ${String(n)}` },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,IMG${String(n)}` } },
+      ],
+    })
+    const messages: Message[] = [
+      { role: 'tool', content: 'x'.repeat(30_000) },
+      ...Array.from({ length: 4 }, (_, index) => imageTool(index)),
+    ]
+
+    // 「进程 A」：真会话，批量决定写进会话状态。
+    const first = recordingSession('sess-batch')
+    const pluginA = fakeCtx({ session: first.session })
+    const outputA = pluginA.service.rewrite(messages, first.session)
+    // 两条批量都真的推进了，并且都落了状态。
+    const pruneState = first.states.filter((entry) => entry.id === 'tool-result-prune-batch').at(-1)
+    const imageState = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)
+    expect((pruneState?.payload as { keys?: string[] }).keys).toHaveLength(1)
+    expect((imageState?.payload as { keys?: string[] }).keys).toHaveLength(2)
+    expect(JSON.stringify(outputA)).toContain('省掉了')
+
+    // 「进程 B」：新插件实例，只拿到落盘状态；同一份历史重放。
+    const persisted = new Map<string, unknown>()
+    for (const entry of first.states) persisted.set(entry.id, entry.payload)
+    const resumed = resumedSession('sess-batch', persisted)
+    const pluginB = fakeCtx({ session: resumed.session })
+    const outputB = pluginB.service.rewrite(messages, resumed.session)
+
+    expect(JSON.stringify(outputB)).toBe(JSON.stringify(outputA))
+    // 状态已经够了，新进程不该再写一条（hash 去重）。
+    expect(resumed.states).toHaveLength(0)
   })
 
   test('drop-images：模型不声明图片输入时换成一句说明；声明了原样保留', () => {

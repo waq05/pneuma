@@ -42,11 +42,11 @@ interface Services {
 const BIG = 'x'.repeat(4_000)
 
 /**
- * 图片 url：长度故意 ≥ 批量阈值 `IMAGE_DIET_BATCH_SAVED_CHARS`（16384）。
- * P2a 起 image-diet 攒够一批才卸图；单张自己就超阈值时照旧立即卸，所以这张网
- * 继续验「按龄/按预算该卸的图确实被卸、该留的图还在」，不掺攒批语义。
+ * 图片 url：P2a 起批量卸载按**张数**攒批（`IMAGE_DIET_BATCH_MIN_IMAGES` = 2），与 url 长短无关。
+ * 这份历史里 A1、A2 是更早回合的图（keepRounds=2 判死），正好两张候选 → 一批卸掉；
+ * A3 在保留窗口内，必须还在。
  */
-const imageUrl = (tag: string): string => `data:image/png;base64,${'A'.repeat(16_384)}${tag}`
+const imageUrl = (tag: string): string => `data:image/png;base64,${tag}`
 const IMG_A1 = imageUrl('A1')
 const IMG_A2 = imageUrl('A2')
 const IMG_A3 = imageUrl('A3')
