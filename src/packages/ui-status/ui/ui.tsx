@@ -67,7 +67,6 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
-  IconChevronUp,
   IconCircle,
   IconClose,
   IconDiff,
@@ -1482,11 +1481,8 @@ function StatusSectionBlock({
         onClick={onToggle}
       >
         <span className="sp-section-title">{title}</span>
-        {open ? (
-          <IconChevronUp size={12} className="sp-section-caret" />
-        ) : (
-          <IconChevronDown size={12} className="sp-section-caret" />
-        )}
+        {/* 单颗向下箭头，展开时由 CSS 转 180°：换图标是突变，转起来才有「开合」的感觉。 */}
+        <IconChevronDown size={12} className="sp-section-caret" />
         <span className="sp-section-trail">{trail}</span>
       </button>
       <div className="sp-section-body">
@@ -1961,41 +1957,52 @@ function TeamBoardSection({
         })}
       </ul>
       {activity.length === 0 ? null : (
-        <div className="sp-task-activity" data-sp-team-activity={String(activity.length)}>
-          <button
-            type="button"
-            className="sp-row-open"
-            aria-expanded={activityOpen}
-            aria-label={t('status.team.activity')}
-            onClick={() => {
-              setActivityOpen((current) => !current)
-            }}
-          >
-            <span className="sp-row-text">{t('status.team.activity')}</span>
-            <span className="sp-row-note">{t('status.team.activityTrail', { n: activity.length })}</span>
-            <span className="sp-row-time" data-tone="plain">
-              {activityOpen ? t('status.team.collapse') : t('status.team.expand')}
-            </span>
-          </button>
-          {activityOpen ? (
-            <ul className="sp-list">
-              {activity.slice(0, 10).map((entry, index) => (
-                <li
-                  className="sp-row sp-row-task"
-                  data-sp-activity={entry.kind}
-                  key={`${String(entry.at)}-${String(index)}`}
-                >
-                  <span className="sp-row-text" title={entry.text}>
-                    {entry.taskId === undefined ? entry.text : `[${entry.taskId}] ${entry.text}`}
-                  </span>
-                  <span className="sp-row-note">@{entry.by}</span>
-                  <span className="sp-row-time" data-tone="plain">
-                    {formatAgo(entry.at, Date.now()) ?? ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+        // 最近活动是「共享任务」里的二级子块：与任务列表之间用一条分隔线 + 8px 留白隔开，
+        // 展开体走与分区体同一套 grid 开合动画（收起时也留在 DOM 里，才能过渡而不是突现）。
+        <div
+          className="sp-task-activity"
+          data-sp-team-activity={String(activity.length)}
+          data-sp-open={activityOpen ? '1' : '0'}
+        >
+          <div className="sp-row sp-row-toggle">
+            <button
+              type="button"
+              className="sp-row-open sp-activity-head"
+              aria-expanded={activityOpen}
+              aria-label={t('status.team.activity')}
+              onClick={() => {
+                setActivityOpen((current) => !current)
+              }}
+            >
+              <span className="sp-row-text">{t('status.team.activity')}</span>
+              <span className="sp-row-note">{t('status.team.activityTrail', { n: activity.length })}</span>
+              <span className="sp-row-time" data-tone="plain">
+                {activityOpen ? t('status.team.collapse') : t('status.team.expand')}
+              </span>
+              <IconChevronDown size={12} className="sp-activity-caret" />
+            </button>
+          </div>
+          <div className="sp-activity-body">
+            <div className="sp-activity-inner">
+              <ul className="sp-list">
+                {activity.slice(0, 10).map((entry, index) => (
+                  <li
+                    className="sp-row sp-row-activity"
+                    data-sp-activity={entry.kind}
+                    key={`${String(entry.at)}-${String(index)}`}
+                  >
+                    <span className="sp-row-text" title={entry.text}>
+                      {entry.taskId === undefined ? entry.text : `[${entry.taskId}] ${entry.text}`}
+                    </span>
+                    <span className="sp-row-note">@{entry.by}</span>
+                    <span className="sp-row-time" data-tone="plain">
+                      {formatAgo(entry.at, Date.now()) ?? ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       )}
     </StatusSectionBlock>

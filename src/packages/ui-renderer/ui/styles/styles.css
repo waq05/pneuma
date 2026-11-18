@@ -2730,6 +2730,18 @@
 
 /* ── 壳（两态共用）── 底色不透明（下方是正文，半透明会读出重影）。 */
 .sp {
+  /* 面板内只有四档间距刻度（4/8 体系），往下所有 .sp-* 规则只许引用这四个变量：
+   *   -sp-gap-row    行与行、分区头与内容之间
+   *   -sp-gap-block  分区之间、二级子块（任务列表 ↔ 最近活动）之间
+   *   -sp-pad-x      行 / 分区头的左右内边距
+   *   -sp-row-h      行最小高度（任务行、队友行、活动行同一数值）
+   * 2026-11-18 用户报障「同层级间距不一致、共享任务与最近活动局促」——根因是行内距
+   * （3px/2px）、行间距（2px)、分区间距（6+6px）、头与内容间距（0-3px）各写一套。
+   * 统一后每个层级只有一个值，改动时改这里，不再散落。 */
+  --sp-gap-row: var(--dsc-sp-1);
+  --sp-gap-block: var(--dsc-sp-3);
+  --sp-pad-x: var(--dsc-sp-3);
+  --sp-row-h: 30px;
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
   display: flex;
@@ -2761,19 +2773,23 @@
 }
 
 /* 展开体：展开时在流内；收起时绝对定位让位（内容看不见也不占尺寸），
-   visibility 随 150ms 过渡在末尾才翻，收起来不闪。 */
+   visibility 随 150ms 过渡在末尾才翻，收起来不闪。另给 3px 上浮 + 轻微缩放入场：
+   只变透明度会像「突然贴上去」，带上位移才有 ZCode / dsh 弹层那种「落位」感。 */
 .sp-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  transform-origin: top right;
   transition:
-    opacity 150ms var(--dsc-ease),
-    visibility 150ms var(--dsc-ease);
+    opacity 160ms var(--dsc-ease),
+    transform var(--dsc-dur-slow) var(--dsc-ease),
+    visibility 160ms var(--dsc-ease);
 }
 
 .sp[data-expanded='1'] .sp-panel {
   opacity: 1;
   position: relative;
+  transform: none;
   visibility: visible;
 }
 
@@ -2782,15 +2798,17 @@
   opacity: 0;
   pointer-events: none;
   position: absolute;
+  transform: translateY(-3px) scale(0.985);
   visibility: hidden;
 }
 
-/* 标题栏：两颗图标钮贴右上角（ZCode 同位置）。 */
+/* 标题栏：两颗图标钮贴右上角（ZCode 同位置）；右内距与行的右内距同一档（8px），
+   两颗钮的右缘才和下面各行的读数右缘对齐。 */
 .sp-toolbar {
   display: flex;
-  gap: var(--dsc-sp-1);
+  gap: var(--sp-gap-row);
   justify-content: flex-end;
-  padding: var(--dsc-sp-2) var(--dsc-sp-2) 0;
+  padding: var(--sp-gap-row) var(--sp-pad-x) 0;
   position: relative;
 }
 
@@ -2821,7 +2839,8 @@
   outline: none;
 }
 
-/* 展开策略的下拉：与 `.model-pop` 同一套（这里是浮层内的小菜单，宽度跟着内容走）。 */
+/* 展开策略的下拉：与 `.model-pop` 同一套（这里是浮层内的小菜单，宽度跟着内容走）。
+   入场 140ms 上浮淡入（与预览卡同一个 keyframe），收起仍按条件渲染直接消失。 */
 .sp-mask {
   inset: 0;
   position: fixed;
@@ -2829,6 +2848,7 @@
 }
 
 .sp-menu {
+  animation: sp-pop-in var(--dsc-dur) var(--dsc-ease);
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
   border-radius: var(--dsc-r-block);
@@ -2843,6 +2863,18 @@
   z-index: 2;
 }
 
+/* 弹层入场：位移只有 2px，看得出「落下来」又不至于滑一段。 */
+@keyframes sp-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .sp-menu-item {
   align-items: center;
   background: none;
@@ -2853,8 +2885,12 @@
   display: flex;
   font-size: var(--dsc-fs-ui);
   justify-content: space-between;
-  padding: 4px var(--dsc-sp-2);
+  min-height: var(--sp-row-h);
+  padding: 0 var(--sp-pad-x);
   text-align: left;
+  transition:
+    background-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .sp-menu-item:hover {
@@ -2862,20 +2898,26 @@
   color: var(--dsc-text-primary);
 }
 
+.sp-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
 .sp-menu-item.on {
   color: var(--dsc-accent-text);
 }
 
 /* 分节区：外层兜底滚（多节同时展开超过壳上限时，标题与操作仍可达），
-   每个分节体内再按类型限高——长节只滚自己，不裁掉后面的节。 */
+   每个分节体内再按类型限高——长节只滚自己，不裁掉后面的节。
+   分区间距 = 8px 外边距（本规则 gap）+ 下一节 8px 上留白 + 1px 分隔线，见下一条。 */
 .sp-scroll {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--dsc-sp-2);
+  gap: var(--sp-gap-block);
   min-height: 0;
   overflow-y: auto;
-  padding: var(--dsc-sp-2) var(--dsc-sp-2) var(--dsc-sp-3);
+  padding: var(--sp-gap-block) var(--sp-pad-x);
 }
 
 .sp-section {
@@ -2885,13 +2927,16 @@
   min-width: 0;
 }
 
-/* 第二瓣及以后的分节顶上一条分割线（没有前驱就不画）。 */
+/* 第二瓣及以后的分节顶上一条分割线（没有前驱就不画）。
+   线上线下的留白都是 8px（下侧是本节的 padding-top，上侧由 .sp-scroll 的 gap 给），
+   所以「上一节最后一行 → 下一节标题」恒为 17px（8 + 1 + 8），与下面的二级子块同口径。 */
 .sp-section[data-separated='1'] {
   border-top: 1px solid var(--dsc-stroke-3);
-  padding-top: var(--dsc-sp-2);
+  padding-top: var(--sp-gap-block);
 }
 
-/* 分节头：整行可点收起 / 展开；左边标题 + 箭头（hover 才显影），右边读数常显。 */
+/* 分节头：整行可点收起 / 展开；左边标题 + 箭头（hover 才显影），右边读数常显。
+   高度 28px、左右内距与行一致（8px），标题、读数因此与下面各行的左/右缘对齐。 */
 .sp-section-head {
   align-items: center;
   background: none;
@@ -2899,10 +2944,11 @@
   border-radius: var(--dsc-r-control);
   cursor: pointer;
   display: flex;
-  gap: var(--dsc-sp-1);
-  min-height: 24px;
-  padding: 0 var(--dsc-sp-2);
+  gap: var(--sp-gap-row);
+  min-height: 28px;
+  padding: 0 var(--sp-pad-x);
   text-align: left;
+  transition: background-color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
 }
 
@@ -2926,7 +2972,14 @@
   color: var(--dsc-text-quaternary);
   flex: none;
   opacity: 0;
-  transition: opacity var(--dsc-dur) var(--dsc-ease);
+  transition:
+    opacity var(--dsc-dur) var(--dsc-ease),
+    transform var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+/* 分节展开时箭头转 180°：与分区体的高度过渡同一节奏，读起来是「同一件事在动」。 */
+.sp-section[data-sp-open='1'] .sp-section-caret {
+  transform: rotate(180deg);
 }
 
 .sp-section-head:hover .sp-section-caret,
@@ -2951,23 +3004,30 @@
   color: var(--dsc-green);
 }
 
-/* 分节体：0fr↔1fr 的网格行做开合动画（高度自己算，不用知道内容多高）。 */
+/* 分节体：0fr↔1fr 的网格行做开合动画（高度自己算，不用知道内容多高）。
+   200ms 与壳的收展同一缓动，分区头箭头同拍旋转。 */
 .sp-section-body {
   display: grid;
   grid-template-rows: 1fr;
   min-height: 0;
-  transition: grid-template-rows 200ms var(--dsc-ease);
+  transition: grid-template-rows var(--dsc-dur-slow) var(--dsc-ease);
 }
 
 .sp-section[data-sp-open='0'] .sp-section-body {
   grid-template-rows: 0fr;
 }
 
+/* 分区头与内容之间 4px（唯一值）。收起时这段 padding 被 0fr 行裁掉，不占高度。 */
 .sp-section-scroll {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: var(--sp-gap-row) 2px 0 0;
+  transition: opacity 160ms var(--dsc-ease);
+}
+
+.sp-section[data-sp-open='0'] .sp-section-scroll {
+  opacity: 0;
 }
 
 /* 每个分节各自的限高（照 ZCode 那一组）：进程最高 ~20rem（6 条双行待办）；
@@ -2985,62 +3045,70 @@
   max-height: 20rem;
 }
 
+/* 「共享任务」比别的区多一个「最近活动」子块：给它一档更高的限高（15rem），
+   4 条任务 + 活动折叠行能一屏放下，不用先滚一段才看到活动入口。 */
+.sp-section[data-sp-section='team'] .sp-section-scroll {
+  max-height: 15rem;
+}
+
 .sp-list {
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-sp-0);
+  gap: var(--sp-gap-row);
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-/* 胶囊行：圆角药丸底 + 状态图标 + 正文（最多两行，全文在 title 里）+ 尾部读数。 */
+/* 数据行：圆角块底 + 状态图标 + 正文（最多两行，全文在 title 里）+ 尾部读数。
+   行高 30px（--sp-row-h）、左右内距 8px、列间距 8px，三类行（任务 / 队友 / 活动）
+   共用这一条——这是「同层级间距相同」的落点，别再给某一类行单独写 padding。 */
 .sp-row {
-  align-items: flex-start;
-  border-radius: var(--dsc-r-pill);
+  align-items: center;
+  border-radius: var(--dsc-r-row);
   display: flex;
-  gap: var(--dsc-sp-2);
-  min-height: 26px;
-  padding: 3px var(--dsc-sp-3);
+  gap: var(--sp-gap-block);
+  min-height: var(--sp-row-h);
+  padding: 0 var(--sp-pad-x);
   position: relative;
+  transition: background-color var(--dsc-dur) var(--dsc-ease);
 }
 
 .sp-row:hover {
   background: var(--dsc-row-hover-bg);
 }
 
+/* 「子智能体」区右缘留一颗停止钮（22px）：行右内距仍与别的行同档（8px），
+   按钮的右缘因此和任务行的读数右缘对齐。 */
 .sp-row-agent {
-  padding-right: var(--dsc-sp-1);
+  padding-right: var(--sp-pad-x);
 }
 
-/* 「智能体」区的队友状态点（`.tm-dot`，与团队面板同一颗）：这一行是 flex-start 排版
-   （图标靠 `margin-top: 3px` 对齐首行），7px 的点要再往下挪一点才和文字齐。 */
-.sp-row-agent .tm-dot {
-  margin-top: 5px;
+/* 行内元素一律靠中线对齐：图标 / 状态点 / 读数不再各写一个 margin-top 去凑首行基线
+   （旧版 3px / 5px 各写一套，多行正文时就歪）。 */
+.sp-row .sp-icon,
+.sp-row .sp-row-note,
+.sp-row .sp-row-time,
+.sp-row .sp-row-mode,
+.sp-row .tm-dot {
+  margin-top: 0;
 }
 
-/* 「智能体团队」区的任务行：同一套胶囊行，右侧不让停止钮，靠左对齐收起。
-   圆角收成控制级（不是大药丸）：这一行常带展开的详情，药丸圆角会让 hover 底色在
-   两端缩进去，看起来像「没铺满」（2026-11-08 报障）。 */
+/* 「共享任务」区的任务行：同一套行，常带展开的详情，所以要换行；
+   圆角与其它行一致（--dsc-r-row），不再单独缩圆角或缩右内距。 */
 .sp-row-task {
-  border-radius: var(--dsc-r-control);
   flex-wrap: wrap;
-  padding-right: var(--dsc-sp-1);
-}
-
-.sp-row-task .tm-dot {
-  margin-top: 5px;
 }
 
 /* 任务详情：展开后垫在行下面的一小块灰字（描述 / 依赖 / 预计改动路径）。
-   左边不额外留白（与任务标题左对齐），右边只留行内那点空隙——否则描述文字会缩在
-   整行中间，和上面的标题对不齐。 */
+   左边缩进 = 状态点 7px + 列间距 8px，与上面任务标题同一左缘；下侧 8px 是本行与
+   下一行之间的子块留白（与分区之间同口径），行间距 4px 由 .sp-list 给。 */
 .sp-task-detail {
   color: var(--dsc-text-tertiary);
   flex-basis: 100%;
   font-size: var(--dsc-fs-tool);
   line-height: 1.5;
-  padding: 2px var(--dsc-sp-1) var(--dsc-sp-2) 0;
+  padding: 0 0 var(--sp-gap-block) calc(7px + var(--sp-gap-block));
 }
 
 .sp-task-detail p {
@@ -3049,9 +3117,10 @@
   word-break: break-word;
 }
 
+/* 详情内部的二级行（绑定队友 / 卡住原因 / 依赖 / 预计改）之间 4px，与行的刻度同一档。 */
 .sp-task-detail .sp-task-meta {
   color: var(--dsc-text-quaternary);
-  margin-top: 2px;
+  margin-top: var(--sp-gap-row);
 }
 
 /* 分区空态：一行灰字，跟同区其它行的行高对齐——别用 `.settings-empty`
@@ -3060,21 +3129,87 @@
 .sp-empty {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
-  padding: 2px var(--dsc-sp-3);
+  padding: 2px var(--sp-pad-x);
 }
 
-/* 整行可点的那一层：铺满整个药丸，行内按钮再叠在它上面。 */
+/* ── 「共享任务」里的「最近活动」二级子块 ──
+   与任务列表之间 = 8px 留白 + 1px 分隔线 + 8px 留白（与分区之间同口径，2026-11-18
+   用户报障「任务行、详情、活动折叠行、活动条目挤在一起」）。收起时展开体留在 DOM 里，
+   用 grid 0fr 过渡，不突现。 */
+.sp-task-activity {
+  border-top: 1px solid var(--dsc-stroke-3);
+  margin-top: var(--sp-gap-block);
+  padding-top: var(--sp-gap-block);
+}
+
+/* 「最近活动」这一行与任务行同款：外层 .sp-row 给行高/内距/悬停底，内层是整行按钮。
+   旧版这颗按钮没有外层行，左右内距为 0，文字比任务行左移了 8px（用户报的「不对齐」）。 */
+.sp-row-toggle {
+  align-items: center;
+}
+
+.sp-activity-head {
+  gap: var(--sp-gap-block);
+  min-height: var(--sp-row-h);
+}
+
+.sp-activity-caret {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  transition: transform var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+.sp-task-activity[data-sp-open='1'] .sp-activity-caret {
+  transform: rotate(180deg);
+}
+
+/* 活动展开体：与分区体同一套 grid 开合（200ms 同缓动），展开时首条活动与折叠行隔 4px。 */
+.sp-activity-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  transition: grid-template-rows var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+.sp-task-activity[data-sp-open='0'] .sp-activity-body {
+  grid-template-rows: 0fr;
+}
+
+.sp-activity-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: var(--sp-gap-row);
+  transition: opacity 160ms var(--dsc-ease);
+}
+
+.sp-task-activity[data-sp-open='0'] .sp-activity-inner {
+  opacity: 0;
+}
+
+/* 活动条目是只读行：不给悬停底，也不冒充可点（和 `.sp-row-static` 同一条口径）。
+   左内距多让出「状态点 7px + 列间距 8px」那一格，文字因此与上面的任务标题同一左缘；
+   右内距不变（8px），行尾时间与任务行读数右缘对齐。 */
+.sp-row-activity {
+  cursor: default;
+  padding-left: calc(var(--sp-pad-x) + 7px + var(--sp-gap-block));
+}
+
+.sp-row-activity:hover {
+  background: none;
+}
+
+/* 整行可点的那一层：铺满整个行（父级 .sp-row 的内距由它对齐），行内按钮再叠在它上面。 */
 .sp-row-open {
-  align-items: flex-start;
+  align-items: center;
   background: none;
   border: none;
-  border-radius: var(--dsc-r-pill);
+  border-radius: inherit;
   color: inherit;
   cursor: pointer;
   display: flex;
   flex: 1 1 auto;
-  gap: var(--dsc-sp-2);
-  min-height: 26px;
+  gap: var(--sp-gap-block);
+  min-height: var(--sp-row-h);
   min-width: 0;
   padding: 0;
   text-align: left;
@@ -3233,6 +3368,9 @@
   flex: none;
   height: 22px;
   justify-content: center;
+  transition:
+    color var(--dsc-dur) var(--dsc-ease),
+    box-shadow var(--dsc-dur) var(--dsc-ease);
   width: 22px;
 }
 
@@ -3243,11 +3381,18 @@
   color: var(--dsc-red);
 }
 
-/* 分节底部的弱化动作行（「进程」区的清空清单）：靠右、只在分区展开时可见。 */
+/* 停止钮也是键盘可达的按钮：焦点环与其它可点控件同一套（旧版漏了这条）。 */
+.sp-row-stop:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  color: var(--dsc-red);
+  outline: none;
+}
+
+/* 分节底部的弱化动作行（「进程」区的清空清单）：靠右，只在分区展开时可见。 */
 .sp-row-foot {
   display: flex;
   justify-content: flex-end;
-  padding: 2px var(--dsc-sp-3) 0;
+  padding: var(--sp-gap-row) var(--sp-pad-x) 0;
 }
 
 .sp-clear {
@@ -3257,7 +3402,10 @@
   color: var(--dsc-text-quaternary);
   cursor: pointer;
   font-size: var(--dsc-fs-tool);
-  padding: 1px var(--dsc-sp-2);
+  padding: 1px var(--sp-pad-x);
+  transition:
+    background-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .sp-clear:hover {
@@ -3270,19 +3418,24 @@
   outline: none;
 }
 
-/* 折叠桶行：「已完成 n 项 / 前面 n 项」——整桶靠 hover 预览卡或触屏点按看。 */.sp-fold {
+/* 折叠桶行：「已完成 n 项 / 前面 n 项」——整桶靠 hover 预览卡或触屏点按看。
+   行高 / 内距 / 圆角跟普通行同一套（它是列表里的一行，不是另一类控件）。 */
+.sp-fold {
   align-items: center;
   background: none;
   border: none;
-  border-radius: var(--dsc-r-pill);
+  border-radius: var(--dsc-r-row);
   color: var(--dsc-text-quaternary);
   cursor: pointer;
   display: flex;
   font-size: var(--dsc-fs-ui);
-  gap: var(--dsc-sp-1);
-  min-height: 22px;
-  padding: 2px var(--dsc-sp-3);
+  gap: var(--sp-gap-block);
+  min-height: var(--sp-row-h);
+  padding: 0 var(--sp-pad-x);
   text-align: left;
+  transition:
+    background-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
 }
 
@@ -3299,20 +3452,24 @@
   white-space: nowrap;
 }
 
-/* 已结束目录行：「已结束 · N ›」——一条通往目录的入口（点开团队面板）。 */
+/* 已结束目录行：「已结束 · N ›」——一条通往目录的入口（点开团队面板）。
+   行高 / 内距 / 圆角与列表行同一套。 */
 .sp-ended {
   align-items: center;
   background: none;
   border: none;
-  border-radius: var(--dsc-r-pill);
+  border-radius: var(--dsc-r-row);
   color: var(--dsc-text-secondary);
   cursor: pointer;
   display: flex;
   font-size: var(--dsc-fs-ui);
-  gap: var(--dsc-sp-2);
-  min-height: 28px;
-  padding: 0 var(--dsc-sp-3);
+  gap: var(--sp-gap-block);
+  min-height: var(--sp-row-h);
+  padding: 0 var(--sp-pad-x);
   text-align: left;
+  transition:
+    background-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
 }
 
@@ -3337,8 +3494,10 @@
   flex: none;
 }
 
-/* 折叠桶的预览卡：浮在面板左侧（定位基准是 .sp-host），只读整桶列表。 */
+/* 折叠桶的预览卡：浮在面板左侧（定位基准是 .sp-host），只读整桶列表。
+   入场 140ms 上浮淡入，与菜单同一套弹层节奏（对照 ZCode / dsh 的浮层）。 */
 .sp-card {
+  animation: sp-pop-in var(--dsc-dur) var(--dsc-ease);
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
   border-radius: var(--dsc-r-block);
@@ -3346,7 +3505,7 @@
   display: flex;
   flex-direction: column;
   max-height: min(24rem, 60vh);
-  padding: var(--dsc-sp-2);
+  padding: var(--sp-gap-block);
   position: absolute;
   right: calc(100% + 6px);
   width: min(320px, calc(var(--sp-avail, 320px) - 24px));
@@ -3357,13 +3516,14 @@
   color: var(--dsc-text-quaternary);
   flex: none;
   font-size: var(--dsc-fs-tool);
-  margin: 0 0 var(--dsc-sp-1);
-  padding: 0 var(--dsc-sp-3);
+  margin: 0 0 var(--sp-gap-row);
+  padding: 0 var(--sp-pad-x);
 }
 
 .sp-card-list {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-gap-row);
   list-style: none;
   margin: 0;
   min-height: 0;
@@ -3371,12 +3531,13 @@
   padding: 0;
 }
 
-/* 目标节：靶心 + 正文（最多两行）+ 暂停 / 继续；相位读数列在下面。 */
+/* 目标节：靶心 + 正文（最多两行）+ 暂停 / 继续；相位读数列在下面。
+   左右内距与行一致（8px），与上下两个分区的文字同一左缘。 */
 .sp-goal {
   align-items: flex-start;
   display: flex;
-  gap: var(--dsc-sp-2);
-  padding: 2px var(--dsc-sp-3);
+  gap: var(--sp-gap-block);
+  padding: 0 var(--sp-pad-x);
 }
 
 .sp-goal-text {
@@ -3401,7 +3562,10 @@
   cursor: pointer;
   flex: none;
   font-size: var(--dsc-fs-tool);
-  padding: 1px var(--dsc-sp-2);
+  padding: 1px var(--sp-pad-x);
+  transition:
+    background-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .sp-goal-btn:hover {
@@ -3414,11 +3578,12 @@
   outline: none;
 }
 
+/* 相位读数与目标正文之间 4px（同一刻度），左右内距跟正文一致。 */
 .sp-goal-state {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
-  margin: 2px 0 0;
-  padding: 0 var(--dsc-sp-3);
+  margin: var(--sp-gap-row) 0 0;
+  padding: 0 var(--sp-pad-x);
 }
 
 /* ── 胶囊态 ── 一颗药丸：图标 + 一句读数（+ 可选读数尾巴）；点它展开成面板，按住可以拖动。
@@ -3441,18 +3606,22 @@
   transition:
     color var(--dsc-dur) var(--dsc-ease),
     opacity 150ms var(--dsc-ease),
+    transform var(--dsc-dur-slow) var(--dsc-ease),
     visibility 150ms var(--dsc-ease);
 }
 
 .sp[data-expanded='0'] .sp-mini {
   position: relative;
+  transform: none;
 }
 
+/* 收起过程中胶囊缩一点淡出：与面板的 3px 上浮是同一件事的两头，看起来是胶囊「长」成面板。 */
 .sp[data-expanded='1'] .sp-mini {
   inset: 0 auto auto 0;
   opacity: 0;
   pointer-events: none;
   position: absolute;
+  transform: scale(0.96);
   visibility: hidden;
 }
 
@@ -3676,14 +3845,24 @@
   transform: translateX(-50%);
 }
 
-/* 系统里说「少动」就真不动：收展形变、分节开合、图标换形、呼吸全停（信息一条不少）。 */
+/* 系统里说「少动」就真不动：收展形变、分节 / 活动开合、箭头旋转、弹层入场、
+   图标换形、呼吸全停（信息一条不少）。 */
 @media (prefers-reduced-motion: reduce) {
   .sp,
   .sp-panel,
   .sp-section-body,
+  .sp-section-scroll,
+  .sp-section-caret,
+  .sp-activity-body,
+  .sp-activity-inner,
+  .sp-activity-caret,
   .sp-mini,
   .sp-mini-icon > svg {
     transition: none;
+  }
+  .sp-menu,
+  .sp-card {
+    animation: none;
   }
   .sp-row[data-state='working'] .sp-icon-run {
     animation: none;
