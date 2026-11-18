@@ -38,7 +38,7 @@
 - 内核 `src/core/**`：`pnpm run build` + `node scripts/check-core.mjs`。
 - 插件 `src/packages/**`：`pnpm run check:plugin`；新探针 `<话题>-test.mjs` 自动进门禁，P0 用 `<话题>-check.mjs` 登记进 `scripts/check-p0.mjs`。
 - 界面 `ui-shell/**`：`pnpm run check:ui`；看画面跑 `desktop/shots/*.mjs` 截图自己看。
-- 桌面 `desktop/**`：`pnpm --dir desktop typecheck` + 对应 shots；文档 `docs/**` 没门禁，自己校对。
+- 桌面 `desktop/**`：`pnpm --dir desktop typecheck` + 对应 shots；文档 `docs/**`：`pnpm run docs-check`（第一批只报不拦）。门禁怎么跑、红了怎么修，见 [docs/gates-playbook.md](docs/gates-playbook.md)。
 - 自检跑临时 HOME，不碰 `~/.dsc`；证据配不上改动面等于没验证。
 
 ## 6 会话与派活
