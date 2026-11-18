@@ -29,8 +29,15 @@ let pluginModule: MicrocompactPluginModule
 let llm: FakeLLM
 let kernel: BootedKernel
 
-/** 一条够长、够「像日志」的正文：约 2000 个汉字 ≈ 1300 token（稳稳超过 256 的门槛）。 */
-const longText = (): string => `日志行：${'错'.repeat(2000)}`
+/**
+ * 一条够长、够「像日志」的正文：约 4500 个汉字 ≈ 2900 token（稳稳超过 256 的门槛）。
+ *
+ * 为什么是 4500 而不是更短：默认 `refresh:'budget'` 要「新增条目合计省够 8192 字符」
+ * 才推进一次清理点。单条正文约 4500 字符、清一条省约 4485 字符，正好让「2 条候选」
+ * （约 8970 字符）过推进线、「1 条候选」过不了——这样下面钉的「清 2 条 / 清 3 条」既有
+ * 意义，又不会因为正文太短被预算卡住。
+ */
+const longText = (): string => `日志行：${'错'.repeat(4500)}`
 /** 一段短正文：约 30 个汉字 ≈ 20 token（省不到 256，门槛以内）。 */
 const shortText = (): string => '错误'.repeat(15)
 
@@ -435,6 +442,9 @@ describe('⑤ 端到端：后一轮请求体里旧工具结果已清，日志原
     llm = await fakeLLM({ turns })
     booted = await bootKernel({ providerBaseUrl: llm.baseUrl })
     services = booted.ctx as unknown as Services
+    // 本用例只测微压缩：把 spill 的落盘阈值调高，免得上万字符的测试结果先被 spill 换成
+    // 「完整输出已落盘」指针——微压缩对那种正文是故意跳过的，会把预算推进的夹具搅浑。
+    await services.settings.save('spill', 'thresholdChars', 20_000)
     services.tools.register({
       name: 'bulk',
       description: '测试用长输出工具',

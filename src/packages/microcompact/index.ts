@@ -15,11 +15,23 @@
  * 另外对外提供 `microcompact` 服务（2026-11-02）：压缩插件在爆窗重试前先用它算一眼
  * 「清理之后还装不装得下」，装得下就不必牺牲历史去压摘要。
  *
+ * 清理时机三档（2026-11-18 起默认 `budget`），差别只在「清理点什么时候往前挪」：
+ * - `budget`（默认）：每次进入新一轮只**累计**可省的字符，新增条目合计省够
+ *   {@link DEFAULT_ADVANCE_CHARS}（8192 字符）才把清理点推进一次；两次推进之间一直应用
+ *   同一份 activePlan，前缀不动、缓存连中。代价是旧工具结果多留几轮。
+ * - `round`：每轮重算一次（旧默认）。工具密集会话几乎每轮都要挪清理点，实测命中率
+ *   被拖到 60% 上下（会话 bb13f0b5）。
+ * - `request`：每次请求都重算（最省上下文、前缀最碎，只在窗口极紧时用）。
+ * 三档的取舍是同一笔账：命中的 token 只按约 1/10 价收，断一次却把清理点之后整段按全价
+ * 重读，所以 `budget` 宁可攒。
+ *
  * @module dsc/plugins/microcompact
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import {
+  advanceMicrocompactPlan,
   applyMicrocompactPlan,
+  DEFAULT_ADVANCE_CHARS,
   DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   DEFAULT_MIN_SAVE_TOKENS,
   planMicrocompact,
@@ -51,21 +63,42 @@ const PROJECTION_ORDER = 650
 /** 空计划：门槛没达到时用它占住 frozen，同一轮的后续请求就不再重算。 */
 const EMPTY_PLAN: MicrocompactPlan = new Map()
 
+/** 冻结表最多记多少个会话（budget 的 activePlan 与 round 的冻结计划共用这张表）。 */
+const SESSION_LIMIT = 64
+
+/** 三档清理时机（顺序即设置面下拉框的顺序，默认第一档）。 */
+const REFRESH_MODES = ['budget', 'round', 'request'] as const
+
+/** 一个会话冻结的计划（round/request 档的当前计划，与 budget 档的已生效计划共用一条记录）。 */
+interface FrozenPlan {
+  /** 这条记录属于第几轮（真人发言轮号）；同一轮且消息没变短就复用。 */
+  round: number
+  /** 这次请求要应用的计划：round/request 是当前算的，budget 是 activePlan。 */
+  applied: MicrocompactPlan
+  /** budget 档的已生效清理计划，只增不减；其余两档不用（空计划）。 */
+  active: MicrocompactPlan
+  /** 登记时的消息条数：变短（被压缩）就重算。 */
+  length: number
+}
+
 /** 微压缩的可调值。 */
 interface MicrocompactConfig {
   /** 最近多少条工具结果以内一律不碰。 */
   keepRecent: number
   /** 单条估算省下的 token 少于这个数就不清。 */
   minSaveTokens: number
-  /** 一轮总共能清掉的字符占整段提示词的百分比低于这个数，就一条都不清（0–80）。 */
+  /** 一次清理能清掉的字符占整段提示词的百分比低于这个数，就一条都不清（0–80）。 */
   minFreePercent: number
   /** 总开关。默认开：长会话里这块浪费最大，保守值下副作用很小。 */
   enabled: boolean
   /**
-   * 什么时候重算清理集合：`round` = 每轮开始清一次（默认，缓存友好）；
-   * `request` = 每次请求都重算（旧行为，省上下文但每步都可能改前缀）。
+   * 清理点什么时候推进（三档语义与代价见模块注释）：
+   * - `budget`（默认）：新增条目合计省够 {@link DEFAULT_ADVANCE_CHARS} 才推进一次，其余时间复用
+   *   同一份已生效计划；
+   * - `round`：每轮开始重算一次（旧默认）；
+   * - `request`：每次请求都重算（最省上下文，前缀最碎）。
    */
-  refresh: 'round' | 'request'
+  refresh: (typeof REFRESH_MODES)[number]
 }
 
 const DEFAULTS: MicrocompactConfig = {
@@ -73,7 +106,7 @@ const DEFAULTS: MicrocompactConfig = {
   minSaveTokens: DEFAULT_MIN_SAVE_TOKENS,
   minFreePercent: 25,
   enabled: true,
-  refresh: 'round',
+  refresh: 'budget',
 }
 
 /** 三个可调值的区间：低于下限把最近的证据也清掉，高于上限基本清不出空间。 */
@@ -94,7 +127,8 @@ function readConfig(passed?: unknown): MicrocompactConfig {
     minSaveTokens: clamp(raw.minSaveTokens, MIN_SAVE_RANGE.min, MIN_SAVE_RANGE.max, DEFAULTS.minSaveTokens),
     minFreePercent: clamp(raw.minFreePercent, MIN_FREE_RANGE.min, MIN_FREE_RANGE.max, DEFAULTS.minFreePercent),
     enabled: raw.enabled === undefined ? DEFAULTS.enabled : raw.enabled === true || raw.enabled === 'true',
-    refresh: raw.refresh === 'request' ? 'request' : DEFAULTS.refresh,
+    // 只认这三档；手改 plugins.json 写歪了回落默认，别让一个拼错的词改变清理节奏。
+    refresh: REFRESH_MODES.find((mode) => mode === raw.refresh) ?? DEFAULTS.refresh,
   }
 }
 
@@ -110,11 +144,17 @@ export const microcompactPlugin: Plugin.Object = {
     }
 
     /**
-     * 每个会话冻结的那份清理计划（2026-10-28）：一轮之内复用它，只有新一轮
-     * 或消息列表被压缩变短时才重算。投影签名现在带会话（内核 API 加了第二参），
-     * 后台会话因此拿自己的计划与自己的失败结果集合。
+     * 每个会话冻结的计划（2026-10-28；2026-11-18 起 budget 档另存一份只增不减的 activePlan）。
+     *
+     * - `applied`：这次请求要应用的计划。`round`/`request` 档是当前算出来的那份；
+     *   budget 档是累计生效的 activePlan（推进过就换新的，没推进仍是旧的）。
+     * - `active`：budget 档的「已生效清理计划」，callId → 占位符，只增不减。压缩把历史变短后，
+     *   里面不在消息里的 callId 自然失效（apply 跳过），不必专门清理。
+     * - `round`/`length`：轮号与消息条数，同一轮且没变短就复用，保证一轮多步请求逐字节相同。
+     *
+     * 投影签名现在带会话（内核 API 加了第二参），后台会话因此拿自己的计划与自己的失败结果集合。
      */
-    const frozen = new Map<string, { round: number; plan: MicrocompactPlan; length: number }>()
+    const frozen = new Map<string, FrozenPlan>()
 
     const offProjection = ctx.prompt.registerProjection(
       'microcompact',
@@ -144,19 +184,39 @@ export const microcompactPlugin: Plugin.Object = {
         const held = frozen.get(sid)
         // 同一轮、消息没变短：复用上一次的计划（前缀因此逐步稳定，缓存能一直命中）。
         if (held !== undefined && held.round === round && messages.length >= held.length) {
-          return applyMicrocompactPlan(messages, held.plan)
+          return applyMicrocompactPlan(messages, held.applied)
         }
         const planned = planMicrocompact(messages, options)
+        let applied: MicrocompactPlan
+        if (config.refresh === 'budget') {
+          // budget：已生效的 activePlan 只增不减；新增条目省够预算才推进一次，
+          // 否则继续应用旧计划——清理点不动，前缀缓存就能一直命中。
+          applied = advanceMicrocompactPlan(messages, held?.active ?? EMPTY_PLAN, planned, {
+            minFreePercent: config.minFreePercent,
+          }).plan
+        } else {
+          // round：每轮重算一次（旧默认），门槛不够就整轮用空计划。
+          applied = worthApplying(planned) ? planned : EMPTY_PLAN
+        }
         // 判定放在「算出计划之后、写进 frozen 之前」：跳过时也冻结空计划与本轮条数，
         // 同一轮内不再反复算（否则每一步都要重扫一遍消息，还显得计划一直在变）。
-        const plan: MicrocompactPlan = worthApplying(planned) ? planned : EMPTY_PLAN
-        frozen.set(sid, { round, plan, length: messages.length })
-        if (frozen.size > 64) {
-          // 会话多了别让这张表无界长；删最早登记的那一条（Map 插入序）。
-          const first = frozen.keys().next().value
-          if (first !== undefined && first !== sid) frozen.delete(first)
+        frozen.set(sid, {
+          round,
+          applied,
+          active: config.refresh === 'budget' ? applied : EMPTY_PLAN,
+          length: messages.length,
+        })
+        if (frozen.size > SESSION_LIMIT) {
+          // 会话多了别让这张表无界长：删最早登记的那一条（Map 插入序）。
+          // 当前会话恰好是最早那条时删次早的，别把刚写进去的记录删掉。
+          for (const key of frozen.keys()) {
+            if (key !== sid) {
+              frozen.delete(key)
+              break
+            }
+          }
         }
-        return applyMicrocompactPlan(messages, plan)
+        return applyMicrocompactPlan(messages, applied)
       },
       { order: PROJECTION_ORDER },
     )
@@ -168,7 +228,11 @@ export const microcompactPlugin: Plugin.Object = {
      *
      * 失败/被拒的 tool_call_id 记在会话旁路（`Session.toolErrors`），这个接口只收消息、
      * 拿不到会话，所以按空集算：那类结果本来就该保留，少清几条只会让估算偏保守
-     * （偏保守 = 更容易判定「装不下」= 老老实实去压摘要，不会误判成熟）。
+     * （偏保守 = 更容易判定「装不下」= 老老实实去压摘要，不会误判成装得下）。
+     *
+     * budget 档注意：这里算的是「按当前消息重算出来的计划」，看不到会话里冻结的 activePlan
+     * （同一轮内可能还没推进到这么多）。也就是估算出来的投影**可能比真正发出的更小**；
+     * 与旧 `round` 档同一口径（旧档在同一轮内同样用「重算的计划」估算），不是本次引入的偏差。
      */
     const service: MicrocompactService = {
       projectedTokens(messages: readonly ChatMessage[]): number {
@@ -199,6 +263,7 @@ export const microcompactPlugin: Plugin.Object = {
         key: 'refresh',
         label: t('field.refresh.label'),
         options: [
+          { value: 'budget', label: t('field.refresh.option.budget') },
           { value: 'round', label: t('field.refresh.option.round') },
           { value: 'request', label: t('field.refresh.option.request') },
         ],
@@ -259,7 +324,7 @@ export const microcompactPlugin: Plugin.Object = {
         }
         if (key === 'refresh') {
           const next = String(value)
-          if (next !== 'round' && next !== 'request') return t('save.badRefresh')
+          if (!(REFRESH_MODES as readonly string[]).includes(next)) return t('save.badRefresh')
           applyConfig({ refresh: next })
           return
         }
