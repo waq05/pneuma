@@ -64,7 +64,11 @@ jobs:
         node: [22, 24]
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 —— 架构铁律的第三条（loop.ts 不许被功能分支改）要算
+      # `git diff <base>...HEAD`，浅克隆拿不到 base 会退 2；这条门禁宁可慢几秒也不许静默放行。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
@@ -83,6 +87,34 @@ jobs:
         run: pnpm run typecheck:spec
       - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
         run: pnpm run check:style
+      # 架构铁律（三条：src/core 不引界面依赖 / 界面只调 INVOKABLE_METHODS 白名单 /
+      # 新功能不许改 session-core/loop.ts）。纯静态扫描，秒级；存量已实测干净，所以立刻阻塞。
+      #
+      # base 按事件取：PR 用 base.sha，push 用 before；两者都空或全零（新分支）时脚本自己回退
+      # origin/dev。不传这一行的话，PR 的 detached HEAD 上 git rev-parse dev 拿不到，门禁会
+      # 以退 2 的形式把每个 PR 判红——那是「环境问题冒充代码问题」。
+      - name: 架构铁律
+        run: pnpm run law
+        env:
+          NUMA_LAW_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      # CI 覆盖核对：每个 check:* 都有归属，每条 push/nightly 门禁都真的在 workflow 里跑。
+      # 防的是「登记了但没人跑」——它红了说明台账与流水线脱节，不是代码有问题。
+      # --remind 会在结尾打「本次改动可能影响 P0 清单中 N 条」，N 从 check-p0.mjs 实读。
+      - name: CI 覆盖核对
+        run: pnpm run ci-coverage
+      # P0 清单（informational，continue-on-error）：只打印那 19 条手动门禁的名单，不判红。
+      # 它不检查任何行为，作用是让动了这批行为的人看见「你该手动跑哪一条」。
+      - name: P0 清单（只报不拦）
+        run: pnpm run check:p0-list
+        continue-on-error: true
+      # 探针孤儿台账：scripts/*.mjs 必须落进六类之一。它红了说明有脚本永远不会被跑。
+      - name: 探针孤儿台账
+        run: pnpm run probe-inventory
+      # 文档漂移第一批（规则 1/2，带基线）：只报不红，跑一周把「有哪些漂移」摊开再转阻塞。
+      # 转阻塞条件：基线命中占比 < 5% 且连续一周没有新增违规。
+      - name: 文档漂移（第一批，只报不红）
+        run: pnpm run docs-check
+        continue-on-error: true
       # unit + ui + tui 三层（2026-11-14 起 221 文件 / 2500+ 条）。JUnit 报告同时落一份，
       # 失败时能在 Actions 的 artifact 里逐用例看（P6 flake 治理：报告 + 耗时历史）。
       - name: 单元、界面与 TUI 测试
