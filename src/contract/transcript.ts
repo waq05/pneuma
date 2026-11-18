@@ -124,6 +124,22 @@ export interface CompactionMark {
 }
 
 /**
+ * 一轮累计的用量（挂在本轮最后一条 text / tool 条目上）。
+ *
+ * input / output 是每次请求都会报的；缓存两栏只在端点上报过明细的请求上累计——
+ * 没上报的请求既不加命中也不加未命中，命中率才不会被稀释（口径与 core/usage-log 一致）。
+ * 为什么可选：① 端点可能从不回缓存明细；② 老会话重放造不出这个数。
+ */
+export interface TurnUsageView {
+  inputTokens: number
+  outputTokens: number
+  /** 端点上报过明细的请求里，前缀缓存命中的输入 tokens 合计；从未上报时缺省。 */
+  cacheHitTokens?: number
+  /** 同上，未命中的输入 tokens；与命中成对出现（写入端一次写两个键）。 */
+  cacheMissTokens?: number
+}
+
+/**
  * 会话流里的一条可渲染条目。adapter 把 session/event 折叠成这个序列，
  * UI 只读消费；`id` 单调递增、仅在本会话生命周期内唯一。
  *
@@ -182,11 +198,11 @@ export type TranscriptEntry =
       id: number
       text: string
       ts?: number
-      usage?: { inputTokens: number; outputTokens: number }
+      usage?: TurnUsageView
       process?: true
     }
   /** usage 同上（一轮以工具结果收尾、没有最终正文时，数字落在这张卡上）。 */
-  | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
+  | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: TurnUsageView }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
   | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
   /**

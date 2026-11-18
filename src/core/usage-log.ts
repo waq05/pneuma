@@ -26,6 +26,24 @@ import type { SessionUsageView, UsageDayView, UsageModelView, UsageStatsView } f
 import { addUsageToBuckets, emptyCostBuckets, estimateSessionCostCny, isDeepseekProvider, isPeakHour, type CostBuckets } from './pricing.js'
 import { dscPath } from './path-policy.js'
 
+/**
+ * 一次请求的前缀缓存断点归因（2026-11 起，只在 `DSC_CACHE_PROBE=1` 时写）。
+ *
+ * 它回答的是「这次为什么没命中」：命中率异常时只看 `ch`/`cm` 只能知道没命中，看不出
+ * 是哪一段变了；带上「第一条签名不同的消息 + 系统提示/工具定义变没变」，排查才能指到组件。
+ * 它不参与聚合：设置页与会话用量只看 token 与墙钟，这里只多带一段归因。
+ */
+export interface CacheBreakPoint {
+  /** 第一条与上一次请求签名不同的消息下标；-1 = 消息前缀没变（只有 system / tools 变）。 */
+  at: number
+  /** 那一条消息的角色（取得到时；`at = -1` 时没有）。 */
+  role?: string
+  /** 系统提示正文变了。 */
+  sys?: boolean
+  /** 工具定义（名字 / 描述 / 参数）变了。 */
+  tools?: boolean
+}
+
 /** usage.jsonl 里的一行。字段名压短：这文件每轮请求都要追加一行。 */
 export interface UsageRecord {
   /** 请求完成时刻（毫秒）。 */
@@ -56,6 +74,12 @@ export interface UsageRecord {
    * 切回会话的数字才和切走前一致（复审 P0-5 真问题 2）。
    */
   k?: 'judge'
+  /**
+   * 缓存归因断点（2026-11 起）：这次请求的前缀与同会话上一次差在哪一段。
+   * 只有开了探针（`DSC_CACHE_PROBE=1`）且不是该会话第一次请求时才有；
+   * 字段本身不参与任何聚合，见 {@link CacheBreakPoint}。
+   */
+  bp?: CacheBreakPoint
 }
 
 /**
@@ -113,6 +137,8 @@ export function readUsageRecords(): UsageRecord[] {
     try {
       const row = JSON.parse(line) as Partial<UsageRecord>
       if (typeof row.t !== 'number' || typeof row.i !== 'number' || typeof row.o !== 'number') continue
+      // 归因字段原样透传（读侧对未知/坏值一贯是「当没有」）：老行没有它，坏形状丢掉。
+      const bp = readBreakPoint(row.bp)
       out.push({
         t: row.t,
         provider: typeof row.provider === 'string' ? row.provider : '',
@@ -125,6 +151,7 @@ export function readUsageRecords(): UsageRecord[] {
         ...(typeof row.lm === 'number' && row.lm >= 0 ? { lm: row.lm } : {}),
         ...(typeof row.ft === 'number' && row.ft >= 0 ? { ft: row.ft } : {}),
         ...(typeof row.d === 'number' && row.d >= 0 ? { d: row.d } : {}),
+        ...(bp === null ? {} : { bp }),
       })
     } catch {
       // 半截行（写盘中断）跳过
@@ -311,11 +338,31 @@ interface RawUsageRow {
   d?: unknown
   k?: unknown
   ms?: unknown
+  bp?: unknown
 }
 
 /** 非负有限数才算真值（缺项、负数、NaN 一律当没上报）。 */
 function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/**
+ * 校验一行里的归因字段；形状不对返回 null（当没有）。
+ *
+ * 只认 `{ at: 整数, role?: 字符串, sys?: 布尔, tools?: 布尔 }`：以后字段加长，
+ * 老版本读到的「多出来的键」会被丢掉——透传的是**已知形状**，不是整段 JSON。
+ */
+function readBreakPoint(value: unknown): CacheBreakPoint | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const at = row['at']
+  if (typeof at !== 'number' || !Number.isInteger(at)) return null
+  return {
+    at,
+    ...(typeof row['role'] === 'string' ? { role: row['role'] } : {}),
+    ...(row['sys'] === true ? { sys: true } : {}),
+    ...(row['tools'] === true ? { tools: true } : {}),
+  }
 }
 
 /**

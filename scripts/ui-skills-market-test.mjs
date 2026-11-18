@@ -665,6 +665,9 @@ const contractStatus = git('status', '--porcelain', '--', 'src/contract')
 const CONTRACT_CHANGE_ALLOWED = new Set([
   'src/contract/settings.ts', // checks 控件：SettingsValue 加 string[]、SettingsField 加 checks 分支
   'src/contract/plugin.ts', // 任务板：TeamTaskView 进展字段、TeamBoardView.activity、TeammateView.taskId
+  // 每轮缓存明细（P2b）：TurnUsageView 给 text/tool 条目的 usage 加 cacheHitTokens /
+  // cacheMissTokens 两个可选字段，只是加法，不动已有字段与口径。
+  'src/contract/transcript.ts',
 ])
 const contractChangedFiles = contractStatus.stdout
   .split(/\r?\n/)
@@ -679,9 +682,9 @@ const contractChangedFiles = contractStatus.stdout
   })
 const contractOutOfScope = contractChangedFiles.filter((file) => !CONTRACT_CHANGE_ALLOWED.has(file))
 check(
-  '契约改动只落在已声明的文件里（settings.ts 的 checks 控件、plugin.ts 的任务板投影；其余契约文件不动）',
+  '契约改动只落在已声明的文件里（settings.ts 的 checks 控件、plugin.ts 的任务板投影、transcript.ts 的每轮缓存明细；其余契约文件不动）',
   contractOutOfScope.length === 0,
-  `越界的契约改动：${contractOutOfScope.join('、') || '（无）'}。本分支只允许这两个文件的增量改动，其它 src/contract/** 文件不许动。`,
+  `越界的契约改动：${contractOutOfScope.join('、') || '（无）'}。本分支只允许 CONTRACT_CHANGE_ALLOWED 里登记的文件做增量改动，其它 src/contract/** 文件不许动。`,
 )
 
 const cssPath = 'src/packages/ui-renderer/ui/styles/legacy/views.css'
