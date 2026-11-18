@@ -52,7 +52,7 @@
     },
     {
       "file": "sync-versions.mjs",
-      "reason": "版本对齐工具：把 src/packages/*/package.json 的 version 推齐到根（文件头 :2-12，用法 :8-10）。全仓没有任何 import/spawn 真的执行它——只在 plugin-standard-check.mjs:285 的报错文案、version-check.mjs:183 的提示与 docs 里被提到，所以不是 E 类；发版时手动跑 --write",
+      "reason": "版本对齐工具：把 src/packages/*/package.json 的 version 推齐到根（文件头 :2-12，用法 :8-10）。全仓没有任何 import/spawn 真的执行它——只在 plugin-standard-check.mjs:285 的报错文案、version-check.mjs:206 的提示与 docs 里被提到，所以不是 E 类；发版时手动跑 --write",
       "owner": "版本口径（包版本对齐工具）",
       "addedAt": "2026-11-18",
       "runBy": "manual"

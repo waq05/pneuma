@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `scripts/law-check.mjs` 的自测：8 条断言，全部在 mkdtempSync 的临时 git 仓库里做，
+ * `scripts/law-check.mjs` 的自测：12 条断言，全部在 mkdtempSync 的临时 git 仓库里做，
  * 跑完删掉（不碰真实检出、不碰 ~/.dsc）。
  *
  * 用 `--root <临时仓库>` 让检查器扫临时仓库；`--root` 是 test-only 参数。
@@ -9,6 +9,9 @@
  *   ③ ui 包 channel.invoke('不存在的方法') → 1；④ desktop protocol.invoke('nope') → 1；
  *   ⑤ 动态调用未登记 → 1；⑥ 无 .git → 2；⑦ --stats 分项之和 = 总数；
  *   ⑧ TSX 文本里的撇号（Don't）不许遮掉同一行的非法 `.invoke`。
+ * ⑨–⑫ 是收口 A 补的 base 语义四条（显式与缺省分开）：
+ *   ⑨ `--base` 不存在 → 2；⑩ `NUMA_LAW_BASE=deadbeef` → 2；
+ *   ⑪ `--base <真实 rev>` → 0；⑫ 没给 base 且只有 `origin/dev` → 0。
  *
  * 输出：每条 PASS/FAIL；失败打印期望 vs 实际与复现命令，最后按失败数退 0/1。
  *
@@ -37,8 +40,11 @@ function put(root, rel, text) {
   fs.writeFileSync(abs, text, 'utf8')
 }
 
-/** 造一个临时仓库：基线提交在 dev 分支上，当前分支是 feat（这样 base=dev 能解析）。 */
-function makeRepo({ withGit = true } = {}) {
+/**
+ * 造一个临时仓库：基线提交在 dev 分支上，当前分支是 feat（这样 base=dev 能解析）。
+ * `remoteDevOnly: true` 时不建本地 dev，只造 `refs/remotes/origin/dev`（模拟 CI 的 detached HEAD）。
+ */
+function makeRepo({ withGit = true, remoteDevOnly = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'numa-law-'))
   for (const dir of BASE_DIRS) fs.mkdirSync(path.join(root, dir), { recursive: true })
   put(root, 'src/core/host-methods.ts', WHITELIST)
@@ -49,14 +55,22 @@ function makeRepo({ withGit = true } = {}) {
     git(root, ['config', 'user.name', 'law-test'])
     git(root, ['add', '-A'])
     git(root, ['commit', '-qm', 'fixture'])
-    git(root, ['branch', '-M', 'dev'])
+    if (remoteDevOnly) {
+      git(root, ['branch', '-M', 'main'])
+      git(root, ['update-ref', 'refs/remotes/origin/dev', 'HEAD'])
+    } else {
+      git(root, ['branch', '-M', 'dev'])
+    }
     git(root, ['checkout', '-qb', 'feat'])
   }
   return root
 }
 
-function run(root, args = []) {
-  const result = spawnSync(process.execPath, [CHECKER, '--root', root, ...args], { encoding: 'utf8' })
+function run(root, args = [], env = {}) {
+  const result = spawnSync(process.execPath, [CHECKER, '--root', root, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  })
   return { code: result.status, out: result.stdout, err: result.stderr }
 }
 
@@ -228,6 +242,67 @@ const CASES = [
         assert.match(result.out, /no\.apos/, '必须报出被撇号遮住的非法方法名')
       } catch (error) {
         failing(error, root, '⑧ JSX 文本撇号不能把同行的 .invoke 遮掉')
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    },
+  ],
+  [
+    '⑨ 显式 --base 不存在 → 2（不许静默回退到 dev）',
+    () => {
+      const root = makeRepo()
+      try {
+        const result = run(root, ['--rule', 'loop-owner', '--base', 'not-a-real-rev'])
+        assert.equal(result.code, 2, `期望退 2，实际 ${result.code}（静默回退就是 bug）`)
+        assert.match(result.err, /指定的 base 不存在：not-a-real-rev/)
+        assert.doesNotMatch(result.out, /基准 dev/)
+      } catch (error) {
+        failing(error, root, '⑨ 显式 base 解析失败必须退 2')
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    },
+  ],
+  [
+    '⑩ 显式 NUMA_LAW_BASE=deadbeef 不存在 → 2',
+    () => {
+      const root = makeRepo()
+      try {
+        const result = run(root, ['--rule', 'loop-owner'], { NUMA_LAW_BASE: 'deadbeef' })
+        assert.equal(result.code, 2, `期望退 2，实际 ${result.code}`)
+        assert.match(result.err, /指定的 base 不存在：deadbeef/)
+      } catch (error) {
+        failing(error, root, '⑩ 显式环境变量 base 解析失败必须退 2')
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    },
+  ],
+  [
+    '⑪ --base <真实 rev> → 0',
+    () => {
+      const root = makeRepo()
+      try {
+        const result = run(root, ['--rule', 'loop-owner', '--base', 'dev'])
+        assert.equal(result.code, 0, `期望退 0，实际 ${result.code}：${result.err}`)
+        assert.match(result.out, /基准 dev/)
+      } catch (error) {
+        failing(error, root, '⑪ 显式 base 存在时必须正常跑')
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    },
+  ],
+  [
+    '⑫ 没给 base + 只有 origin/dev → 0（CI detached HEAD 的回退链）',
+    () => {
+      const root = makeRepo({ remoteDevOnly: true })
+      try {
+        const result = run(root, ['--rule', 'loop-owner'])
+        assert.equal(result.code, 0, `期望退 0，实际 ${result.code}：${result.err}`)
+        assert.match(result.out, /基准 origin\/dev/)
+      } catch (error) {
+        failing(error, root, '⑫ 缺省 base 的回退链不能动')
       } finally {
         fs.rmSync(root, { recursive: true, force: true })
       }

@@ -24,7 +24,11 @@
  * 存在性校验一律按仓库根。否则自测拿临时目录当根时会因为找不到 `PROBES` 而误退 2。
  * 登记表路径由 `--manual` 单独注入，缺省 `<repo>/scripts/probe-manual.json`。
  *
- * 门禁名 `probe-inventory`，命中 `NUMA_GATE_DISABLE` 时打印一行后跳过（退出 0）。
+ * 门禁名 `probe-inventory`，命中 `NUMA_GATE_DISABLE` 时打印一行后跳过（退出 0），不许静默。
+ * 跳过态也守 `--json` 边界：`--json` 时 stdout 只留一份可 `JSON.parse` 的 JSON——
+ * `{version, ok:true, skipped:'probe-inventory', reason:'NUMA_GATE_DISABLE', message}`，
+ * 人读的「已按 NUMA_GATE_DISABLE 跳过 probe-inventory」改走 stderr；人读模式提示留在 stdout。
+ * 口径与 `scripts/ci-coverage-check.mjs:53-70`、`scripts/version-check.mjs:37-52` 一致。
  *
  * 用法：
  *   node scripts/probe-inventory-check.mjs              # 人类可读
@@ -55,12 +59,24 @@ function toolError(message) {
   process.exit(2)
 }
 
+// 统一回退开关（05-acceptance.md §6）：命中就跳过并退 0，不许静默。放在参数解析之前，
+// 这样参数写错也不会挡住这条紧急通道。--json 判定只能直接扫 argv：解析器还没跑。
+// --json 时 stdout 只留 JSON（跳过也走同一形状），跳过提示改走 stderr，免得 JSON.parse 失败。
+const jsonRequested = process.argv.slice(2).includes('--json')
 const disabled = (process.env.NUMA_GATE_DISABLE ?? '')
   .split(',')
   .map((name) => name.trim())
   .filter((name) => name !== '')
 if (disabled.includes(GATE)) {
-  process.stdout.write(`已按 NUMA_GATE_DISABLE 跳过 ${GATE}\n`)
+  const message = `已按 NUMA_GATE_DISABLE 跳过 ${GATE}`
+  if (jsonRequested) {
+    process.stderr.write(`${message}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ version: 1, ok: true, skipped: GATE, reason: 'NUMA_GATE_DISABLE', message }, null, 2)}\n`,
+    )
+  } else {
+    process.stdout.write(`${message}\n`)
+  }
   process.exit(0)
 }
 

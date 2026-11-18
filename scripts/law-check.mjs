@@ -9,11 +9,14 @@
  * 退出码（design/README.md §2.7）：0 通过 / 1 有违规 / 2 无 git、拿不到 base、
  * 读不到文件、参数错。
  *
- * base 解析顺序（F1：CI 的 PR 是 detached HEAD，本地分支名往往不存在）：
- *   `--base` > 环境变量 `NUMA_LAW_BASE`（空串或全零 sha 视为未设）> 本地 `dev`（存在才用）
- *   > `origin/dev`（存在才用）> 退 2。被选中的那个会原样进 `git diff <base>...HEAD`，
- *   所以 `NUMA_LAW_BASE` 既可以是分支名也可以是 CI 传的 sha。
- *   纪律：所有候选都不存在时退 2，不许当「没改动」判 0。
+ * base 取法（F1 + 收口 A）——显式与缺省分开，不许把「显式拼错」静默回退成缺省：
+ *   - 显式给了 `--base` 或非空、非全零的 `NUMA_LAW_BASE`：只认它，解析不到就退 2 并提示
+ *     「指定的 base 不存在：<值>」；`--base` 优先于环境变量；
+ *   - 都没给：回退链 本地 `dev`（存在才用）> `origin/dev`（存在才用）> 退 2，这条专为
+ *     CI 的 PR detached HEAD 设计，不能动；
+ *   - 空串、纯空白、全零 sha 一律视为未设（push 事件给新分支时 before 就是全零 sha）。
+ *   被选中的 rev 原样进 `git diff <base>...HEAD`，所以 `NUMA_LAW_BASE` 既可以是分支名
+ *   也可以是 CI 传的 sha。纪律：拿不到 base 就退 2，不许当「没改动」判 0。
  *
  * `--root <dir>` 是给自测（scripts/law-test.mjs 的临时 git 仓库）用的 test-only 参数；
  * 正常只在仓库根跑，不要拿它指别的目录。
@@ -83,7 +86,8 @@ function usage(rules) {
   return `用法：node scripts/law-check.mjs [--json] [--rule <${rules.map((rule) => rule.id).join('|')}>]
                               [--base <rev>] [--stats] [--root <dir>]
   --root <dir>  test-only：给自测（scripts/law-test.mjs）的临时 git 仓库用；正常在仓库根跑，不要指别的目录
-  base 解析顺序：--base > NUMA_LAW_BASE（空串/全零 sha 视为未设）> 本地 dev > origin/dev > 退 2
+  base 取法：显式给的 --base / NUMA_LAW_BASE（空串、全零 sha 视为未设）只认它，解析不到退 2；
+             都没给时回退 本地 dev > origin/dev > 退 2
 退出码：0 通过 / 1 有违规 / 2 无 git、拿不到 base、读不到文件、参数错`
 }
 
@@ -133,21 +137,34 @@ function revExists(root, rev) {
   }
 }
 
-/**
- * 按 `--base` > `NUMA_LAW_BASE` > `dev` > `origin/dev` 取第一个存在的基准；
- * 一个都不存在就抛错（由主入口退 2，不许当「没改动」）。
- */
-function resolveBase(root, explicitBase) {
-  const candidates = []
-  if (!isUnsetBase(explicitBase)) candidates.push(String(explicitBase).trim())
+/** 显式指定的 base：`--base` 优先于 `NUMA_LAW_BASE`；都算「未设」时返回 null。 */
+function explicitBase(options) {
+  if (!isUnsetBase(options.base)) return { value: String(options.base).trim(), source: '--base' }
   const fromEnv = process.env.NUMA_LAW_BASE ?? ''
-  if (!isUnsetBase(fromEnv)) candidates.push(fromEnv.trim())
-  candidates.push('dev', 'origin/dev')
-  const tried = candidates.filter((rev, index) => candidates.indexOf(rev) === index)
-  for (const rev of tried) if (revExists(root, rev)) return rev
+  if (!isUnsetBase(fromEnv)) return { value: fromEnv.trim(), source: 'NUMA_LAW_BASE' }
+  return null
+}
+
+/**
+ * 显式与缺省分开（收口 A）：
+ * - 显式给了 base：只认它，解析不到就抛错退 2，**不许**静默回退到 dev ——
+ *   否则拼错的 base 会让门禁照样绿，把「没比到」伪装成「没改动」；
+ * - 没给：回退链 `dev` > `origin/dev` > 退 2（CI 的 PR detached HEAD 靠这条活）。
+ */
+function resolveBase(root, options) {
+  const picked = explicitBase(options)
+  if (picked !== null) {
+    if (revExists(root, picked.value)) return picked.value
+    throw new Error(
+      `指定的 base 不存在：${picked.value}（来自 ${picked.source}）；` +
+        '拼错、没 fetch 到、或当前目录不是 git 仓库都会这样，不许回退到别的基线',
+    )
+  }
+  const fallback = ['dev', 'origin/dev']
+  for (const rev of fallback) if (revExists(root, rev)) return rev
   throw new Error(
-    `拿不到基线（试过 ${tried.join(' / ')}）：浅克隆没 fetch 到基线（请把 checkout 设成 fetch-depth: 0），` +
-      '或当前目录不是 git 仓库；也可用 --base 或 NUMA_LAW_BASE 指定',
+    '拿不到基线（没给 --base / NUMA_LAW_BASE，本地 dev 与 origin/dev 也都不存在）：' +
+      '浅克隆没 fetch 到基线（请把 checkout 设成 fetch-depth: 0），或当前目录不是 git 仓库',
   )
 }
 
@@ -286,7 +303,7 @@ async function main(argv) {
   let results
   try {
     const loopRule = selected.find((rule) => rule.id === 'loop-owner')
-    if (loopRule !== undefined && !skipped(loopRule)) base = resolveBase(root, options.base)
+    if (loopRule !== undefined && !skipped(loopRule)) base = resolveBase(root, options)
     const ctx = createCtx(root, base)
     // 三条规则各自只读文件、互不依赖：并发跑；map 顺序 = 规则 id 顺序，输出稳定。
     results = await Promise.all(

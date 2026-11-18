@@ -31,7 +31,8 @@
  *     `{version, stats:{checked:0,baselined:0,violations:0}, skipped:"docs-check", violations:[]}`。
  *
  * 运行：node scripts/docs-check.mjs [--json] [--rule code-path|link] [--root <dir>]
- *   `--root` 只给自测用（fixture 临时目录当仓库根）。
+ *   `--rule` 可叠加：重复传（`--rule code-path --rule link`）或逗号分隔（`--rule code-path,link`），
+ *   按规则并集跑；不传 = 跑全部规则。`--root` 只给自测用（fixture 临时目录当仓库根）。
  *
  * @module dsc/scripts/docs-check
  */
@@ -122,6 +123,8 @@ function normalizeCodePath(raw) {
   value = value.replace(/:\d+(?:[-–~,、/]\d+)*\+?$/, '')
   value = value.replace(/[。，、；：）,.;\]]+$/, '')
   if (value === '' || !value.includes('/')) return null
+  // 依赖目录不是仓库内容：干净检出里没有 node_modules，「引用它」不该判红（与跳过 lib/dist 同口径）。
+  if (/(^|\/)node_modules(\/|$)/.test(value)) return null
   const dirOnly = /[\\/]$/.test(trimmed)
   if (!TOP_LEVEL_DIRS.has(value.split('/')[0].toLowerCase())) return null
   if (/%[0-9a-fA-F]{2}/.test(value)) {
@@ -256,14 +259,23 @@ function loadBaseline(root) {
 }
 
 function parseArgs(argv) {
-  const options = { json: false, rule: null, root: resolve(scriptDir, '..') }
+  const options = { json: false, rules: [], root: resolve(scriptDir, '..') }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === '--json') options.json = true
     else if (arg === '--rule') {
       const value = argv[i + 1]
       if (value === undefined) throw new Error('--rule 缺参数')
-      options.rule = value
+      // 可叠加：`--rule a,b` 或重复传 `--rule a --rule b`，按并集跑（S4 复用同一入口）
+      const names = value
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => name !== '')
+      if (names.length === 0) throw new Error('--rule 缺参数')
+      for (const name of names) {
+        if (!RULES.includes(name)) throw new Error(`规则名不认识：${name}（只认 ${RULES.join(' / ')}）`)
+        if (!options.rules.includes(name)) options.rules.push(name)
+      }
       i += 1
     } else if (arg === '--root') {
       const value = argv[i + 1]
@@ -274,7 +286,6 @@ function parseArgs(argv) {
       throw new Error(`不认识的参数：${arg}`)
     }
   }
-  if (options.rule !== null && !RULES.includes(options.rule)) throw new Error(`规则名不认识：${options.rule}（只认 ${RULES.join(' / ')}）`)
   return options
 }
 
@@ -313,7 +324,7 @@ function main() {
     return 2
   }
 
-  const activeRules = options.rule === null ? RULES : [options.rule]
+  const activeRules = options.rules.length > 0 ? options.rules : RULES
   if (baseline.entries.length > baseline.maxEntries) {
     const violation = {
       file: relative(options.root, baseline.path).split('\\').join('/'),

@@ -1,12 +1,14 @@
 /**
  * `probe-inventory-check.mjs` 的自测：不引测试框架，只用 `node:assert`。
  *
- * 五组断言（对应 design/01-test-bench.md §3 与 05-acceptance.md:39 的 0/1/2 三档）：
+ * 六组断言（对应 design/01-test-bench.md §3 与 05-acceptance.md:39 的 0/1/2 三档）：
  *   ① 临时根只放一条 `zz-orphan-check.mjs` → 退 1 且在输出里点名（B/D 读真仓库根，不会误退 2）；
  *   ② 把它改名成 `zz-orphan-test.mjs` → 退 0（`-test.mjs` 自动进 A 类）；
  *   ③ `--manual` 登记一个不存在的文件 → 退 1 且 `staleEntries` 非空；
  *   ④ `--json` 的 stdout 可 `JSON.parse`、六类之和 + 未归类 == total、`platforms` 三键齐；
- *   ⑤ 参数错（`--bogus`）→ 退 2 且 stderr 有提示（工具错误与断言失败必须分开）。
+ *   ⑤ 参数错（`--bogus`）→ 退 2 且 stderr 有提示（工具错误与断言失败必须分开）；
+ *   ⑥ `NUMA_GATE_DISABLE=probe-inventory` + `--json` → 退 0、stdout 可 parse 且 `skipped`
+ *      是门禁名、跳过提示走 stderr（契约：--json 时 stdout 只有 JSON）。
  *
  * 临时文件全用 `mkdtempSync(join(tmpdir(),'numa-'))` 建、`rmSync` 收；不碰 `~/.dsc`、不联网。
  * 跑法：`node scripts/probe-inventory-check-test.mjs`（`-test.mjs` 命名会让 check-core 自动收它）。
@@ -36,10 +38,10 @@ function writeManual(entries) {
   writeFileSync(manualPath, `${JSON.stringify({ version: 1, entries }, null, 2)}\n`, 'utf8')
 }
 
-/** 跑一次检查脚本；清掉 `NUMA_GATE_DISABLE` 与 `NUMA_RUN_ID`，自测不受外部环境摆布。 */
-function run(extraArgs = []) {
-  const env = { ...process.env }
-  delete env.NUMA_GATE_DISABLE
+/** 跑一次检查脚本；默认清掉 `NUMA_GATE_DISABLE`/`NUMA_RUN_ID`，自测不受外部环境摆布；`extraEnv` 用来模拟跳过态。 */
+function run(extraArgs = [], extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv }
+  if (extraEnv.NUMA_GATE_DISABLE === undefined) delete env.NUMA_GATE_DISABLE
   delete env.NUMA_RUN_ID
   const result = spawnSync(process.execPath, [scriptPath, `--root=${tempRoot}`, `--manual=${manualPath}`, ...extraArgs], {
     encoding: 'utf8',
@@ -91,6 +93,16 @@ try {
   result = run(['--bogus'])
   assert.equal(result.status, 2, `⑤ 未知参数应退 2，实际 ${String(result.status)}\n${result.stderr}`)
   assert.ok(result.stderr.includes('不认识的参数'), `⑤ stderr 应给出参数提示\n${result.stderr}`)
+  passed += 1
+
+  // ⑥ NUMA_GATE_DISABLE 命中 + --json：退 0、stdout 仍是一份可 parse 的 JSON，跳过提示走 stderr。
+  result = run(['--json'], { NUMA_GATE_DISABLE: 'other-gate,probe-inventory' })
+  assert.equal(result.status, 0, `⑥ 跳过态应退 0，实际 ${String(result.status)}\n${result.stderr}`)
+  const skipReport = JSON.parse(result.stdout)
+  assert.equal(skipReport.skipped, 'probe-inventory', '⑥ skipped 应是门禁名')
+  assert.equal(skipReport.ok, true, '⑥ ok 应为 true')
+  assert.equal(skipReport.reason, 'NUMA_GATE_DISABLE', '⑥ reason 应是 NUMA_GATE_DISABLE')
+  assert.ok(result.stderr.includes('已按 NUMA_GATE_DISABLE 跳过 probe-inventory'), '⑥ 跳过提示应在 stderr')
   passed += 1
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })

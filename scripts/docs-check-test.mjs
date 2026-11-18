@@ -13,7 +13,9 @@
  *   6. 参数错误（不认识规则名 / `--root` 不是目录）→ 退出 2；
  *   7. 行内代码里写的豁免注释只是示例，不豁免下一行 → 退出 1；
  *   8. `NUMA_GATE_DISABLE=docs-check` 时整条跳过 → 退出 0、stdout/stderr 有跳过行，
- *      `--json` 跳过态可解析且带 `skipped`；不相关门禁名不跳过（本来红还是红）。
+ *      `--json` 跳过态可解析且带 `skipped`；不相关门禁名不跳过（本来红还是红）；
+ *   9. 引用 `.../node_modules/...` 的路径不判红（干净检出没装依赖也不假红）；
+ *   10. `--rule` 可叠加：逗号分隔与重复传参都按并集跑，两类违规都报；单值用法不变。
  *
  * 运行：node scripts/docs-check-test.mjs
  *
@@ -49,13 +51,19 @@ function writeBaseline(root, baseline) {
 }
 
 /** 跑一次 docs-check，返回 `{status, json}`（`--json` 输出可解析是每次都要验的）。 */
-function run(root, rule) {
-  const result = spawnSync(process.execPath, [script, '--root', root, '--rule', rule, '--json'], {
+function exec(root, args, env = process.env) {
+  const result = spawnSync(process.execPath, [script, '--root', root, ...args, '--json'], {
     cwd: dirname(script),
     encoding: 'utf8',
+    env,
   })
   assert.strictEqual(result.stderr, '', result.stderr)
   return { status: result.status, json: JSON.parse(result.stdout) }
+}
+
+/** 单规则快捷方式。 */
+function run(root, rule) {
+  return exec(root, ['--rule', rule])
 }
 
 function check(name, fn) {
@@ -194,9 +202,49 @@ check('命中门禁名时跳过并打提示，不相关门禁名不跳过', () =
   assert.strictEqual(other.status, 1)
 })
 
+console.log('[9] node_modules 路径不判红 → 0')
+check('干净检出没装依赖也不假红（对照组照常计数）', () => {
+  const root = fixture('h.md', '# h\n\n见 `desktop/node_modules/electron/x.d.ts`（没装依赖时不存在）。\n另：`src/core/real.ts` 是有的。\n')
+  const { status, json } = run(root, 'code-path')
+  assert.strictEqual(status, 0)
+  assert.strictEqual(json.stats.violations, 0)
+  // node_modules 那条被跳过，不进入候选计数；对照组（真实存在的文件）照常算 1
+  assert.strictEqual(json.stats.checked, 1)
+})
+
+console.log('[10] --rule 可叠加 → 两类违规都报')
+check('逗号分隔与重复传参等价，单值用法不变', () => {
+  const root = fixture('i.md', '# i\n\n`src/core/foo.ts`\n[断链](../nope.md)\n')
+  const comma = exec(root, ['--rule', 'code-path,link'])
+  assert.strictEqual(comma.status, 1)
+  assert.strictEqual(comma.json.stats.violations, 2)
+  assert.deepStrictEqual(
+    [...new Set(comma.json.violations.map((violation) => violation.rule))].sort(),
+    ['code-path', 'link'],
+  )
+  const repeated = exec(root, ['--rule', 'code-path', '--rule', 'link'])
+  assert.strictEqual(repeated.status, 1)
+  assert.strictEqual(repeated.json.stats.violations, 2)
+  // 单值用法不变：只报自己那一类
+  const onlyPath = run(root, 'code-path')
+  assert.strictEqual(onlyPath.status, 1)
+  assert.strictEqual(onlyPath.json.stats.violations, 1)
+  assert.strictEqual(onlyPath.json.violations[0].rule, 'code-path')
+  const onlyLink = run(root, 'link')
+  assert.strictEqual(onlyLink.status, 1)
+  assert.strictEqual(onlyLink.json.violations[0].rule, 'link')
+  // 叠加列表里有一个不认识的名字 → 照旧退 2
+  const bad = spawnSync(process.execPath, [script, '--root', root, '--rule', 'code-path,nope'], {
+    cwd: dirname(script),
+    encoding: 'utf8',
+  })
+  assert.strictEqual(bad.status, 2)
+  assert.match(bad.stderr, /规则名不认识：nope/)
+})
+
 console.log(
   failed === 0
-    ? `\n8 条断言全部通过（${String(passed)}/${String(passed + failed)}）`
+    ? `\n10 条断言全部通过（${String(passed)}/${String(passed + failed)}）`
     : `\n${String(failed)}/${String(passed + failed)} 条断言失败`,
 )
 process.exit(failed === 0 ? 0 : 1)

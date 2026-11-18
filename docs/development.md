@@ -661,10 +661,10 @@ pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconf
 
 # ── 探针通道（Vitest 表达不了的那批；不是主入口）────────────────────────────
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 42 条纯 Node 探针（含插件产物审计 / 源码文本闸，jsdom 与渲染层够不到）
-pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
+pnpm run check:ui                  # 49 条纯 Node 探针（含插件产物审计 / 源码文本闸，jsdom 与渲染层够不到）
+pnpm run check:ui:e2e              # 8 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 7 条 Node 侧探针（ESM 缓存戳 / 源码文本 / 文档闸），见 testing-backlog §三
+pnpm run check:core                # 16 条 Node 侧探针（ESM 缓存戳 / 源码文本 / 文档闸 + 第 0 批新增 5 条门禁自测），见 testing-backlog §三
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
 pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（--strict）+ 包标准硬项 + 清单快照 + 组合门禁（77 包/63 实挂）+ 换包 e2e；原来的「89 个包用例 / 92 条加载器探针 / 15 条 list 探针」已迁进 Vitest，不再挂在这里
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
@@ -672,7 +672,7 @@ pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / B
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # style + plugin + ui + dsh + core + remote + probe-inventory 串起来（不含 ui:e2e）
 pnpm run check:p0                  # P0 定点门禁：19 条 <话题>-check.mjs 依次跑，任一条红就退非零（不并入 check:all）
-# ── 新增的四条台账/规格门禁（第 0 批，2026-11-18 落地；推门三步在 verify.yml 的 core job）──────
+# ── 新增的五条台账/规格门禁（第 0 批，2026-11-18 落地；推门三步在 verify.yml 的 core job）──────
 pnpm run law                       # 三条铁律：src/core 不引界面依赖 / 界面只调 INVOKABLE_METHODS / 功能分支不许改 loop.ts
 pnpm run ci-coverage               # 门禁台账 scripts/gate.json 与 workflow 对账：check:* 都有归属、push/nightly 都真跑
 pnpm run probe-inventory           # 探针孤儿台账：scripts/*.mjs 必须落进六类之一（登记表 scripts/probe-manual.json）
