@@ -100,7 +100,10 @@ function runApply(): Harness {
         return () => {}
       },
     },
-    prompt: { register: () => () => {} },
+    prompt: {
+      register: () => () => {},
+      registerProjection: () => () => {},
+    },
     transcript: { system: () => {} },
     approval: { decide: async () => 'allow' },
     session: {

@@ -6,7 +6,8 @@
 
 - 注册工具 `schedule`：action 七选一 create / list / update / run / delete / pause / resume，规则六种写法 after / at / every / daily / weekly / cron（五字段 Vixie，拒绝 L/W/# 与秒字段），risk 标 write（index.ts:240-272）。
 - 命令 `/schedule`：list / add <选择器> <标题> / pause|resume|run|remove <id前缀>（index.ts:357-358）。
-- 提示词贡献：一段 order 41 的系统提示，只在「总开关开着且至少有一条启用任务」时出现，最多列 12 条任务与下次时间（index.ts:440-460）。
+- 提示词贡献：一段 order 41 的系统提示，只在「总开关开着且至少有一条启用任务」时出现；正文是**静态**说明（来源、授权边界、用 `action=list` 查），不列任务标题与下次时间（index.ts:86-105、498-511）。
+- 任务清单与「有几个启用任务」走尾部投影（order 630）：在同一条件下往请求末尾追加一条 user 消息，没任务时不发（index.ts:513-552）。
 - 那段提示同时交代规矩：以「【定时任务触发】」开头的消息不是用户当下指令、不构成授权，需要授权的动作照常走审批（index.ts:452-457）。
 - 投递前还会问 `ctx.waiting.anyFor(目标会话 id)` 这条会话有没有人在等（不是全进程的 `any`：别的会话挂着审批卡不该挡住这条排期）；目标会话取建任务那一个，用户切走也回原来的对话（文件头 11，index.ts:227）。
 - 停用之后，模型侧少掉 `schedule` 工具与那段任务清单：它排不了新任务，也读不到现有排期（index.ts:240-354、440-461）。

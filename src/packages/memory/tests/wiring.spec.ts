@@ -32,6 +32,16 @@ interface CapturedPrompt {
   options?: Record<string, unknown>
 }
 
+interface CapturedProjection {
+  id: string
+  apply: (
+    messages: Array<{ role: string; content: string }>,
+    session?: unknown,
+    report?: (view: Record<string, unknown>) => void,
+  ) => Array<{ role: string; content: string }>
+  options?: Record<string, unknown>
+}
+
 interface CapturedCommand {
   spec: { name: string; args?: string; description?: string }
   run: (input: { args: string[]; ui: { notice: (text: string) => void } }) => void
@@ -68,6 +78,9 @@ interface Harness {
   ctx: Record<string, unknown>
   tools: CapturedTool[]
   prompts: CapturedPrompt[]
+  projections: CapturedProjection[]
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  states: Array<{ id: string; payload: unknown }>
   commands: CapturedCommand[]
   sections: CapturedSection[]
   service: MemoryServiceLike
@@ -80,6 +93,8 @@ interface Harness {
   session: {
     meta: { id: string; cwd: string }
     messages: Array<{ role: string; content: string }>
+    state: (id: string) => unknown
+    appendState: (id: string, payload: unknown) => void
   }
   setCwd: (cwd: string) => void
   setMessages: (messages: Array<{ role: string; content: string }>) => void
@@ -144,6 +159,9 @@ function newWorkspace(): string {
 function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } = {}): Harness {
   const tools: CapturedTool[] = []
   const prompts: CapturedPrompt[] = []
+  const projections: CapturedProjection[] = []
+  const states: Array<{ id: string; payload: unknown }> = []
+  const stateMap = new Map<string, unknown>()
   const commands: CapturedCommand[] = []
   const sections: CapturedSection[] = []
   const notices: string[] = []
@@ -159,6 +177,11 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
   harness.session = {
     meta: { id: 'mem-session', cwd: options.cwd ?? newWorkspace() },
     messages: [],
+    state: (id: string) => stateMap.get(id),
+    appendState: (id: string, payload: unknown) => {
+      stateMap.set(id, payload)
+      states.push({ id, payload })
+    },
   }
 
   const ctx = {
@@ -175,6 +198,14 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
     prompt: {
       register(id: string, render: () => string, opts?: Record<string, unknown>) {
         prompts.push({ id, render, ...(opts === undefined ? {} : { options: opts }) })
+        return () => undefined
+      },
+      registerProjection(
+        id: string,
+        apply: CapturedProjection['apply'],
+        opts?: Record<string, unknown>,
+      ) {
+        projections.push({ id, apply, ...(opts === undefined ? {} : { options: opts }) })
         return () => undefined
       },
     },
@@ -224,6 +255,8 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
   harness.ctx = ctx
   harness.tools = tools
   harness.prompts = prompts
+  harness.projections = projections
+  harness.states = states
   harness.commands = commands
   harness.sections = sections
   harness.notices = notices
@@ -273,6 +306,17 @@ function runCommand(harness: Harness, args: string[]): string[] {
   return said
 }
 
+/** 跑一次尾部投影（memory-index）；返回追加的那条 user 消息正文，没注入时 undefined。 */
+function tail(harness: Harness): string | undefined {
+  const projection = harness.projections.find((entry) => entry.id === 'memory-index')
+  expect(projection, '缺 memory-index 投影').toBeDefined()
+  const messages = [{ role: 'system', content: '系统提示' }, ...harness.session.messages]
+  const out = projection!.apply(messages)
+  if (out.length === messages.length) return undefined
+  const last = out.at(-1)
+  return last?.role === 'user' ? String(last.content) : undefined
+}
+
 function globalFile(): string {
   return join(HOME, 'memory', 'global', 'MEMORY.md')
 }
@@ -302,7 +346,11 @@ describe('注册面', () => {
     expect(tool.risk).toBe('write')
     expect(tool.parameters['required']).toBeUndefined()
     expect(harness.prompts.map((prompt) => prompt.id)).toEqual(['memory'])
-    expect(harness.prompts[0]?.options).toMatchObject({ order: 60, block: 'agents-md' })
+    expect(harness.prompts[0]?.options).toMatchObject({ order: 60 })
+    // 2026-11 P0：记忆索引正文不再并进 agents-md 块，改由尾部投影（order 610）追加。
+    expect(harness.prompts[0]?.options?.['block']).toBeUndefined()
+    expect(harness.projections.map((projection) => projection.id)).toEqual(['memory-index'])
+    expect(harness.projections[0]?.options).toMatchObject({ order: 610 })
     expect(harness.commands.map((command) => command.spec.name)).toEqual(['memory'])
     expect(String(harness.commands[0]?.spec.args)).toContain('eval')
     expect(harness.sections[0]).toMatchObject({ id: 'memory', order: 35 })
@@ -366,7 +414,7 @@ describe('注册面', () => {
 })
 
 describe('工具写入与读回', () => {
-  test('add 真落盘、快照立刻更新、下一份提示词带一次性过期提醒', async () => {
+  test('add 真落盘、快照立刻更新、尾部投影带过期提醒且两次调用逐字相同', async () => {
     const harness = fakeCtx()
     const content = `本仓库使用 pnpm-${String(Date.now())}`
     const result = await runTool(harness, { target: 'memory', action: 'add', content })
@@ -375,12 +423,22 @@ describe('工具写入与读回', () => {
     expect(readFileSync(globalFile(), 'utf8')).toContain(content)
     expect(harness.service.cells().find((cell) => cell.target === 'global')?.entries).toContain(content)
 
-    const first = harness.prompts[0]!.render()
+    const first = tail(harness)
     expect(first).toContain(content)
     expect(first).toContain('记忆副本已过期')
-    const second = harness.prompts[0]!.render()
-    expect(second).toContain(content)
-    expect(second).not.toContain('记忆副本已过期')
+    // 尾消息最后一行是固定标记句（P1 靠它排除合成的 user 消息）。
+    expect(first?.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
+    // 留底按正文哈希去重：同一段正文只落一条会话状态。
+    expect(harness.states.filter((item) => item.id === 'memory-index')).toHaveLength(1)
+    // 投影链对同一请求会跑两遍（真请求 + invariant 重建）：必须逐字相同，且不追写状态。
+    expect(tail(harness)).toBe(first)
+    expect(harness.states.filter((item) => item.id === 'memory-index'), '同正文不追写').toHaveLength(1)
+    // 回合结束才清掉提醒；索引本身仍在。提醒消失 = 正文变了，再落一条状态。
+    harness.handlers.get('dsc/turn-end')?.('completed')
+    const after = tail(harness)
+    expect(after).toContain(content)
+    expect(after).not.toContain('记忆副本已过期')
+    expect(harness.states.filter((item) => item.id === 'memory-index'), '正文变了再落一条').toHaveLength(2)
   })
 
   test('别名归一：memory/global/project 都落全局，profile 落用户，cwd 落工作区', async () => {
@@ -521,10 +579,10 @@ describe('提示词、注入计数与自动复盘', () => {
       await runTool(harness, { target: 'global', action: 'add', content: `${tag}-条目${String(index)}` })
     }
     const before = readUsageFile()
-    const prompt = harness.prompts[0]!.render()
-    expect(prompt).toContain(`${tag}-条目1`)
+    const injectedText = tail(harness)
+    expect(injectedText).toContain(`${tag}-条目1`)
     // 同一回合里重复组装：注入计数只记一次。
-    harness.prompts[0]!.render()
+    tail(harness)
     const first = readUsageFile()
     const bumped = Object.keys(first).filter(
       (key) => (first[key]!.injected ?? 0) === ((before[key]?.injected ?? 0) + 1),
@@ -532,7 +590,7 @@ describe('提示词、注入计数与自动复盘', () => {
     expect(bumped.length, '这一回合至少有一条条目真的进了提示词').toBeGreaterThan(0)
 
     harness.handlers.get('dsc/turn-end')?.('completed')
-    harness.prompts[0]!.render()
+    tail(harness)
     const second = readUsageFile()
     for (const key of bumped) {
       expect(second[key]?.injected ?? 0, `${key} 下一回合应再记一次`).toBe((first[key]?.injected ?? 0) + 1)

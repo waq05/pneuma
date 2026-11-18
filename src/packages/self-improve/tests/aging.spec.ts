@@ -242,7 +242,10 @@ function mountCurator(config: Record<string, unknown> = {}): Curator {
     guards: { register: () => () => {} },
     commands: { register: () => () => {} },
     settings: { registerSection: () => () => {} },
-    prompt: { register: () => () => {} },
+    prompt: {
+      register: () => () => {},
+      registerProjection: () => () => {},
+    },
     transcript: { system: (text: string) => said.push(text) },
     approval: { decide: async () => 'allow' },
     skills: { setEnabled: () => ({ ok: true }) },

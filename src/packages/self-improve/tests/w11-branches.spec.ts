@@ -116,7 +116,10 @@ function mount(options: Options = {}): Harness {
       },
     },
     settings: { registerSection: () => () => undefined },
-    prompt: { register: () => () => undefined },
+    prompt: {
+      register: () => () => undefined,
+      registerProjection: () => () => undefined,
+    },
     session: { current: () => session },
     transcript: { system: (text: string) => noticeLines.push(text) },
     approval: { decide: async () => 'allow-once' },

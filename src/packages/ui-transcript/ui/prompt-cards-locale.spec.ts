@@ -3,7 +3,7 @@
  * `scripts/ui-prompt-cards-test.mjs` 第 [6] 段）。
  *
  * 报障背景：两张卡的次数、段数、hash、来源位置全部取自字典；翻丢了占位符或键名写错，
- * 界面会把「{count}」或键名原样摆出来。27 个键在 zh / en 必须都在、键集一致、英文真译过、
+ * 界面会把「{count}」或键名原样摆出来。31 个键在 zh / en 必须都在、键集一致、英文真译过、
  * 占位符两边同名同数量——这些对着字典本身查（locale JSON 是运行时读的数据，不是源码），
  * 与 `compaction-locale.spec.ts` 同一手法。
  *
@@ -27,11 +27,11 @@ const PREFIXES = ['transcript.prompt.', 'transcript.injection.']
 const keysOf = (dict: Record<string, unknown>): string[] =>
   Object.keys(dict).filter((key) => PREFIXES.some((prefix) => key.startsWith(prefix))).sort()
 
-describe('两张卡一共 28 个键（2026-11-11 起含注入卡的 newOnlyTip；2026-11-18 起含团队板快照标签）', () => {
-  test('中文与英文表里正好 28 个，且键集逐项一致（缺译 / 多键都不放过）', () => {
+describe('两张卡一共 31 个键（2026-11-11 起含注入卡的 newOnlyTip；2026-11-18 起含团队板快照与 P0 三个尾部注入标签）', () => {
+  test('中文与英文表里正好 31 个，且键集逐项一致（缺译 / 多键都不放过）', () => {
     const zhKeys = keysOf(zh)
     const enKeys = keysOf(en)
-    expect(zhKeys).toHaveLength(28)
+    expect(zhKeys).toHaveLength(31)
     expect(zhKeys).toEqual(enKeys)
   })
 

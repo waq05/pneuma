@@ -124,7 +124,10 @@ function fakeCtx(options: { cwd?: string } = {}): Harness {
         return () => undefined
       },
     },
-    prompt: { register: () => () => undefined },
+    prompt: {
+      register: () => () => undefined,
+      registerProjection: () => () => undefined,
+    },
     commands: {
       register(spec: CapturedCommand['spec'], run: CapturedCommand['run']) {
         commands.push({ spec, run })
