@@ -1,25 +1,7 @@
 {
   "version": 1,
-  "maxEntries": 31,
+  "maxEntries": 28,
   "entries": [
-    {
-      "rule": "code-path",
-      "file": "docs/bugs.md",
-      "value": "desktop/shots/out/feat-bash-card.png",
-      "reason": "截图产物目录 desktop/shots/** 被 .gitignore 忽略，只在真机跑过时存在，检出后必然没有"
-    },
-    {
-      "rule": "code-path",
-      "file": "docs/bugs.md",
-      "value": "desktop/out",
-      "reason": "desktop/out 是 electron-vite 构建产物目录（不入库），检出后不存在"
-    },
-    {
-      "rule": "code-path",
-      "file": "docs/bugs.md",
-      "value": "desktop/shots/out/feat-settings.png",
-      "reason": "截图产物目录 desktop/shots/** 被 .gitignore 忽略，只在真机跑过时存在"
-    },
     {
       "rule": "code-path",
       "file": "docs/bugs.md",
