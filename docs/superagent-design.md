@@ -1,4 +1,8 @@
 # superagent 接入 DSC：详细设计与开发规划
+<!-- docs-check:external: docs/00 -->
+<!-- docs-check:external: src/app/ -->
+<!-- docs-check:external: src/policy.ts -->
+<!-- docs-check:external: tests/policy.spec.ts -->
 
 本文档是 [dsh-superagent](https://github.com/) 接入 Pneuma（numa）的落地设计。上游原型是一套跑在
 DeepSeek Harness 上的「主动型编码智能体」，本文只讨论**移植到 DSC 之后长什么样、怎么建**。
@@ -1378,7 +1382,7 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
 
 - 为什么先这 5 个：`route` 是接受、挂靠、忽略、停止候选的唯一正路，现在只有面板按钮；`reply` 是
   worker 答案回到人的那条路；`read` 与 `ticket_status` 是模型判断前要看的现场。
-- 改哪些：新增 `src/packages/superagent/main-tools.ts`（与 `tools.ts` 同构：一个
+- 改哪些：新增 `src/packages/superagent/app/tools/main.ts`（与 `tools.ts` 同构：一个
   `createXxxTool(deps)` 一个文件内函数，依赖面收窄到一个「主会话端口」）；`runtime.ts` 加这个
   端口（九个引擎方法的薄包装 + 读快照 + `isWorkerSession`）；`index.ts` 里 `ctx.tools.register`。
 - **worker 不会被污染**：执行器的工具目录是按 `WORKER_TOOL_NAMES` 白名单挑的
@@ -1388,7 +1392,7 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
 - **主会话怎么认**：`project` 的第二个参数是 `AgentScope`（`src/packages/tools/index.ts:44-47`），
   按它判「这条会话是不是 superagent 的 worker」；工具内部再用 `ctx.sessionId` 兜一道
   （不是 worker 会话就抛一句人话），两道都过不了才是干净。
-- 验收：`tests/main-tools.test.mjs`，至少覆盖 route 四个分支（accept / attach / ignore / stop）、
+- 验收：`src/packages/superagent/tests/tools.test.mjs`，至少覆盖 route 四个分支（accept / attach / ignore / stop）、
   一个被拒的分支（`UserError` 转成 `refused` 而不是抛出去）、`requestStatus` 只对 idle 工单生效
   返回 true。全部用假 Engine，不起真会话。
 

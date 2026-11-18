@@ -4,8 +4,8 @@
 
 - 一句话：Pneuma（numa）是终端 AI 编程助手——自研 ReAct loop + cordis 插件装配 + ink 界面 + Electron 桌面 + 手机遥控。入口 `bin/dsc.js`；改 `src/core/` 前先读 [development.md](docs/development.md)。
 - 三层铁律（[development.md:40](docs/development.md)）：`src/core/` 不出现 ink / electron / react；界面只调 `host-stdio` 白名单（`INVOKABLE_METHODS`）；新功能挂 cordis 扩展点，不改 `session-core/loop.ts`。
-- 命令：装 `pnpm install`；改 `src/**` 跑 `pnpm run build`；改桌面跑 `pnpm --dir desktop typecheck`；全量 `pnpm run check:all` 归 CI。
-- 版本：根 `package.json`、`desktop/package.json`、git tag 三处对齐，tag 从 `main` 打。
+- 命令：装 `pnpm install`；改 `src/**` 跑 `pnpm run build`；改桌面跑 `pnpm --dir desktop typecheck`；推门跑 `typecheck / typecheck:spec / check:style / law / ci-coverage / probe-inventory / test`，夜跑跑探针，本地全量 `pnpm run check:all`。
+- 版本：根 / `desktop` / `ui-shell` 三处 `package.json` 与 git tag 对齐，外加 `src/packages/*/package.json` 一组包；清单见 `scripts/version-sites.json`，自证跑 `node scripts/version-check.mjs --tag <版本>`。tag 从 `main` 打。
 
 ## 2 两种指令，别混
 

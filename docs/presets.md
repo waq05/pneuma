@@ -69,7 +69,7 @@ PTC 档的真实口径是「全量减去插件管理」，而全量清单随插�
    看的是命令行与权限模式，不看模式。
 2. **默认档必须等价于「没有模式这个概念」。** 标准模式的工具投影是恒等映射、提示段是空串，
    所以系统提示词逐字节不变（服务端提示缓存只认前缀，默认档一变就等于全失效）。
-   自检里有相关断言（`scripts/sandbox-parity-test.mjs` 的 [4] 组：标准档是全量工具、不替换人格）。
+   自检里有相关断言（`tests/integration/sandbox-parity.int.spec.ts` 的 [4] 组：标准档是全量工具、不替换人格）。
 3. **坏文件不许把启动拦下来。** frontmatter 解析不了、`drop` 写了不认识的段、两个文件声明了同一个名字——
    都只是列出来时带一句 `problem`，模型仍按标准档跑。
 4. **模式与权限/协作那几根旋钮互不越界**：
@@ -134,6 +134,6 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 | `src/packages/runtime-api/index.ts` | 创造模式的 `runtime_api` 只读查询 |
 | `src/packages/ui-settings/ui/presets.tsx` | 设置 → 模式的卡片与就地表单 |
 | `src/packages/ui-composer/ui/ui.tsx` | 输入框下方那颗模式旋钮 |
-| `scripts/sandbox-parity-test.mjs` | 四档模式与权限预设对齐 dsh 的回归（PTC 全量、极简 read_image、顺序、持久化） |
+| `tests/integration/sandbox-parity.int.spec.ts` | 四档模式与权限预设对齐 dsh 的回归（PTC 全量、极简 read_image、顺序、持久化） |
 | `src/packages/tools-default/image-tool.ts` | 极简档专用的 `read_image` |
 | `desktop/shots/presets-shots.ps1` | 界面截图与 DOM 测量 |

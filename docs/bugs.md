@@ -113,7 +113,7 @@
 
 **真正的原因**：宿主（`src/packages/sandbox/index.ts:224`）建的私有临时目录是
 `sandboxTmpDir(DSC_HOME, cwd, currentSessionId())`，**带会话 id**；受限令牌后端要授权的却是
-`sandboxTmpDir(DSC_HOME, root)`（[backend.ts:206](src/packages/sandbox/win/backend.ts#L206)），
+`sandboxTmpDir(DSC_HOME, root)`（[backend.ts:206](../src/packages/sandbox/win/backend.ts#L206)），
 **不带会话 id = 工作区哈希**。后端自己算出来的那个目录谁都没建过，`GetNamedSecurityInfoW`
 返回 Win32 错误 2（找不到文件），`ensureAuthorized` 就整条降级——第一次跑命令必然如此。
 
@@ -123,7 +123,7 @@
 **改了什么**：`ensureAuthorized` 在打 ACL 之前只给**私有临时目录**（`side === 'temp'`）`mkdirSync`，
 建不出来才降级，理由写明是哪条路径；工作区与附加根**不替用户建**（它们是既有路径，配错了要让人
 看见，别悄悄造目录再打上可继承的低完整性标签）。
-（[backend.ts:279-303](src/packages/sandbox/win/backend.ts#L279-L303)）
+（[backend.ts:279-303](../src/packages/sandbox/win/backend.ts#L279-L303)）
 
 **怎么验的**
 
@@ -172,12 +172,12 @@
 
 **初步定位**（推测，两条都要排）
 
-1. 切页后立刻被踢回：[ui-sessions/ui.tsx:220](src/packages/ui-sessions/ui/ui.tsx#L220)
+1. 切页后立刻被踢回：[ui-sessions/ui.tsx:220](../src/packages/ui-sessions/ui/ui.tsx#L220)
    `if (page !== null && !pageEntry) setShellPage(null)`；`pageEntry` 来自
    `usePageEntryAvailable(page ?? '')`（同文件 `:167`），判据是 `frame.graph.entries.some(e => e.id === entryId)`，
    **精确等值**。而两个页在槽里的 id 是 `plugins.page` / `skills.page`
-   （[ui-plugins/ui/ui.tsx:147](src/packages/ui-plugins/ui/ui.tsx#L147)、
-   [ui-skills/ui/ui.tsx:120](src/packages/ui-skills/ui/ui.tsx#L120)），传进去的却是 `'plugins'` / `'skills'`。
+   （[ui-plugins/ui/ui.tsx:147](../src/packages/ui-plugins/ui/ui.tsx#L147)、
+   [ui-skills/ui/ui.tsx:120](../src/packages/ui-skills/ui/ui.tsx#L120)），传进去的却是 `'plugins'` / `'skills'`。
    如果 `entries` 里没有这些短名，守卫就会在 effect 里立刻把页踢回 null——与「按下即回滚、一次都没点亮」吻合。
 2. 点击没进到 React：按钮的 `onClick` 绑的是 `setShellPage(...)`；`el.click()` 与真实鼠标都试过，
    若 handler 根本没跑，采样也应该一次都不变（与观察一致）。区分这两条最省事的办法是在 handler
@@ -208,7 +208,7 @@
 `getSnapshot()` 读到的也一直是 null。
 
 **改了什么**：state 里存**启动图帧**，每次渲染现算「在不在」，entryId 与答案不会再错位
-（[ui-sessions/ui/ui.tsx:167-190](src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留
+（[ui-sessions/ui/ui.tsx:167-190](../src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留
 （现在是同文件第 226 行，修前在第 220 行）。
 
 **怎么验的**
@@ -269,7 +269,7 @@
 `src/packages/log/README.md:40` 写的是「设置 → 运行日志」能改，文档与界面这一处对不上。
 
 **改了什么**：`ctx.settings.registerSection(section, { inSettings: true })`
-（[log/index.ts:349](src/packages/log/index.ts#L349)），并就近写清为什么必须声明。
+（[log/index.ts:349](../src/packages/log/index.ts#L349)），并就近写清为什么必须声明。
 
 **怎么验的**
 
@@ -319,7 +319,7 @@
 **改了什么**：走的是「后端复用同一个函数」那条路——`writeRootsFor` 里对每条附加根调用
 `canonicalizePath(…, { cwd })`（与 `policy.ts` 的 `createPolicy` 同一个函数、同一个 cwd），
 拿到绝对路径再派生能力 SID、再交给 `grantWrite`
-（[backend.ts:216-231](src/packages/sandbox/win/backend.ts#L216-L231)）。
+（[backend.ts:216-231](../src/packages/sandbox/win/backend.ts#L216-L231)）。
 
 为什么不在 `sandbox/index.ts` 提前绝对化：那里有两个入口（策略快照与受限令牌后端），
 只要有一个漏了就会重现同一个 bug；放在 `writeRootsFor` 里是「产出可写根的那一处」，
@@ -330,7 +330,7 @@
 `cwd` 自己也过一遍同一个函数：会话从 junction / 符号链接进来时（`D:\link\proj` 实际指
 `E:\data\proj`），cwd 按原串、附加根按真实拼法，同一个目录会变成两条根。这一条留给
 「同一条路径只该有一个身份」，不是防 runner 退 127——runner 的 `verifySidForPath`
-（[runner-entry.ts:300-306](src/packages/sandbox/win/runner-entry.ts#L300-L306)）用的是
+（[runner-entry.ts:300-306](../src/packages/sandbox/win/runner-entry.ts#L300-L306)）用的是
 `--root` 收到的那个串原样复算，宿主怎么拼它就怎么算，对不上是不可能的；上一版文档里
 「runner 按 realpath 复算，对不上会退 127」这句是错的，复核时纠正了。
 
@@ -381,7 +381,7 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
 ### 修复（2026-11-17）
 
 **改了什么**：插件层改用后端导出的 `canonicalWriteCwd` 算临时目录
-（[index.ts:224](src/packages/sandbox/index.ts#L224)），`currentSessionId` 这个帮手随之删掉。
+（[index.ts:224](../src/packages/sandbox/index.ts#L224)），`currentSessionId` 这个帮手随之删掉。
 现在「策略层放行 / 界面显示 / 后端授权 / 子进程 TMP」是同一个路径。
 
 **怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据

@@ -1,5 +1,7 @@
 # dsh-superagent 架构图与数据流图
 
+<!-- docs-check:ignore-file: 整篇描述上游原型仓库 D:\code\dsh-superagent-prototype，文中 文件:行号 都是相对那个仓库根，本仓没有这些文件，属整篇外来内容 -->
+
 > 阅读对象：`D:\code\dsh-superagent-prototype`（研究原型，单提交）。
 > 本文的图用 Mermaid 语法书写，需要支持 Mermaid 的查看器（VS Code + Markdown Preview Mermaid、Typora、GitHub、Obsidian 均可）。当前 DSH Web 面板不渲染 Mermaid。
 > 文中 `文件:行号` 都是相对仓库根目录的定位。
