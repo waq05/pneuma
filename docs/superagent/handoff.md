@@ -1,5 +1,8 @@
 # superagent 交接
 
+<!-- docs-check:external: src/app -->
+<!-- docs-check:external: src/sources -->
+
 > 写于 2026-11-14，分支 `feat/pluginization`。
 > 给下一个接手的会话：这页只写「现在是什么状态、还差什么、怎么验」，机制细节指向设计文档与源码。
 > 文中 `commit` 短哈希都还在分支上，`git show <哈希>` 能回到那一刀。

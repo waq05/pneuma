@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "file": "dsh-real-package-e2e.mjs",
+      "reason": "真包验收（要联网装 dsh-cost-meter）。文件头 :9-14 写明有意不进 check:dsh；手动跑法见 docs/development.md:681；docs/testing-backlog.md:103 的 B59 记录它此前没有门禁",
+      "owner": "dsh 插件桥 / 真包验收",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "dup-scan.mjs",
+      "reason": "函数体重复扫描工具，2026-10-28 全仓审查的主力工具（文件头 :2-8）；用法在 :17-21 是手动给目录与 --strict，出处 docs/archive/code-review-2026-10-28.md:975",
+      "owner": "代码审查工具（全仓重复扫描）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "ui-fold-fix-fake-llm.mjs",
+      "reason": "折叠三缺陷截图用例的假模型端点（文件头 :2-8）。上游是 PowerShell 编排 scripts/ui-fold-fix-shots.ps1:200，E 类只认 .mjs 字面量引用，所以必须人工登记",
+      "owner": "ui-shell 折叠卡截图链（假模型端点）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "ui-fold-fix-web.mjs",
+      "reason": "折叠三缺陷截图的网页半启动器（文件头 :2-10）：起隔离宿主、打印 READY <url> 后由 agent 浏览器手动截图，没有 .mjs 上游",
+      "owner": "ui-shell 折叠卡截图链（网页半宿主）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "ui-fold-prefs-shots.mjs",
+      "reason": "折叠两个新设置项（collapseTiming / foldedReplies）的截图宿主（文件头 :2-18）：手动起服务，输出 READY 后由截图方杀进程，没有 .mjs 上游",
+      "owner": "ui-shell 折叠偏好截图链（设置项截图宿主）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "ui-hmr-machine.mjs",
+      "reason": "真机热更走查（文件头 :1-22），要真 Electron 且会改源码再还原；check-ui.mjs:14-15 与 check-core.mjs:29 的注释写明有意不进自动档，手动跑",
+      "owner": "ui-shell 热更（真机走查）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "ui-sweep.mjs",
+      "reason": "真 Electron 功能走查（文件头 :1-10：临时 HOME + 假模型端点 + 逐项点击截图）；跑法在 :9，依赖 build 与 build:ui 产物，属于手动真机档",
+      "owner": "ui-shell 功能走查（真 Electron 截图）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    },
+    {
+      "file": "sync-versions.mjs",
+      "reason": "版本对齐工具：把 src/packages/*/package.json 的 version 推齐到根（文件头 :2-12，用法 :8-10）。全仓没有任何 import/spawn 真的执行它——只在 plugin-standard-check.mjs:285 的报错文案、version-check.mjs:206 的提示与 docs 里被提到，所以不是 E 类；发版时手动跑 --write",
+      "owner": "版本口径（包版本对齐工具）",
+      "addedAt": "2026-11-18",
+      "runBy": "manual"
+    }
+  ]
+}

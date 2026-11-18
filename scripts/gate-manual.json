@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "entries": {
+    "check:p0": {
+      "kind": "manual",
+      "reason": "依赖真沙箱、真宿主进程与 Windows PATH/PATHEXT 语义，混进 check:all 会让别人的机器出与代码无关的红；只登记不自动跑。",
+      "ref": "scripts/check-p0.mjs:5-12",
+      "owner": "内核"
+    },
+    "check:remote": {
+      "kind": "manual",
+      "reason": "要真起 headless 宿主、真听端口，CI 的端口与时序比本机不稳；目前只在本地 check:all 里跑，没进 verify.yml 与 release.yml。",
+      "ref": "docs/development.md:796-797",
+      "owner": "远程"
+    },
+    "check:dsh": {
+      "kind": "manual",
+      "reason": "verify.yml 夜跑的 probe job 只跑 check:core / check:ui / test:built / check:plugin / check:ui:e2e，check:dsh 还没接进任何 workflow，只能本机手动跑。",
+      "ref": ".github/workflows/verify.yml:475-517",
+      "owner": "兼容层"
+    },
+    "check:ui:list": {
+      "kind": "local-only",
+      "reason": "列清单口令（check-ui.mjs --list），不是门禁，只防被规则①误判成孤儿。",
+      "ref": "package.json:34",
+      "owner": "界面"
+    },
+    "version-check": {
+      "kind": "manual",
+      "reason": "只在发布前由 release.yml 的 verify job 调用（tag 触发），不进 push/nightly；本地自证用 --tag 指定版本。",
+      "ref": ".github/workflows/release.yml:38-43",
+      "owner": "发布"
+    }
+  }
+}

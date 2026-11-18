@@ -959,23 +959,23 @@ runner（现有 [_check-runner.mjs](../scripts/_check-runner.mjs) 的升级目�
 | 存量探针 | 目标层 | 目标文件 | 说明 |
 | --- | --- | --- | --- |
 | `session-dedupe-test.mjs` | integration | `src/core/session/session.int.spec.ts` | 三层去重搬成 3 个 test |
-| `todo-reminder-test.mjs` | unit + integration | `src/core/todo-reminder.spec.ts` + `src/packages/todo/todo.int.spec.ts` | 纯函数与端到端拆开 |
-| `microcompact-test.mjs` | unit | `src/core/microcompact.spec.ts` | 纯逻辑 |
-| `context-segments-test.mjs` | unit | `src/core/context-segments.spec.ts` | 纯逻辑 |
-| `compact-token-tail-test.mjs` | unit | `src/core/compact-token-tail.spec.ts` | 纯逻辑 |
-| `llm-timeout-test.mjs` | integration | `src/core/llm-timeout.int.spec.ts` | 需假服务器 |
+| `todo-reminder-test.mjs` | unit + integration | `src/core/todo-reminder.spec.ts` + `tests/integration/todo-reminder.int.spec.ts` | 纯函数与端到端拆开 |
+| `microcompact-test.mjs` | unit | `src/packages/microcompact/tests/microcompact.spec.ts` | 纯逻辑 |
+| `context-segments-test.mjs` | integration | `tests/integration/context-segments.int.spec.ts` | 纯逻辑 |
+| `compact-token-tail-test.mjs` | integration | `src/packages/session-core/compact-token-tail.int.spec.ts` | 纯逻辑 |
+| `llm-timeout-test.mjs` | unit | `src/core/llm-timeout.spec.ts` | 需假服务器 |
 | `session-lease-test.mjs` | integration | `src/core/session/lease.int.spec.ts` | 需临时 HOME |
 | `sandbox-win-token-test.mjs` | integration | `src/packages/sandbox/sandbox-win.int.spec.ts` | 平台门控 |
 | `ui-status-panel-test.mjs` | ui | `src/packages/ui-status/ui/status-model.spec.ts` | 纯模型 |
 | `ui-tool-views-test.mjs` | ui | `src/packages/ui-tool-views/ui/*.spec.tsx` | 文本断言要重写成渲染断言 |
-| `tui-features-test.mjs` | snapshot | `tests/snapshots/golden/tui-features.txt` | 帧快照 |
-| `statusbar-test.mjs` | unit | `src/packages/tui/statusbar.spec.ts` | 纯投影 |
+| `tui-features-test.mjs` | snapshot | `tests/snapshots/golden/tui/` | 帧快照 |
+| `statusbar-test.mjs` | tui | `src/packages/tui/app/status-bar.spec.ts` | 纯投影 |
 | `command-policy-test.mjs` | unit | `src/core/command-policy.spec.ts` | 纯逻辑 |
-| `env-facts-test.mjs` | unit | `src/core/env-facts.spec.ts` | 纯逻辑 |
+| `env-facts-test.mjs` | integration | `tests/integration/env-facts.int.spec.ts` | 纯逻辑 |
 | `path-symlink-test.mjs` | unit | `src/core/path-policy.spec.ts` | 落在被测模块同名文件；junction 在 POSIX 可用目录软链，**不需要平台门控** |
 | `mention-multi-root-test.mjs` | unit | `src/core/mention.spec.ts` | 纯逻辑 |
 | `repeat-reminder-test.mjs` | unit | `src/core/repeat-reminder.spec.ts` | 纯逻辑 |
-| `session-activity-time-test.mjs` | unit | `src/core/session-activity.spec.ts` | 纯逻辑 |
+| `session-activity-time-test.mjs` | integration | `src/core/session/activity-time.int.spec.ts` | 纯逻辑 |
 | `turn-changes-test.mjs` | unit | `src/core/turn-changes.spec.ts` | 纯逻辑 |
 | `ui-dsh-card-replay-test.mjs` | snapshot | `tests/snapshots/card/dsh-card/` | 回放 |
 

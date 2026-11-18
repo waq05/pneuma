@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "gates": {
+    "build": {
+      "cmd": "pnpm run build",
+      "timeoutMs": 180000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "typecheck": {
+      "cmd": "pnpm run typecheck",
+      "timeoutMs": 300000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "typecheck-spec": {
+      "cmd": "pnpm run typecheck:spec",
+      "timeoutMs": 180000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "style": {
+      "cmd": "pnpm run check:style",
+      "timeoutMs": 60000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "test": {
+      "cmd": "pnpm run test",
+      "timeoutMs": 300000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "cli": {
+      "cmd": "pnpm run test:cli",
+      "timeoutMs": 120000,
+      "stage": ["push"],
+      "needs": ["build"]
+    },
+    "bench": {
+      "cmd": "pnpm run test:bench",
+      "timeoutMs": 600000,
+      "stage": ["push"],
+      "needs": ["build"]
+    },
+    "core": {
+      "cmd": "pnpm run check:core",
+      "timeoutMs": 1200000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "ui": {
+      "cmd": "pnpm run check:ui",
+      "timeoutMs": 600000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "plugin": {
+      "cmd": "pnpm run check:plugin",
+      "timeoutMs": 900000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "ui-e2e": {
+      "cmd": "pnpm run check:ui:e2e",
+      "timeoutMs": 900000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "built": {
+      "cmd": "pnpm run test:built",
+      "timeoutMs": 300000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "snapshot": {
+      "cmd": "pnpm run test:snapshot",
+      "timeoutMs": 2400000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "e2e": {
+      "cmd": "pnpm run test:e2e",
+      "timeoutMs": 2400000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "coverage": {
+      "cmd": "pnpm run test:coverage:run",
+      "timeoutMs": 3600000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "coverage-summary": {
+      "cmd": "pnpm run check:coverage-summary",
+      "timeoutMs": 120000,
+      "stage": ["nightly"],
+      "needs": ["coverage"]
+    },
+    "live": {
+      "cmd": "pnpm run test:live",
+      "timeoutMs": 1800000,
+      "stage": ["nightly"],
+      "needs": ["build"]
+    },
+    "dsh": {
+      "cmd": "pnpm run check:dsh",
+      "timeoutMs": 900000,
+      "stage": ["manual"],
+      "needs": []
+    },
+    "remote": {
+      "cmd": "pnpm run check:remote",
+      "timeoutMs": 900000,
+      "stage": ["manual"],
+      "needs": []
+    },
+    "p0": {
+      "cmd": "pnpm run check:p0",
+      "timeoutMs": 1200000,
+      "stage": ["manual"],
+      "needs": []
+    },
+    "law": {
+      "cmd": "pnpm run law",
+      "timeoutMs": 30000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "ci-coverage": {
+      "cmd": "pnpm run ci-coverage",
+      "timeoutMs": 20000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "probe-inventory": {
+      "cmd": "pnpm run probe-inventory",
+      "timeoutMs": 30000,
+      "stage": ["push"],
+      "needs": []
+    },
+    "docs": {
+      "cmd": "pnpm run docs-check",
+      "timeoutMs": 120000,
+      "stage": ["push"],
+      "needs": [],
+      "informational": true
+    },
+    "p0-list": {
+      "cmd": "pnpm run check:p0-list",
+      "timeoutMs": 30000,
+      "stage": ["push"],
+      "needs": [],
+      "informational": true
+    },
+    "version": {
+      "cmd": "pnpm run version-check",
+      "timeoutMs": 30000,
+      "stage": ["manual"],
+      "needs": []
+    }
+  }
+}
