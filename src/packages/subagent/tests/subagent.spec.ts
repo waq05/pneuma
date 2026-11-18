@@ -61,6 +61,17 @@ interface CapturedPrompt {
   render: () => string
 }
 
+/** 投影注册项（看板快照这类易变段走这条路，不走系统提示）。 */
+interface CapturedProjection {
+  id: string
+  apply: (
+    messages: Array<{ role: string; content: string | null }>,
+    session?: unknown,
+    report?: (view: Record<string, unknown>) => void,
+  ) => Array<{ role: string; content: string | null }>
+  options?: { order?: number }
+}
+
 /** 设置分区里测试用得到的部分。 */
 interface CapturedSection {
   id: string
@@ -102,13 +113,23 @@ afterAll(() => {
  * 假 ctx：apply 只用这几个面；effect 真跑回调、把返回的 disposer 收下，
  * 否则 syncTools 里的注册根本不会发生，断言无从谈起。
  */
-function fakeContext(): { ctx: Context; captured: { tools: CapturedTool[]; sections?: CapturedSection; prompts: CapturedPrompt[]; provided: Record<string, unknown> } } {
+function fakeContext(): {
+  ctx: Context
+  captured: {
+    tools: CapturedTool[]
+    sections?: CapturedSection
+    prompts: CapturedPrompt[]
+    projections: CapturedProjection[]
+    provided: Record<string, unknown>
+  }
+} {
   const captured: {
     tools: CapturedTool[]
     sections?: CapturedSection
     prompts: CapturedPrompt[]
+    projections: CapturedProjection[]
     provided: Record<string, unknown>
-  } = { tools: [], sections: undefined, prompts: [], provided: {} }
+  } = { tools: [], sections: undefined, prompts: [], projections: [], provided: {} }
   const ctx = {
     session: { current: () => ({ meta: { id: 'package-test' } }) },
     tools: {
@@ -121,6 +142,10 @@ function fakeContext(): { ctx: Context; captured: { tools: CapturedTool[]; secti
     prompt: {
       register: (id: string, render: () => string) => {
         captured.prompts.push({ id, render })
+        return () => {}
+      },
+      registerProjection: (id: string, apply: CapturedProjection['apply'], options?: { order?: number }) => {
+        captured.projections.push({ id, apply, ...(options === undefined ? {} : { options }) })
         return () => {}
       },
     },
@@ -271,21 +296,32 @@ test('提示段提 team_task，设置分区分 turns/models/board 三组且字�
   const renderBoard = (): string => captured.prompts.find((entry) => entry.id === 'team')?.render() ?? ''
   const boardPrompt = renderBoard()
   expect(boardPrompt, '板子提示段缺标题').toContain('# 共享任务板')
-  expect(boardPrompt, '空板要明说还没有任务').toContain('板上还没有任务')
   expect(boardPrompt, '板子提示段要提示派活用 task_id 绑定').toContain('task_id')
-  // 板上真有任务时，提示段要带负责人与最新进展（空板看不到这一行，所以现造一条）
+  // 2026-11：系统提示里的团队段改成**逐字常量**——看板数据（任务/进展/活动/队友）一律不进
+  // 系统提示，否则它每轮都变，系统提示 hash 与请求前缀跟着变，缓存整段作废（用户报障）。
+  expect(boardPrompt, '稳定段里不许出现看板数据').not.toContain('板上还没有任务')
+  expect(boardPrompt, '稳定段里不许出现活动时间线').not.toContain('最近活动（新的在前）')
+  expect(boardPrompt, '稳定段里不许出现队友状态').not.toContain('在队队友与绑定任务')
+
+  // 看板数据走投影：造一条任务后，快照投影要含进展正文，而系统提示段仍然逐字不变。
   const created = boardCreate('package-test', { subject: '示例任务' })
   try {
     boardUpdate('package-test', created.task.id, created.board.revision, 'note', {
       text: '接口层改完，跑单测中',
       by: 'dev-1',
     })
-    const withTask = renderBoard()
-    expect(withTask, '板子提示段要展示最新进展').toContain('最新进展')
-    expect(withTask, '提示段要带上进展正文').toContain('接口层改完')
-    expect(withTask, '提示段要带负责人署名').toContain('dev-1')
+    expect(renderBoard(), '看板变了，系统提示段也必须逐字不变').toBe(boardPrompt)
+    const projection = captured.projections.find((entry) => entry.id === 'team-board')
+    expect(projection, '看板快照要走 team-board 投影').toBeDefined()
+    const owner = { meta: { id: 'package-test' }, messages: [] as unknown[], appendNote: () => {} }
+    const injected = projection!.apply([{ role: 'user', content: '开始' }], owner)
+    expect(injected.length, '看板有内容时投影要追加一条快照').toBe(2)
+    const snapshot = String(injected[injected.length - 1]?.content)
+    expect(snapshot, '快照要带最新进展').toContain('接口层改完')
+    expect(snapshot, '快照要带负责人署名').toContain('dev-1')
+    expect(snapshot, '快照要有固定开头').toContain('# 共享任务板快照')
   } finally {
-    // 提示段每轮现读磁盘：不清理会影响同一进程里后续断言空板的用例
+    // 提示段/投影都按会话位读磁盘：不清理会影响同一进程里后续断言空板的用例
     resetBoard('package-test')
   }
 

@@ -37,6 +37,17 @@ interface CapturedPrompt {
   options?: Record<string, unknown>
 }
 
+/** 注册进来的投影（看板快照这类易变段走这条路，不走系统提示）。 */
+interface CapturedProjection {
+  id: string
+  apply: (
+    messages: ChatMessageLike[],
+    session?: unknown,
+    report?: (view: Record<string, unknown>) => void,
+  ) => ChatMessageLike[]
+  options?: { order?: number }
+}
+
 interface CapturedSection {
   id: string
   order?: number
@@ -65,6 +76,7 @@ interface Harness {
   ctx: Record<string, unknown>
   tools: CapturedTool[]
   prompts: CapturedPrompt[]
+  projections: CapturedProjection[]
   sections: CapturedSection[]
   services: Map<string, unknown>
   guards: Array<{ id: string; order: number; decide: (input: Record<string, unknown>) => Promise<unknown> }>
@@ -199,6 +211,7 @@ async function until(check: () => boolean, timeoutMs = 4000): Promise<void> {
 function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-once' | 'reject' } = {}): Harness {
   const tools: CapturedTool[] = []
   const prompts: CapturedPrompt[] = []
+  const projections: CapturedProjection[] = []
   const sections: CapturedSection[] = []
   const services = new Map<string, unknown>()
   const guards: Harness['guards'] = []
@@ -247,6 +260,14 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
         return () => {
           const index = prompts.indexOf(item)
           if (index >= 0) prompts.splice(index, 1)
+        }
+      },
+      registerProjection(id: string, apply: CapturedProjection['apply'], opts?: { order?: number }) {
+        const item = { id, apply, ...(opts === undefined ? {} : { options: opts }) } as CapturedProjection
+        projections.push(item)
+        return () => {
+          const index = projections.indexOf(item)
+          if (index >= 0) projections.splice(index, 1)
         }
       },
     },
@@ -351,6 +372,7 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   harness.ctx = ctx
   harness.tools = tools
   harness.prompts = prompts
+  harness.projections = projections
   harness.sections = sections
   harness.services = services
   harness.guards = guards
@@ -536,15 +558,17 @@ describe('注册面', () => {
     expect(onlyBoard.tools.some((tool) => tool.name === 'team_message'), '没有队友就没有收件人').toBe(false)
     expect(onlyBoard.tools.some((tool) => tool.name === 'team_task')).toBe(true)
     expect(onlyBoard.prompts.map((prompt) => prompt.id)).toEqual(['team'])
+    expect(onlyBoard.projections.map((projection) => projection.id)).toEqual(['team-board'])
 
     const onlyDelegate = fakeCtx({ config: { board: false } })
     expect(onlyDelegate.tools.some((tool) => tool.name === 'team_task')).toBe(false)
     expect(onlyDelegate.tools.some((tool) => tool.name === 'subagent')).toBe(true)
     expect(onlyDelegate.tools.some((tool) => tool.name === 'team_message'), 'team_message 不跟着 board').toBe(true)
     expect(onlyDelegate.prompts.map((prompt) => prompt.id)).toEqual(['subagent'])
+    expect(onlyDelegate.projections).toHaveLength(0)
   })
 
-  test('提示段列出可用角色；板子提示段在板上没有任务时也说清规矩', () => {
+  test('提示段列出可用角色；板子提示段只讲规矩，不含看板数据', () => {
     const harness = fakeCtx()
     const subagentPrompt = harness.prompts.find((prompt) => prompt.id === 'subagent')?.render() ?? ''
     expect(subagentPrompt).toContain('# 子智能体')
@@ -553,7 +577,17 @@ describe('注册面', () => {
     expect(subagentPrompt).toContain('本会话同时干活上限 4 个')
     const boardPrompt = harness.prompts.find((prompt) => prompt.id === 'team')?.render() ?? ''
     expect(boardPrompt).toContain('# 共享任务板')
-    expect(boardPrompt).toContain('板上还没有任务')
+    expect(boardPrompt).toContain('任务板的规矩')
+    // 看板数据一律不进系统提示（2026-11 的缓存 bug：这段每轮变 → 系统提示 hash 每轮变）
+    expect(boardPrompt).not.toContain('板上还没有任务')
+    expect(boardPrompt).not.toContain('最近活动（新的在前）')
+    // 易变段走投影，只在看板变化后注入一次
+    const projection = harness.projections.find((entry) => entry.id === 'team-board')
+    expect(projection).toBeDefined()
+    expect(projection?.options?.order).toBe(700)
+    // 空板不注入：不为了「暂无任务」给每个会话多一张注入卡
+    const injected = projection!.apply([{ role: 'user', content: '开始' }], harness.session)
+    expect(injected).toHaveLength(1)
   })
 })
 
@@ -570,6 +604,7 @@ describe('设置分区', () => {
     expect(harness.section.save('board', false)).toBeUndefined()
     expect(harness.tools.some((tool) => tool.name === 'team_task')).toBe(false)
     expect(harness.prompts).toHaveLength(0)
+    expect(harness.projections).toHaveLength(0)
 
     expect(harness.section.save('allowDelegation', true)).toBeUndefined()
     expect(harness.tools.some((tool) => tool.name === 'subagent')).toBe(true)
@@ -824,6 +859,19 @@ describe('任务板与团队服务', () => {
     const entries = await service.peek(String(view?.file))
     expect(Array.isArray(entries)).toBe(true)
     await expect(service.peek(join(WORKSPACE, 'nope.jsonl'))).rejects.toThrow(/只能看队友的运行记录/)
+  })
+
+  test('subagent list 输出队友的角色/状态/绑定任务（team 段引导用的就是这条通道）', async () => {
+    const harness = fakeCtx()
+    const boardTool = harness.tools.find((entry) => entry.name === 'team_task') as CapturedTool
+    await boardTool.run({ action: 'create', subject: '需要绑定的任务' }, { sessionId: harness.session.meta.id })
+    await spawnAndSettle(harness, { role: 'explorer', name: 'bound-1', task_id: 't1' })
+
+    const listed = String(await runTool(harness, { action: 'list' }))
+    expect(listed, '名单要能认出是哪个队友').toContain('bound-1')
+    expect(listed, '要有角色（模型据此判断它能改什么）').toContain('角色 explorer')
+    expect(listed, '要有状态').toContain('idle')
+    expect(listed, '要有绑定任务（team 段让模型用 list 查队伍与绑定）').toContain('绑定任务 t1')
   })
 
   test('团队服务 remove：还在干活时拒绝；收工后移除并删运行记录', async () => {

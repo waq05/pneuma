@@ -33,7 +33,7 @@ const boardMod = await import('../../../../lib/core/team-board.js')
 // 假 ctx：apply 只用这几个面；effect 真跑回调、把返回的 disposer 收下，
 // 否则 syncTools 里的注册根本不会发生，断言无从谈起。
 function fakeContext() {
-  const captured = { tools: [], sections: undefined, prompts: [], provided: {} }
+  const captured = { tools: [], sections: undefined, prompts: [], projections: [], provided: {} }
   const ctx = {
     session: { current: () => ({ meta: { id: 'package-test' } }) },
     tools: {
@@ -46,6 +46,11 @@ function fakeContext() {
     prompt: {
       register: (id, render) => {
         captured.prompts.push({ id, render })
+        return () => {}
+      },
+      // 看板快照这类易变段走投影：注册项收下来，用例直接调它钉注入行为
+      registerProjection: (id, apply, options) => {
+        captured.projections.push({ id, apply, options })
         return () => {}
       },
     },
@@ -937,8 +942,9 @@ test('提示词摘要行：任务带负责人/绑定/卡住/最新进展，活�
   passed += 1
 })
 
-// Lead 板子提示段：带最新进展、最近活动、在队队友与 task_id 绑定规矩；子智能体提示带分工协议。
-test('Lead 提示段与分工协议：进展/活动/绑定规矩/团队分工都在', () => {
+// Lead 系统提示：团队段是逐字常量（看板数据一律不进系统提示），看板快照走投影；
+// 子智能体提示带分工协议。2026-11 缓存修复：系统提示每轮变 = 前缀缓存每轮作废。
+test('Lead 提示段稳定 + 看板快照投影 + 分工协议', () => {
   writeSubagentConfig({ board: true, allowDelegation: true, teamMode: false })
   const sid = 'package-test'
   rmSync(boardMod.boardFile(sid), { force: true })
@@ -948,12 +954,35 @@ test('Lead 提示段与分工协议：进展/活动/绑定规矩/团队分工都
 
   let { ctx, captured } = fakeContext()
   mod.subagentPlugin.apply(ctx)
-  const boardPrompt = captured.prompts.find((entry) => entry.id === 'team').render()
-  assert.ok(boardPrompt.includes('最新进展'), '板子提示要展示最新进展')
-  assert.ok(boardPrompt.includes('第一版实现完成'))
-  assert.ok(boardPrompt.includes('最近活动'))
-  assert.ok(boardPrompt.includes('在队队友与绑定任务'))
+  const renderTeam = () => captured.prompts.find((entry) => entry.id === 'team').render()
+  const boardPrompt = renderTeam()
+  // 稳定段：只讲规矩，不含任何看板数据（含任务、进展、活动、队友状态）
+  assert.ok(boardPrompt.includes('# 共享任务板'), '缺标题')
+  assert.ok(boardPrompt.includes('任务板的规矩'), '缺规矩')
   assert.ok(boardPrompt.includes('task_id'), '要提醒派活时用 task_id 绑定')
+  assert.equal(boardPrompt.includes('第一版实现完成'), false, '看板正文不该进系统提示')
+  assert.equal(boardPrompt.includes('最新进展'), false, '看板数据不该进系统提示')
+  assert.equal(boardPrompt.includes('最近活动'), false, '活动时间线不该进系统提示')
+  assert.equal(boardPrompt.includes('在队队友与绑定任务'), false, '队友状态不该进系统提示')
+
+  // 系统提示段逐字稳定：往板子上写进展/记活动之后，同一段文本必须一个字节都不变。
+  boardMod.boardUpdate(sid, 't1', boardMod.readBoard(sid).revision, 'note', { text: '第二版也完成', by: 'dev-1' })
+  boardMod.recordBoardActivity(sid, { by: 'dev-1', kind: 'message', text: '再记一条活动' })
+  assert.equal(renderTeam(), boardPrompt, '看板变了，系统提示团队段也必须逐字不变')
+
+  // 易变段走投影：看板变了就注入一次快照，正文带最新进展
+  const projection = captured.projections.find((entry) => entry.id === 'team-board')
+  assert.notEqual(projection, undefined, '看板快照要走 team-board 投影')
+  assert.equal(projection.options.order, 700)
+  const owner = { meta: { id: sid }, messages: [], appendNote: () => {} }
+  const base = [{ role: 'user', content: '开始' }]
+  const injected = projection.apply(base, owner, () => {})
+  assert.equal(injected.length, base.length + 1, '看板变了要注入一条快照')
+  const snapshot = injected[injected.length - 1].content
+  assert.ok(snapshot.includes('# 共享任务板快照'), '快照要有固定开头')
+  assert.ok(snapshot.includes('第一版实现完成'), '快照要带最新进展')
+  assert.ok(snapshot.includes('再记一条活动'), '快照要带最近活动')
+
   const subagentPrompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
   assert.ok(subagentPrompt.includes('分工协议'), 'Lead 提示要有团队分工协议')
   assert.ok(subagentPrompt.includes('pm'), '分工协议要点名 pm')
@@ -965,8 +994,14 @@ test('Lead 提示段与分工协议：进展/活动/绑定规矩/团队分工都
   const modePrompt = captured.prompts.find((entry) => entry.id === 'subagent').render()
   assert.ok(modePrompt.includes('团队模式已开'))
 
-  // 队友系统提示里的模型句仍有；团队协作段由 teamCollabText 拼（同用摘要行，上面已钉）
-  assert.ok(modePrompt.includes('# 子智能体'))
+  // 队友系统提示的「团队协作」段只放规矩：不含看板数据，逐字稳定（队友会话的缓存同理）
+  const boardEnabled = mod.teammateCollabGuide(true)
+  assert.ok(boardEnabled.includes('team_task list'), '队友段要教它去查最新看板')
+  assert.equal(boardEnabled.includes('｜最新进展（'), false, '队友段不该塞看板行数据')
+  assert.equal(mod.teammateCollabGuide(true), boardEnabled, '队友段必须是常量')
+  assert.ok(mod.teammateCollabGuide(false).includes('任务板未开启'), '关掉板子时如实说')
+  // 板子数据留在这块会话上会影响后面的装配用例：清干净
+  boardMod.resetBoard(sid)
   passed += 1
 })
 

@@ -58,9 +58,6 @@ import {
   TEAMMATE_REPORT_OPEN,
   type BoardAction,
   type BoardUpdatePayload,
-  type TeamActivity,
-  type TeamBoard,
-  type TeamTask,
 } from '@pneuma/runtime/core/team-board.js'
 import type {
   EffortLevel,
@@ -72,10 +69,34 @@ import type {
   TeamBoardView,
   TranscriptEntry,
 } from '@pneuma/runtime/contract.js'
-import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
+import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import {
+  activityDigestLine,
+  BOARD_SNAPSHOT_KIND,
+  boardSnapshotText,
+  boardSnapshotWatermark,
+  BoardSnapshotWatermark,
+  countRounds,
+  taskDigestLine,
+  userTurnKey,
+} from './board-snapshot.js'
+import type {
+  ContextInjectionReporter,
+  ReviewService,
+  ReviewSpawnRequest,
+  ReviewSpawnResult,
+  SettingsSectionSpec,
+  TeamService,
+} from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+// 摘要行原本定义在本文件里，2026-11 挪进 board-snapshot.ts（与快照正文一起可单测）。
+// 从这里再导出：包级测试与既有调用方仍按 `@pneuma/subagent` 的入口取，不用改 import。
+export { activityDigestLine, taskDigestLine }
 
 /**
  * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
@@ -495,31 +516,73 @@ const TEAM_MESSAGES_PER_ROUND = 3
 const MAX_TEAM_MESSAGE_CHARS = 8000
 
 /**
- * 一行任务摘要（队友提示词、Lead 板子提示段、team_task list 共用）。
+ * 系统提示里 `team` 段的固定正文：只讲「板子是什么 + 五条规矩」，**不放任何看板数据**。
  *
- * 格式刻意压成一行：两条提示词都要塞「全部任务 + 最新进展」，多行会让系统提示膨胀。
- * @param noteChars - 最新进展截断长度（0 = 不显示进展）
+ * 2026-11 用户报障：这段原先由 `boardPromptText()` 每轮现拼（板上任务、队友状态、最近
+ * 活动都在里面），于是系统提示 hash 每轮都变——转录里连着三张「系统提示」卡，服务端
+ * 前缀缓存（`core/llm.ts:777` 的头部断点）每轮失效、实测命中率掉到约 50%。现在这段是
+ * 逐字常量；看板数据改由投影 `team-board` 在看板变化后附到消息尾部（见
+ * `board-snapshot.ts` 的文件头）。
+ *
+ * 改这段文字没关系（一次 hash 变化 = 一次缓存落空，随后又稳定）；**别把看板数据、
+ * 队友名单、时间戳加回来**——那正是这次修的 bug。
+ *
+ * 在队队友的名单与状态同理（开工/收工/状态切换都会变），所以也不写进来；{@link teamBoardGuide}
+ * 按「本会话开没开派活」补一句指向 `subagent list` 的提示。
  */
-export function taskDigestLine(board: TeamBoard, task: TeamTask, noteChars = 80): string {
-  const flags = [
-    isReady(board, task) ? '可开工' : '',
-    task.assignee === null ? '' : `绑定 ${task.assignee}`,
-    task.blockedReason === null ? '' : `卡住：${task.blockedReason.replace(/\s+/g, ' ').slice(0, 80)}`,
-  ].filter((part) => part !== '')
-  const note = task.notes[0]
-  const latest =
-    note === undefined || noteChars <= 0
-      ? ''
-      : `｜最新进展（${note.by}）：${note.text.replace(/\s+/g, ' ').slice(0, noteChars)}`
-  return `- ${task.id} [${task.status}${flags.length === 0 ? '' : ` · ${flags.join(' · ')}`}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${latest}`
+export const TEAM_BOARD_GUIDE = `# 共享任务板
+本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项、写进展、标阻塞；队友和你看到的是同一块板。
+
+看板数据不进这段提示：它每轮都在变，写在这里会让整份系统提示（进而整个请求前缀）每轮失效、缓存全部作废。最新看板由程序在看板变化后附到消息末尾（以「# 共享任务板快照」开头）；想看最新任务、负责人、进展与活动，随时用 team_task list / get / activity 查。
+
+任务板的规矩：
+1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径）与依赖，别人 claim 时才抢不过你；改状态要带 expected_revision。
+2. 认领前先 list / activity：依赖没完成的任务开不了工；完成一条，等它的人就能开工。
+3. 派活时优先用 subagent 的 task_id 把队友绑定到它负责的任务：认领会一起做掉，队友成功收工自动结项。
+4. 队友之间可以直接用 team_message 交流（点对点或广播），不必都经你转述；重要结论以任务板 note 为准。
+5. 进展用 note 写、卡住用 block 标，别只写在汇报里——汇报只给你看，板子是全队看的。`
+
+/**
+ * 系统提示 `team` 段的完整正文：{@link TEAM_BOARD_GUIDE} +（开了派活时）一句队友通道提示。
+ *
+ * 为什么单独一个函数而不是直接常量：队友名单/状态只有开了派活（`allowDelegation`）才有意义，
+ * 而 `subagent list` 这个工具也跟着那个开关走。开关值只在用户改设置时变，不是每轮变，
+ * 所以这一段仍然满足「同一会话内逐字稳定」。
+ *
+ * @param delegationEnabled - 本会话是否开了派活（`config.allowDelegation`）
+ */
+export function teamBoardGuide(delegationEnabled: boolean): string {
+  if (!delegationEnabled) return TEAM_BOARD_GUIDE
+  return `${TEAM_BOARD_GUIDE}
+
+在队队友与它们的绑定任务同样不进提示（名单与状态随开工/收工变）：要看谁在干什么，用 subagent list。`
 }
 
-/** 一行活动摘要（队友提示词与 Lead 板子提示段共用）。 */
-export function activityDigestLine(entry: TeamActivity): string {
-  const clock = new Date(entry.at)
-  const hh = String(clock.getHours()).padStart(2, '0')
-  const mm = String(clock.getMinutes()).padStart(2, '0')
-  return `- ${hh}:${mm} ${entry.by} ${entry.kind}${entry.taskId === undefined ? '' : ` ${entry.taskId}`}：${entry.text}`
+/**
+ * 队友系统提示里「团队协作」段的固定正文（2026-11 改成只放规矩）。
+ *
+ * 为什么不放队伍与看板数据：那是**每轮都会变**的内容，写进队友的系统提示会让它每次
+ * 请求的提示 hash 都变、缓存每轮作废（Lead 侧同类症状见 {@link TEAM_BOARD_GUIDE} 的注释）。
+ * 队友的 MiniAgent 没有投影链，易变段挪不到请求尾部，所以改成「动手前用工具查最新」。
+ *
+ * @param boardEnabled - 本会话是否开了任务板（`config.board`）；只在用户改设置时变，不是每轮变
+ */
+export function teammateCollabGuide(boardEnabled: boolean): string {
+  if (!boardEnabled) {
+    return `# 团队协作
+队伍与任务板数据不进这段提示（它们每轮都会变，写进来会让请求前缀每轮失效）。本会话任务板未开启：需要找人时用可用的消息工具，重要结论写进你的最终回复。`
+  }
+  return `# 团队协作
+队伍名单、任务、进展与最近活动都不写进这段提示：它们每轮都在变，写在这里会让整份系统提示（进而请求前缀）每轮失效、白烧缓存。要看最新情况，动手前自己查：
+- team_task list：板上任务、状态、负责人、绑定与最新进展；team_task action=activity 看最近动态。
+- team_message action=inbox：发给你的消息（含发件人名字）；要找人用 send / broadcast。
+
+协作规则：
+1. 动手前先 team_task list 与 action=activity，看板上已有什么、别人做到哪一步，别重复别人正在做的事。
+2. 进展写进任务：team_task action=note（做了什么、验证结果、下一步）；卡住用 action=block 写原因，解除用 unblock。
+3. 要问人、要协调用 team_message：send 点对点（队友名或 lead）、broadcast 广播；同一轮最多发 ${String(TEAM_MESSAGES_PER_ROUND)} 条。
+4. 写作用域和别人的任务重叠时先 team_message 协商，不要同时改同一批文件。
+5. 你绑定的任务在成功收工时会自动结项并写入你的最终结论；有遗留问题就写进结论里。`
 }
 
 /** 记录在案的一个队友（`~/.dsc/team/roster.json`，重启后侧栏仍能看到收工的队友）。 */
@@ -1015,42 +1078,19 @@ export const subagentPlugin: Plugin.Object = {
     ctx.effect(() => ctx.guards.register(teammateApprovalGuard), 'subagent: guards.register (teammate-approval)')
 
     /**
-     * 队友系统提示里的「团队协作」段（每次渲染现读磁盘与内存，天然最新）。
+     * 队友系统提示里的「团队协作」段：**只放规矩，不放队伍/看板数据**（2026-11 改）。
      *
-     * 为什么要在**每个队友**的提示里写队伍与任务板：用户要求「任何队友都能看到板上进展
-     * 与其他队友进展」。只靠 Lead 转述时，队友连板子长什么样都不知道，更谈不上自己认领、
-     * 写进展、找别人协商。这里只塞摘要（最多 20 条任务、10 条活动），不是整份板子。
+     * 原先这里每轮现读磁盘与内存，把「当前队伍（名字/角色/状态/绑定任务）+ 任务板摘要
+     * （20 条任务 + 10 条活动）」拼进队友的系统提示。它是队友会话的缓存杀手：队友每发
+     * 一次请求，系统提示 hash 就变一次，转录里反复出「系统提示」卡、服务端前缀缓存每轮
+     * 作废。队友的 MiniAgent 没有投影链（`deps.rewrite` 不存在，见 `session-core/loop.ts`），
+     * 没法像 Lead 那样把易变段挪到请求尾部，所以这里选择「移出」：数据一律现查工具。
+     *
+     * 信息没有丢：`team_task list` / `action=activity` 看板子，`team_message action=inbox`
+     * 看消息。规矩第一条本来就要求「动手前先 list」，现在从「提示里塞一份可能过期的快照」
+     * 变成「开工前查一份最新的」。
      */
-    const teamCollabText = (teammate: Teammate): string => {
-      const sessionId = teammate.parentSession.meta.id
-      const board = readBoard(sessionId)
-      const mates = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === sessionId)
-      const mateLines = mates.map(
-        (entry) =>
-          `- ${entry.name}（${entry.role}，${entry.state}${entry.taskId === undefined ? '' : `，绑定 ${entry.taskId}`}）`,
-      )
-      const boardBlock = config.board
-        ? `
-
-任务板（第 ${board.revision} 版，队友和 Lead 共用同一块）：
-${board.tasks.slice(0, 20).map((task) => taskDigestLine(board, task)).join('\n') || '- （板上还没有任务）'}
-
-最近活动（新的在前）：
-${board.activity.slice(0, 10).map(activityDigestLine).join('\n') || '- （暂无）'}`
-        : ''
-      const rules = config.board
-        ? `
-协作规则：
-1. 动手前先 team_task list 与 action=activity，看板上已有什么、别人做到哪一步，别重复别人正在做的事。
-2. 进展写进任务：team_task action=note（做了什么、验证结果、下一步）；卡住用 action=block 写原因，解除用 unblock。
-3. 要问人、要协调用 team_message：send 点对点（队友名或 lead）、broadcast 广播；同一轮最多发 ${TEAM_MESSAGES_PER_ROUND} 条。
-4. 写作用域和别人的任务重叠时先 team_message 协商，不要同时改同一批文件。
-5. 你绑定的任务在成功收工时会自动结项并写入你的最终结论；有遗留问题就写进结论里。`
-        : '\n协作规则：本会话任务板未开启；需要找人时用可用的消息工具，重要结论写进你的最终回复。'
-      return `# 团队协作
-你所在队伍的队友（本会话）：
-${mateLines.join('\n') || '- （只有你）'}${boardBlock}${rules}`
-    }
+    const teamCollabText = (): string => teammateCollabGuide(config.board)
 
     function startTeammate(input: {
       name: string
@@ -1160,7 +1200,7 @@ ${
 ${teammateModelNote(teammate.badge.model ?? ctx.llm.model, teammate.badge.effort, config.allowModelSelection)}
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
-${teamCollabText(teammate)}
+${teamCollabText()}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`
             // 队友的提示词不在段注册表里（它是几块直接拼的），给「系统提示」卡一条合成段：
             // 卡片至少能显示体量与来源，不至于空着一张段清单（队友的日志只在只读浮层里看）。
@@ -1641,7 +1681,7 @@ ${body}
       if (action === 'list') {
         const lines = mine.map(
           (entry) =>
-            `- ${entry.name}（角色 ${entry.role}，${entry.state}${entry.mode === 'one-shot' ? '，一次性' : ''}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用）派给它的任务：${entry.task.slice(0, 60)}`,
+            `- ${entry.name}（角色 ${entry.role}，${entry.state}${entry.mode === 'one-shot' ? '，一次性' : ''}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用${entry.taskId === undefined ? '' : `，绑定任务 ${entry.taskId}`}）派给它的任务：${entry.task.slice(0, 60)}`,
         )
         const roles = roster.map((role) => `- ${role.name}${role.enabled ? '' : '（已停用）'}：${role.description || '（没写 description）'}`).join('\n')
         return lines.length === 0
@@ -2162,39 +2202,71 @@ ${body}
       run: (args, runCtx) => runTeamMessage(args, runCtx),
     })
 
-    /** 板子提示段：只有板上真开了才注册；关掉时模型不该看到这个工具的任何说明。 */
-    const boardPromptText = (): string => {
-      const sessionId = ctx.session.current().meta.id
-      const board = readBoard(sessionId)
-      const taskLines = board.tasks.slice(0, 20).map((task) => taskDigestLine(board, task))
-      const activityLines = board.activity.slice(0, 10).map(activityDigestLine)
-      const mates = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === sessionId)
-      const mateLines = mates.map(
-        (entry) =>
-          `- ${entry.name}（${entry.role}，${entry.state}${entry.taskId === undefined ? '' : `，绑定 ${entry.taskId}`}）`,
-      )
-      return `# 共享任务板
-本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项、写进展、标阻塞；队友和你看到的是同一块板。
-${taskLines.length === 0 ? '板上还没有任务。' : `板上的任务（含负责人与最新进展）：\n${taskLines.join('\n')}`}
-
-在队队友与绑定任务：
-${mateLines.join('\n') || '- （当前没有在队队友）'}
-
-最近活动（新的在前）：
-${activityLines.join('\n') || '- （暂无）'}
-
-任务板的规矩：
-1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径）与依赖，别人 claim 时才抢不过你；改状态要带 expected_revision。
-2. 认领前先 list / activity：依赖没完成的任务开不了工；完成一条，等它的人就能开工。
-3. 派活时优先用 subagent 的 task_id 把队友绑定到它负责的任务：认领会一起做掉，队友成功收工自动结项。
-4. 队友之间可以直接用 team_message 交流（点对点或广播），不必都经你转述；重要结论以任务板 note 为准。
-5. 进展用 note 写、卡住用 block 标，别只写在汇报里——汇报只给你看，板子是全队看的。`
+    /**
+     * 看板「易变段」的投影：把最新看板快照附到请求**末尾**，并且只在水位变了才附。
+     *
+     * 为什么这么绕（而不是继续写系统提示里）：系统提示一变，服务端前缀缓存从第一段就
+     * 整段作废（`core/llm.ts:777` 把头部缓存断点打在第一处 system 上）；而附在消息末尾，
+     * 前面几十 K 的历史前缀照旧命中，变化只落在尾巴。这也是环境快照（`prompt/index.ts`
+     * 的 env-facts，order 600）与待办提醒（todo-reminder，order 800）的同一套取舍。
+     *
+     * 注入判据见 {@link BoardSnapshotWatermark}：看板没变的轮次返回**原数组**（同一个引用），
+     * 不新增消息、不报注入卡——多数轮次因此既不动系统提示也不动消息前缀。
+     */
+    const boardSnapshotSeen = new BoardSnapshotWatermark()
+    /** 上报台账：同一份正文只记一张注入卡（与 todo 的 reminderReported 同一套理由）。 */
+    const boardSnapshotReported = new InjectionReportLedger()
+    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
+    const boardSnapshotNoted = new InjectionNoteLedger()
+    const teamBoardProjection = (
+      messages: ChatMessage[],
+      session?: Session,
+      report?: ContextInjectionReporter,
+    ): ChatMessage[] => {
+      // 归属会话：投影链由各 agent 自己的循环调用（`packages/agent/index.ts` 的 rewrite），
+      // 传进来的就是发起这次请求的会话；兜底才用「当前查看的会话」。
+      const owner = session ?? ctx.session.current()
+      const board = readBoard(owner.meta.id)
+      const round = countRounds(messages)
+      // 用户轮键取日志原文（owner.messages）：请求里那份还混着投影追加的 env-facts 等
+      // user 消息，拿它当「轮」会每步都变。新用户轮要重新把看板交给模型（理由见
+      // board-snapshot.ts 的 userTurnKey）。
+      const userKey = userTurnKey(owner.messages)
+      const mark = boardSnapshotWatermark(board)
+      if (!boardSnapshotSeen.due(owner.meta.id, mark, round, userKey)) return messages
+      // 空板不注入：这段正文只会说「板上还没有任务 / 暂无活动」，除了给每个从未用过
+      // 团队功能的会话多一张注入卡之外没有任何信息量。水位照记，等第一条任务/活动出现
+      // 时水位变了，下一跳自然注入。
+      if (board.tasks.length === 0 && board.activity.length === 0) {
+        boardSnapshotSeen.mark(owner.meta.id, mark, round, userKey)
+        return messages
+      }
+      const text = boardSnapshotText(board)
+      const out: ChatMessage[] = [...messages, { role: 'user', content: text }]
+      // 先记账再注入：同一轮的 invariant 二次派生必须拿到同一个答案（见台账类注释）。
+      boardSnapshotSeen.mark(owner.meta.id, mark, round, userKey)
+      // 注入不落会话历史：按 `session-core/loop.ts:77` 的规矩，注入方自己补一条 note，
+      // 事后回看日志能对出模型当时多看了什么。判据用「会话历史最后一条消息的对象引用」，
+      // 同一份历史重跑时引用不变 → 不重复落（与 todo 的 reminderNotes 同一套）。
+      const last = owner.messages[owner.messages.length - 1]
+      if (boardSnapshotNoted.take(owner.meta.id, last, text)) owner.appendNote('team-board', text)
+      // 过上报闸：正文与上一次上报过的逐字相同就不再记卡（同一份快照被压缩后重注时会出现）。
+      if (report !== undefined && boardSnapshotReported.take(owner.meta.id, BOARD_SNAPSHOT_KIND, text)) {
+        report({
+          kind: BOARD_SNAPSHOT_KIND,
+          source: 'team-board',
+          where: 'user-tail',
+          chars: text.length,
+          preview: contextInjectionPreview(text),
+        })
+      }
+      return out
     }
 
     /**
      * 三个开关各管一段：
      * - `allowDelegation` 管 `subagent` 工具、`team_message` 与名册提示；
-     * - `board` 管 `team_task` 与板子提示段；
+     * - `board` 管 `team_task`、板子提示段与看板快照投影；
      * - `teamMode` 只影响提示与 `maxDepth` 的默认值（见 settings 保存逻辑）。
      * 前两个独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
      */
@@ -2222,6 +2294,7 @@ ${activityLines.join('\n') || '- （暂无）'}
               '队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。',
               `本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。`,
               '只读角色改不了文件；要落地代码用 developer / writer 或者你自己动手。',
+              '在队队友与它们的绑定任务不在系统提示里（名单、状态随开工/收工变，写进提示会让请求前缀每轮失效）；要看谁在干什么，用 subagent list。',
               '派完活自己接着干别的，别闲着等。',
               '分工协议：按真实团队流程派活——需求不清先派 pm（确认需求与验收口径、拆任务上板），方案与契约派 architect，实现按 write_scopes 并行派 developer，独立验证派 tester，构建发布与环境检查派 ops，最后由你汇总向用户交付。派活时用 task_id 绑定它负责的任务。',
               ...(config.board
@@ -2246,7 +2319,23 @@ ${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
       }
       if (config.board) {
         disposers.push(ctx.effect(() => ctx.tools.register(teamTaskTool()), 'subagent: team_task.register'))
-        disposers.push(ctx.effect(() => ctx.prompt.register('team', boardPromptText), 'subagent: board prompt.register'))
+        // 稳定段：只讲板子是什么与规矩，逐字常量（**别把看板数据加回来**，见 TEAM_BOARD_GUIDE）。
+        // order 220：排在内核的 instructions(200) / skills(210) 之后、模型信息(890) 之前。
+        // 易变内容放越后越好（`PromptService.register` 的约定）：万一哪天这段又被塞进动态
+        // 内容，波及的也只是它后面的「当前模型」一句，不会连带 AGENTS.md/技能目录那 ~10K 字。
+        disposers.push(
+          ctx.effect(
+            () => ctx.prompt.register('team', () => teamBoardGuide(config.allowDelegation), { order: 220 }),
+            'subagent: board prompt.register',
+          ),
+        )
+        // 易变段：看板快照走投影注入到请求尾部，只在看板变化后附一次。
+        disposers.push(
+          ctx.effect(
+            () => ctx.prompt.registerProjection('team-board', teamBoardProjection, { order: 700 }),
+            'subagent: board projection.register',
+          ),
+        )
       }
     }
     syncTools()

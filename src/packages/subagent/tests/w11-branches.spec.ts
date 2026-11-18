@@ -31,6 +31,16 @@ interface CapturedPrompt {
   id: string
   render: () => string
 }
+/** 注册进来的投影（看板快照这类易变段走这条路，不走系统提示）。 */
+interface CapturedProjection {
+  id: string
+  apply: (
+    messages: Array<{ role: string; content: string | null }>,
+    session?: unknown,
+    report?: (view: Record<string, unknown>) => void,
+  ) => Array<{ role: string; content: string | null }>
+  options?: { order?: number }
+}
 interface CapturedSection {
   id: string
   fields: () => Array<{ key?: string; action?: string; group?: string }>
@@ -48,6 +58,7 @@ interface StreamResultLike {
 interface Harness {
   tools: CapturedTool[]
   prompts: CapturedPrompt[]
+  projections: CapturedProjection[]
   sections: CapturedSection[]
   services: Map<string, unknown>
   guards: Array<{ id: string; order: number; decide: (input: Record<string, unknown>) => Promise<unknown> }>
@@ -139,6 +150,7 @@ function newSession(): SessionT {
 function fakeCtx(config?: Record<string, unknown>): Harness {
   const tools: CapturedTool[] = []
   const prompts: CapturedPrompt[] = []
+  const projections: CapturedProjection[] = []
   const sections: CapturedSection[] = []
   const services = new Map<string, unknown>()
   const guards: Harness['guards'] = []
@@ -181,6 +193,14 @@ function fakeCtx(config?: Record<string, unknown>): Harness {
         return () => {
           const index = prompts.indexOf(item)
           if (index >= 0) prompts.splice(index, 1)
+        }
+      },
+      registerProjection(id: string, apply: CapturedProjection['apply'], options?: { order?: number }) {
+        const item = { id, apply, ...(options === undefined ? {} : { options }) } as CapturedProjection
+        projections.push(item)
+        return () => {
+          const index = projections.indexOf(item)
+          if (index >= 0) projections.splice(index, 1)
         }
       },
     },
@@ -247,6 +267,7 @@ function fakeCtx(config?: Record<string, unknown>): Harness {
   }
   harness.tools = tools
   harness.prompts = prompts
+  harness.projections = projections
   harness.sections = sections
   harness.services = services
   harness.guards = guards
@@ -451,10 +472,24 @@ test('任务板：作用域重叠提醒、claim_now 依赖未完成、set_depend
   )
   expect(deps).toContain('t1 →')
 
-  // 板上已经有任务：板子提示段应当列出它们，而不是「板上还没有任务」。
+  // 板子数据走投影、不走系统提示：系统提示的 team 段是逐字常量（看板一变就改系统提示
+  // 会让请求前缀每轮失效，2026-11 的缓存 bug 就是这么来的）；任务内容只在快照投影里出现。
   const boardPrompt = harness.prompts.find((entry) => entry.id === 'team')
   expect(boardPrompt).toBeDefined()
-  expect(boardPrompt!.render()).toContain('第一条')
+  const guide = boardPrompt!.render()
+  expect(guide).toContain('# 共享任务板')
+  expect(guide).not.toContain('第一条')
+  expect(guide).not.toContain('最近活动')
+
+  const projection = harness.projections.find((entry) => entry.id === 'team-board')
+  expect(projection).toBeDefined()
+  expect(projection!.options?.order).toBe(700)
+  const messages: Array<{ role: string; content: string | null }> = [{ role: 'user', content: '开始干活' }]
+  const injected = projection!.apply(messages, harness.session)
+  expect(injected.length).toBe(messages.length + 1)
+  const snapshot = String(injected[injected.length - 1]?.content)
+  expect(snapshot).toContain('第一条')
+  expect(snapshot).toContain('# 共享任务板快照')
 })
 
 test('任务板：不认识的 action 与缺版本号都给人话', async () => {

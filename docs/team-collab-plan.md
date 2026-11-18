@@ -94,17 +94,29 @@ interface TeamBoard {
 3. spawn 增加可选 `task_id`：认领该任务（未认领且 ready 才允许）；队友收工成功时若绑定任务
    仍在 `in_progress` 且负责人是自己，自动 `complete` 并追加终稿摘要进 notes。
 
-### 3.3 提示词面
+### 3.3 提示词面（2026-11 修正：稳定段与易变段分离）
 
-1. **队友系统提示**（`startTeammate` 的 `systemPrompt` 回调，每轮现读磁盘，天然最新）追加一段
-   「团队协作」：当前队伍（名字/角色/状态/绑定任务）+ 任务板摘要（每条：id、状态、负责人、
-   最新进展）+ 最近活动（10 条）+ 协作规则（认领前 list、进展用 note、问人用 team_message、
-   别重复别人已做的事、写作用域重叠先协商）。
-2. **Lead 板子提示段**（`boardPromptText`）扩展：同样列最新进展、最近活动、在队队友与绑定任务，
-   并写清「派活时优先用 task_id 绑定」。
-3. **Lead 分工协议**（写进 `subagent` 提示段）：按真实团队流程派活——PM 先确认需求与验收口径并
-   拆任务上板；架构师出方案/契约；开发者按写作用域并行实现；测试独立验证；运维负责构建发布与
-   环境检查；最后由 Lead 汇总并对用户交付。
+> 背景：用户报障「系统提示卡连续注入 3 次、缓存命中约 50%」。根因是团队板数据原先每轮现拼进
+> 系统提示的 `team` 段 → 系统提示 hash 每轮变 → 服务端前缀缓存每轮作废（`core/llm.ts:777` 的
+> 头部断点打在第一处 system 上）；实测与对照见 `docs/research/cache-hit-teams.md`。
+
+1. **Lead 的 `team` 段是逐字常量**（`src/packages/subagent/index.ts` 的 `TEAM_BOARD_GUIDE` /
+   `teamBoardGuide`）：只讲「板子是什么 + 5 条规矩 + 队友通道用 `subagent list` 查」，**不含**
+   任务、进展、活动、队友状态。看板数据每轮都变，写在这里就是这次缓存 bug 的来源。
+2. **看板数据走投影注入**（`registerProjection('team-board', …, { order: 700 })`，纯逻辑在
+   `src/packages/subagent/board-snapshot.ts`）：只在水位（`revision` + `activity.length` + 最新活动
+   时刻）变化、或换了**新用户轮**时，把「任务 ≤10 条 / 活动 ≤8 条 / 总字符 ≤1500」的快照追加到
+   请求**末尾**；同一用户回合内部、看板没变的工具步骤一律不追加。注入不落历史，注入方按
+   `session-core/loop.ts:77` 的规矩用 `appendNote('team-board', 正文)` 留底；上报台账保证同一份
+   正文只记一张「上下文注入」卡，同一份历史的二次派生（invariant 校验）不重复落 note。
+3. **队友系统提示保持逐字常量**：队友的 `MiniAgent` **没有投影链**（`session-core/loop.ts:75-89`
+   的 `rewrite` 是可选参数，subagent 构造队友时没传），易变内容挪不到请求尾部，所以队伍/看板数据
+   一律「移出」提示词，改成「动手前用 `team_task list` / `action=activity` / `team_message inbox`
+   现查」（`teammateCollabGuide`）。这是硬约束，不是偏好；以后要恢复被动可见，得先给队友循环接上
+   投影链（要改 `loop.ts` 的装配面）。
+4. **Lead 分工协议**（写进 `subagent` 提示段，保持原样）：按真实团队流程派活——PM 先确认需求与
+   验收口径并拆任务上板；架构师出方案/契约；开发者按写作用域并行实现；测试独立验证；运维负责构建
+   发布与环境检查；最后由 Lead 汇总并对用户交付。
 
 ### 3.4 角色体系（内置角色扩充）
 
@@ -141,8 +153,8 @@ interface TeamBoard {
 
 ## 4 实施分批
 
-- **P0 数据与提示词**：team-board v2 字段/动作/迁移 → 队友提示注入板子快照与队伍名册 →
-  Lead 提示段扩展 → spawn `task_id` 绑定与自动结项 → 单测。
+- **P0 数据与提示词**：team-board v2 字段/动作/迁移 → 队友提示只放协作规则（队伍与看板数据一律
+  工具现查）→ Lead 提示段切成常量 + 看板快照投影 → spawn `task_id` 绑定与自动结项 → 单测。
 - **P1 横向通道**：`team_message` 工具（send/broadcast/inbox + 额度）→ 投递与叫醒 →
   安全测试（收工目标、一次性目标、空消息、超长）。
 - **P2 角色与界面**：五个新内置角色 + 团队模式开关 → 状态面板/队友浮层展示 → README/文档。
@@ -172,8 +184,10 @@ interface TeamBoard {
 2. **工具面**：	eam_task 增加 
 ote / block / unblock / assign / activity；
    新增 	eam_message（send / broadcast / inbox，每轮 3 条额度）。
-3. **提示词**：队友系统提示每轮现读「队伍 + 板上任务摘要 + 最近活动 + 协作规则」；
-   Lead 段补进展/活动/绑定与分工协议。
+3. **提示词（2026-11 缓存修复后的口径）**：Lead 的 `team` 段是逐字常量（只放板子说明与规矩）；
+   看板快照走投影注入（水位变化或新用户轮触发，任务 ≤10 / 活动 ≤8 / ≤1500 字）；队友系统提示也只放
+   协作规则，队伍与看板一律用 `team_task` / `team_message` 现查。Lead 段仍补进展/活动/绑定与分工协议
+   （绑定与进展体现在快照的任务行里）。
 4. **任务绑定**：spawn 带 	ask_id 一并在 CAS 里认领并绑定，成功收工自动结项并写终稿摘要。
 5. **角色**：新增 pm / architect / developer / tester / ops（提示词、工具白名单、审批档、
    默认轮次 48/32/128/64/32）；设置页新增「团队模式」开关（打开时 maxDepth 抬到 2）。
@@ -188,3 +202,19 @@ ote / block / unblock / assign / activity；
 - PM 二层派活只在「团队模式」开关打开时可行（maxDepth 2）；默认仍是 1 层，PM 只能通过板子与消息协调。
 - tester 的「只写测试文件」靠角色提示词约定，没有按路径强制的白名单机制。
 - 队友→Lead 的 team_message 走现有汇报通道，不新增独立卡片；界面只在活动时间线里体现。
+- **看板快照不落会话历史**：同一用户轮内、看板没变的后续工具步骤里，模型手里没有那份快照，只能靠
+  `team_task list` 现查；换来的是系统提示与请求前缀稳定、缓存命中（见 §8）。以后若要「每 N 轮重注
+  一次」下限，只需给 `BoardSnapshotWatermark.due()` 加一条周期判据，不动其他代码。
+
+## 8 2026-11 缓存修复：系统提示稳定性（实测与口径）
+
+- 症状：用户会话 `c2838565…` 的转录里「系统提示 13.6K 字」连着出现三张；`usage.jsonl` 按 sid 过滤
+  16 次真实请求合计命中 49.72%，其中**系统提示变了的 5 次请求命中 0–4.7%，没变的 11 次命中 78–96%**。
+- 根因：`boardPromptText()` 每轮现拼看板（任务/进展/活动/队友），注册成系统提示的 `team` 段 →
+  系统提示 hash 每轮变 → 转录按 hash 各写一张卡、服务端头部缓存断点每轮作废。
+- 修法：稳定段（常量）+ 易变段（尾部投影注入，变了才注）。改动面：
+  `src/packages/subagent/board-snapshot.ts`（新增）、`src/packages/subagent/index.ts` 的
+  `TEAM_BOARD_GUIDE` / `teamBoardGuide` / `teammateCollabGuide` / `teamBoardProjection`。
+- 验证面：单测钉「同配置不同看板状态下整份 systemPrompt 逐字相同且 hash 相同」「看板没变不注入 /
+  变了注入一次 / 新用户轮必注入」「注入正文限量」；真实端点命中率未在本机复测（端点要凭据），
+  待用户真实会话用同一个 `usage.jsonl` 口径复核，预期回到 85%+。
