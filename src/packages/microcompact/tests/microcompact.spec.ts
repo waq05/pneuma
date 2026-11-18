@@ -178,14 +178,18 @@ test('清理点只前进不后退：历史被压缩、candidate 变少时已清�
 })
 
 test('末尾带「不是用户发言」声明的 user 消息算合成，且只认末尾', () => {
+  // 这句文案必须与 P0 三个包的 TAIL_NOTE 逐字一致，改文案要两边一起改。
+  const literal = '（本条是程序自动附上的，不是用户发言）'
+  expect(AUTO_APPENDED_NOTICE).toBe(literal)
+  expect(isSyntheticUserMessage({ role: 'user', content: `有 3 个待办\n${literal}` } as ChatMessage)).toBe(true)
   const synthetic = { role: 'user', content: `有 3 个待办\n${AUTO_APPENDED_NOTICE}` } as ChatMessage
   expect(isSyntheticUserMessage(synthetic)).toBe(true)
   expect(roundKeyOf([{ role: 'user', content: '开跑' }, synthetic])).toBe(1)
   // 只认「末尾」：这句话后面还有正文就不算，避免把用户真说的话吞掉。
-  expect(isSyntheticUserMessage({ role: 'user', content: `${AUTO_APPENDED_NOTICE}\n后面还有正文` } as ChatMessage)).toBe(false)
+  expect(isSyntheticUserMessage({ role: 'user', content: `${literal}\n后面还有正文` } as ChatMessage)).toBe(false)
   // 老判据一条不动。
   expect(isSyntheticUserMessage({ role: 'user', content: '（提醒：任务清单有未完成项，做完一步就把状态改掉）' } as ChatMessage)).toBe(true)
   expect(isSyntheticUserMessage({ role: 'user', content: '<teammate-report id="s">干完了</teammate-report>' } as ChatMessage)).toBe(true)
-  expect(isSyntheticUserMessage({ role: 'assistant', content: AUTO_APPENDED_NOTICE } as ChatMessage)).toBe(false)
+  expect(isSyntheticUserMessage({ role: 'assistant', content: literal } as ChatMessage)).toBe(false)
   expect(isSyntheticUserMessage({ role: 'user', content: '继续' } as ChatMessage)).toBe(false)
 })
