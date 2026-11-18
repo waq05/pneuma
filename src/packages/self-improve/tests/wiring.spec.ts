@@ -73,6 +73,7 @@ interface FakeSession {
   toolErrors: Map<string, string>
   state(name: string): unknown
   appendState(name: string, value: unknown): void
+  appendNote(id: string, text: string): void
 }
 
 interface HarnessOptions {
@@ -92,6 +93,8 @@ interface Harness {
   commands: Map<string, any>
   sections: any[]
   prompts: any[]
+  projections: any[]
+  notes: Array<{ id: string; text: string }>
   events: string[]
   emitted: string[]
   notices: string[]
@@ -106,6 +109,8 @@ interface Harness {
   command(name: string): any
   section(): any
   promptText(): string
+  /** 跑一次尾部投影（self-improve）；返回追加的 user 消息正文，没注入时 undefined。 */
+  tailText(): string | undefined
   learnings(): any
   turnEnd(reason: 'completed' | 'aborted' | 'error'): void
 }
@@ -116,6 +121,7 @@ function mount(options: HarnessOptions = {}): Harness {
   mkdirSync(cwd, { recursive: true })
   const stateMap = new Map<string, unknown>(Object.entries(options.state ?? {}))
   const messages: Message[] = options.messages ?? []
+  const notes: Array<{ id: string; text: string }> = []
   const session: FakeSession = {
     meta: { id: 'sess-wiring-1', cwd },
     filePath: options.filePath ?? join(HOME, 'sessions', 'sess-wiring-1.jsonl'),
@@ -123,6 +129,7 @@ function mount(options: HarnessOptions = {}): Harness {
     toolErrors: new Map(Object.entries(options.toolErrors ?? {})),
     state: (name) => stateMap.get(name),
     appendState: (name, value) => stateMap.set(name, value),
+    appendNote: (id, text) => notes.push({ id, text }),
   }
 
   const tools = new Map<string, any>()
@@ -130,6 +137,7 @@ function mount(options: HarnessOptions = {}): Harness {
   const commands = new Map<string, any>()
   const sections: any[] = []
   const prompts: any[] = []
+  const projections: any[] = []
   const events: string[] = []
   const emitted: string[] = []
   const notices: string[] = []
@@ -209,6 +217,14 @@ function mount(options: HarnessOptions = {}): Harness {
           if (index >= 0) prompts.splice(index, 1)
         }
       },
+      registerProjection(id: string, apply: unknown, opts?: unknown) {
+        const record = { id, apply, opts }
+        projections.push(record)
+        return () => {
+          const index = projections.indexOf(record)
+          if (index >= 0) projections.splice(index, 1)
+        }
+      },
     },
     session: { current: () => session },
     transcript: { system: (text: string) => notices.push(text) },
@@ -254,6 +270,8 @@ function mount(options: HarnessOptions = {}): Harness {
     commands,
     sections,
     prompts,
+    projections,
+    notes,
     events,
     emitted,
     notices,
@@ -268,6 +286,14 @@ function mount(options: HarnessOptions = {}): Harness {
     command: (name: string) => commands.get(name),
     section: () => sections[0],
     promptText: () => prompts[0]?.text() ?? '',
+    tailText: () => {
+      const projection = projections.find((entry) => entry.id === 'self-improve')
+      if (projection === undefined) return undefined
+      const base = [{ role: 'system', content: '系统提示' }, ...session.messages]
+      const out = projection.apply(base) as typeof base
+      if (out.length === base.length) return undefined
+      return String(out.at(-1)?.content ?? '')
+    },
     learnings: () => stateMap.get('learnings') as any,
     turnEnd: (reason) => handlers.get('dsc/turn-end')?.(reason),
   }
@@ -324,6 +350,8 @@ describe('注册面', () => {
     expect([...harness.commands.keys()].sort()).toEqual(['learn', 'learnings', 'skills-ledger'])
     expect(harness.sections[0]).toMatchObject({ id: 'self-improve', order: 35 })
     expect(harness.prompts[0]).toMatchObject({ id: 'self-improve', opts: { order: 43 } })
+    // 2026-11 P0：待审条数走尾部投影（order 620），系统提示段只剩静态说明。
+    expect(harness.projections[0]).toMatchObject({ id: 'self-improve', opts: { order: 620 } })
     expect(harness.events).toEqual(expect.arrayContaining(['dsc/turn-end', 'dsc/session-open']))
   })
 
@@ -1031,22 +1059,34 @@ describe('turn-end：自修订', () => {
 // ── 提示词与设置分区 ──────────────────────────────────────────────────────────
 
 describe('提示词与设置分区', () => {
-  test('提示词只报条数：关掉为空；有待审候选才报候选；审批开关单独一行；两者都不说时为空', () => {
+  test('系统提示段只留静态说明；待审条数走尾部投影（N=0 不发、N>0 才发）', () => {
     expect(mount({ config: { enabled: false } }).promptText()).toBe('')
+    expect(mount({ config: { enabled: false } }).tailText()).toBeUndefined()
 
     const harness = mount()
     const base = harness.promptText()
     expect(base).toContain('技能写入（skill_write 工具）要走审批')
+    expect(base).toContain('learning 工具')
+    // 静态段里不许有易变事实与候选正文。
     expect(base).not.toContain('候选清单里有')
+    expect(base).not.toMatch(/\d+\s*条待审/)
+    expect(harness.tailText(), '没有待审候选时不发尾消息').toBeUndefined()
 
     store.recordCandidate(WORK, { kind: 'note', text: '用户原话不该进提示词', turnRef: 't#1' })
-    const withPending = harness.promptText()
-    expect(withPending).toContain('候选清单里有 1 条待审经验')
-    expect(withPending).not.toContain('用户原话不该进提示词')
+    const first = harness.tailText()
+    expect(first).toContain('候选清单里有 1 条待审经验')
+    expect(first).not.toContain('用户原话不该进提示词')
+    expect(first?.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
+    // 投影链对同一请求跑两遍：输出必须逐字相同，注入卡/note 只记一次。
+    expect(harness.tailText()).toBe(first)
+    expect(harness.notes.filter((item) => item.id === 'self-improve')).toHaveLength(1)
+    // 系统提示段不随候选条数变化。
+    expect(harness.promptText()).toBe(base)
 
     rmQuiet(join(HOME, 'learnings'))
     const quiet = mount({ config: { requireApproval: false } })
-    expect(quiet.promptText()).toBe('')
+    expect(quiet.promptText()).toContain('learning 工具')
+    expect(quiet.promptText()).not.toContain('技能写入')
   })
 
   test('设置分区：字段清单、values、合法/非法保存与 action', () => {

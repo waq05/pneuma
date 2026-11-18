@@ -34,9 +34,10 @@
  * （`skill-draft`，正文是那段 patch JSON，文本带 `revisionOf=<技能名>`）——
  * 用户 `/learnings promote` 才真正 patch，插件绝不因为一次失败就自己改技能。
  *
- * 系统提示那一段（order 43）只报「有几条待审候选」「技能写入要不要审批」这类当前事实，
- * **候选正文绝不拼进提示词**——候选里存的常常是用户原话，而用户原话可能夹着从网页粘进来的
- * 外部文本，拼进去等于给外部文本开一条进模型上下文的直通车。
+ * 系统提示那一段（order 43，2026-11 P0 起只留**静态**说明：怎么用 learning 工具 propose、
+ * 开了审批时技能写入要走审批）**不带任何易变值**——待审条数改由尾部投影
+ * （{@link SELF_IMPROVE_KIND}，order 620）附在请求末尾，N=0 时不发。候选正文绝不进任何
+ * 提示词——候选里存的常常是用户原话，而用户原话可能夹着从网页粘进来的外部文本。
  *
  * 支撑模块（本插件独占）：`src/packages/self-improve/{store,ledger,skill-write}.ts`
  *
@@ -49,7 +50,10 @@ import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import { contentText, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
-import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec, ContextInjectionReporter } from '@pneuma/runtime/services/types.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
 import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from './ledger.js'
 import {
@@ -134,6 +138,15 @@ const DEFAULT_CONFIG: SelfImproveConfig = {
   retentionDays: DEFAULT_STORE_OPTIONS.retentionDays,
   maxCandidates: DEFAULT_STORE_OPTIONS.maxEntries,
 }
+
+/** 尾部投影的名字、注入卡类别与留底 note 的 id（三处同一个字面量，方便对账）。 */
+const SELF_IMPROVE_KIND = 'self-improve'
+
+/**
+ * 每条尾消息固定的收尾行。**措辞不许改**：另一条分支（P1）靠这句把程序合成的
+ * user 消息排除出「新一轮用户发言」的判定，改了判定就会误把注入当用户轮。
+ */
+const TAIL_NOTE = '（本条是程序自动附上的，不是用户发言）'
 
 /** 取配置：类型不对就用默认值，数值夹在区间里，不抛错（照 memory 插件的写法）。 */
 function readConfig(passed?: unknown): SelfImproveConfig {
@@ -1286,36 +1299,72 @@ export const selfImprovePlugin: Plugin.Object = {
     // ── 系统提示 ────────────────────────────────────────────────────────────────
 
     /**
-     * 进系统提示的那一段：只报「有几条待审候选」「技能写入要不要审批」这种当前事实。
+     * 进系统提示的那一段（2026-11 P0 起**只留静态说明**）：怎么用 learning 工具 propose、
+     * 开了审批时技能写入要走审批。待审条数是易变事实，挪到尾消息（见 {@link offImproveTail}）。
      *
      * **绝不把候选正文拼进来**——这是本插件的关键安全属性。候选里存的常常是用户原话，
      * 而用户原话里可能夹着从网页或别的程序粘进来的外部文本；拼进系统提示等于给外部文本
-     * 开了一条进模型上下文的直通车。这里只说条数，想看内容由用户 `/learnings list` 决定。
+     * 开了一条进模型上下文的直通车。尾部投影也只会说条数，想看内容由用户 `/learnings list` 决定。
      */
     function promptText(): string {
       if (!config.enabled) return ''
-      let pending = 0
-      try {
-        pending = readCandidates(cwd()).filter((item) => item.state === 'candidate').length
-      } catch {
-        // 候选清单读不出来不该拖累每一轮请求：这一段就当没有（提示词少了它，功能照跑）
-        return ''
-      }
-      const lines: string[] = []
-      if (pending > 0) {
-        lines.push(
-          `候选清单里有 ${String(pending)} 条待审经验（正文不在你的上下文里，用户 /learnings list 才看得到；要变成记忆或技能得由用户 promote）。`,
-          '你在对话里被用户纠正了、或自己发现一条以后还用得上的经验时，可以用 learning 工具 propose 记一条候选，让用户决定要不要留下。',
-        )
-      }
+      const lines: string[] = [
+        '你在对话里被用户纠正了、或自己发现一条以后还用得上的经验时，可以用 learning 工具 propose 记一条候选，让用户决定要不要留下（候选正文不进你的上下文，用户 /learnings list 才看得到）。',
+      ]
       if (config.requireApproval) {
         lines.push('技能写入（skill_write 工具）要走审批：用户点头才落盘；新建的技能默认停用，等用户在 /skills 里启用。')
       }
-      if (lines.length === 0) return ''
       return `【经验沉淀】${lines.join('')}`
     }
 
+    /** 上报台账：同一份正文只记一张注入卡（与 env-facts / team-board 同一套理由）。 */
+    const tailReported = new InjectionReportLedger()
+    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
+    const tailNoted = new InjectionNoteLedger()
+
+    /**
+     * 尾部投影：把「待审候选 N 条」这个易变事实附到请求末尾，N=0 时原样返回。
+     *
+     * 落位 order 620：env-facts（600）、memory 索引（610）之后，microcompact（650）之前；
+     * 只追加一条 user 消息，后面的历史前缀照旧命中缓存。
+     */
+    const offImproveTail = ctx.prompt.registerProjection(
+      SELF_IMPROVE_KIND,
+      (messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter): ChatMessage[] => {
+        if (!config.enabled) return messages
+        const owner = session ?? ctx.session.current()
+        let pending = 0
+        try {
+          pending = readCandidates(owner.meta.cwd).filter((item) => item.state === 'candidate').length
+        } catch {
+          // 候选清单读不出来不该拖累请求：这一轮就当没有（提示词少了它，功能照跑）
+          return messages
+        }
+        if (pending <= 0) return messages
+        const text =
+          `候选清单里有 ${String(pending)} 条待审经验（正文不在你的上下文里，用户 /learnings list 才看得到；` +
+          `要变成记忆或技能得由用户 promote）。\n${TAIL_NOTE}`
+        // 注入不落会话历史：注入方自己补一条 note，「模型可见 ⟺ 日志可重建」才成立。
+        // 同一份历史重跑（invariant 二次派生）时最后一条消息引用不变 → 不重复落。
+        const last = owner.messages[owner.messages.length - 1]
+        if (tailNoted.take(owner.meta.id, last, text)) owner.appendNote(SELF_IMPROVE_KIND, text)
+        // 过上报闸：正文与上一次上报过的逐字相同就不再记卡。
+        if (report !== undefined && tailReported.take(owner.meta.id, SELF_IMPROVE_KIND, text)) {
+          report({
+            kind: SELF_IMPROVE_KIND,
+            source: 'self-improve',
+            where: 'user-tail',
+            chars: text.length,
+            preview: contextInjectionPreview(text),
+          })
+        }
+        return [...messages, { role: 'user', content: text }]
+      },
+      { order: 620 },
+    )
+
     disposers.push(ctx.effect(() => ctx.prompt.register('self-improve', promptText, { order: 43 }), 'self-improve: prompt.register'))
+    disposers.push(ctx.effect(() => offImproveTail, 'self-improve: prompt.registerProjection'))
 
     // ── 设置分区 ────────────────────────────────────────────────────────────────
 

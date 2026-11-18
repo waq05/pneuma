@@ -6,7 +6,8 @@
 
 - 注册工具 `skill_write`：create / patch / write_file / archive，risk 标 write；强制 read-before-write、改前留 `.bak`、每次变更记台账（index.ts:786-889）。
 - 注册工具 `learning`：propose 记候选、list 看清单、promote 转记忆或技能、drop 丢掉；候选正文默认不进模型上下文（index.ts:1005-1058）。
-- 提示词贡献：一段 order 43 的系统提示，只报「有几条待审候选」「技能写入要不要审批」；候选为空且不要审批时返回空串（index.ts:1189-1212）。
+- 提示词贡献：一段 order 43 的系统提示，**只留静态说明**（learning 工具怎么 propose、开了审批时技能写入要走审批）；待审条数不再是系统提示的一部分（index.ts:1300-1321）。
+- 待审条数走尾部投影（order 620）：N>0 时往请求末尾追加一条 user 消息「候选清单里有 N 条待审经验」，N=0 不发；候选正文仍然不进任何提示词（index.ts:1323-1366）。
 - 守卫 `self-improve` order 29：对 `skill_write` 返回 pass，让链跳过 order 30 的通用审批卡，改用工具自己那张信息更全的卡（index.ts:899-906）。
 - 三个命令：`/learn`、`/learnings`、`/skills-ledger`（index.ts:1065-1178）。
 - 停用之后，模型侧少掉两个工具与那段提示：它写不了技能库，纠正只留在对话里，也没有可 promote 的候选（index.ts:1190）。

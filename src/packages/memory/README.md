@@ -5,11 +5,11 @@
 ## Model Experience（模型体验）
 
 - 注册工具 `memory`：动作 add / replace / remove，格位 memory（全局）/ user（偏好）/ workspace（本工作区），一次可以传多条 operations（index.ts:273-365）。
-- 提示词块：`ctx.prompt.register('memory', …, { order: 60, block: 'agents-md' })`（index.ts:371），跟 AGENTS.md 同一块；内容是栏位说明加三格清单。
+- 提示词块：系统提示里只留一段**静态**说明（索引在消息末尾、读写用 memory 工具），`ctx.prompt.register('memory', …, { order: 60 })`（index.ts:416-419）；三格清单本身改由尾部投影（order 610）附在请求末尾（index.ts:244-278）。
 - 写入后立刻重算快照，本会话下一次请求就用新的（index.ts:152-169、352-356）；同时挂一条一次性的「你加载的副本已过期」提醒（index.ts:184-185）。
 - 额度：global 2200、user 1375、workspace 2200 字（core/memory.ts:89-93）；写满整次拒绝，并把当前条目回吐给模型，让它自己合并（index.ts:340-350）。
 - 自动复盘：默认每 10 个有实质内容的用户回合起一轮，只准 add（index.ts:867-876，计数口径见 872-874）。
-- 整包停用之后，模型侧少掉：系统提示里那一栏记忆、`memory` 工具、以及每 10 回合一次的自动复盘。**注意区分**：设置里把「长期记忆」关掉（`enabled: false`）时工具仍在目录里——它不撤注册，只在调用时回「现在是关着的」（index.ts:314、367）；只有停用整个包才会真的少掉工具。
+- 整包停用之后，模型侧少掉：消息末尾那一栏记忆、`memory` 工具、以及每 10 回合一次的自动复盘。**注意区分**：设置里把「长期记忆」关掉（`enabled: false`）时工具仍在目录里——它不撤注册，只在调用时回「现在是关着的」（index.ts:356、426）；只有停用整个包才会真的少掉工具。
 
 ## Known Limitations（已知限制）
 

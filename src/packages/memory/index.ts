@@ -1,14 +1,17 @@
 /**
  * memory 插件：跨会话留下的长期记忆。
  *
- * 三格清单落在 `~/.dsc/memory/`（全局事实 / 用户偏好 / 本工作区），并进 `# agentsMd`
- * 块注入系统提示词；模型通过一个 `memory` 工具读写，用户通过设置页或 `/memory` 看。
+ * 三格清单落在 `~/.dsc/memory/`（全局事实 / 用户偏好 / 本工作区），**附在请求末尾的
+ * user 消息里**交给模型（2026-11 P0 起不再进系统提示词——索引一写就变，留在头部会让
+ * 服务端前缀缓存每次写入都整段作废）；模型通过一个 `memory` 工具读写，用户通过设置页
+ * 或 `/memory` 看。
  *
  * 几条设计上的取舍，前三条跟 Hermes 的 `tools/memory_tool.py` 对过：
  *   - 额度写满不截断，整次拒绝并把现状回吐给模型，让它自己去合并（截断会让模型以为写进去了）；
  *   - 无人值守的自动复盘只准 `add`，不许删改既有条目（复盘的时候没有人在看屏幕）；
  *   - 写入后**立刻重算**注入快照：同一个会话的下一次请求（含同轮工具循环的下一步）就带新记忆，
- *     不再等新会话或压缩（2026-10 起）；顺手挂一条一次性「你加载的副本已过期」提醒。
+ *     不再等新会话或压缩（2026-10 起）；顺手挂一条「你加载的副本已过期」提醒——它在本回合
+ *     内一直有效（投影链对同一请求会被跑两遍，必须幂等），到 `dsc/turn-end` 才清掉。
  *   - 整理（prune）只移不删：陈旧且从没被引用过的条目搬进同目录 `.archive.md`。
  *
  * @module dsc/plugins/memory
@@ -47,6 +50,11 @@ import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runt
 import type { MemoryService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
+import type { ContextInjectionReporter } from '@pneuma/runtime/services/types.js'
 
 /**
  * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
@@ -69,6 +77,28 @@ const PROMPT_HEADER = [
   '不是让你现在去做。觉得某条已经过时，用 memory 工具改掉或删掉它。',
   '重算时机：写入后立刻换新（本会话下一次请求就是最新的），不必等新会话。',
 ].join('')
+
+/**
+ * 系统提示里 memory 段的**静态**说明（2026-11 P0）。
+ *
+ * 这一段只讲「索引在哪、怎么读写」，一个易变值都不带：索引正文改由尾部投影
+ * （{@link MEMORY_INDEX_KIND}，order 610）附在请求末尾。以前整份索引并进
+ * `# agentsMd` 块，写一条记忆就改动了前缀缓存断点（约 6K 字符处）之后的全部内容。
+ * 代价：模型要知道「索引不在系统提示里、在消息末尾」——所以这里必须写清位置。
+ */
+const MEMORY_SECTION_TEXT =
+  '【长期记忆】长期记忆索引（三格条目清单）由程序在每次请求时附在消息末尾，不在系统提示里；' +
+  '写入/整理后本会话下一次请求就带最新一份，不必等新会话。读写记忆用 memory 工具；' +
+  '刚写入或整理过，末尾会多一条「你加载的副本已过期」的提醒。'
+
+/** 尾部投影的名字、注入卡类别与留底 note 的 id（三处同一个字面量，方便对账）。 */
+const MEMORY_INDEX_KIND = 'memory-index'
+
+/**
+ * 每条尾消息固定的收尾行。**措辞不许改**：另一条分支（P1）靠这句把程序合成的
+ * user 消息排除出「新一轮用户发言」的判定，改了判定就会误把注入当用户轮。
+ */
+const TAIL_NOTE = '（本条是程序自动附上的，不是用户发言）'
 
 /** 三格在设置页上的叫法（工具输出仍用 TARGET_LABELS，那份是给模型看的）。 */
 const cellLabels = (): Record<MemoryTarget, string> => ({
@@ -183,20 +213,59 @@ export const memoryPlugin: Plugin.Object = {
     rebuild()
 
     /**
-     * 一次性「你加载的记忆副本已过期」提醒（照 ZCode 的 memory_update 语义）：
-     * 写入/整理后置上，下一次组装请求时拼在记忆栏末尾，随即清掉，绝不常驻。
+     * 「你加载的记忆副本已过期」提醒（照 ZCode 的 memory_update 语义）：写入/整理后置上，
+     * 拼在尾部快照末尾，**到本回合结束（`dsc/turn-end`）才清掉**。
+     *
+     * 为什么不在第一次组装时消费掉：投影链对同一个请求会被跑两遍（真请求 + 请求发出前的
+     * `checkRequestInvariant` 重建），两遍必须给出逐字相同的消息数组，否则 invariant 会误报。
+     * 一次性消费会让第二遍少一段文本 —— 所以改成「回合内保留、回合边界清掉」，天然幂等。
      */
     let staleNote = ''
-    /** 拼给模型的那一段：快照 + （有的话）一次性过期提醒。每次请求组装都走这里，注入计数也挂在这。 */
-    const promptText = (): string => {
+    /** 拼给尾部投影的那一段：快照 + （有的话）过期提醒。注入计数也挂在这。 */
+    const tailText = (): string => {
       countInjected()
       if (staleNote === '') return snapshot
-      const note = staleNote
-      staleNote = ''
-      return snapshot === '' ? note : `${snapshot}\n\n${note}`
+      return snapshot === '' ? staleNote : `${snapshot}\n\n${staleNote}`
     }
     const STALE_NOTE =
       '（提醒：你前面加载的记忆副本已过期——本会话刚落盘过记忆写入/整理，以上是重算后的最新一份。）'
+
+    /** 上报台账：同一份正文只记一张注入卡（与 env-facts / team-board 同一套理由）。 */
+    const tailReported = new InjectionReportLedger()
+    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
+    const tailNoted = new InjectionNoteLedger()
+
+    /**
+     * 尾部投影：记忆索引（+ 有的话的过期提醒）附在请求末尾，不再进系统提示。
+     *
+     * 落位 order 610：env-facts（600）之后、microcompact（650）之前。只追加一条 user 消息，
+     * 没有内容时原样返回 `messages`（同一个引用）——多数轮次因此既不动系统提示也不动前缀。
+     */
+    const offMemoryTail = ctx.prompt.registerProjection(
+      MEMORY_INDEX_KIND,
+      (messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter): ChatMessage[] => {
+        const body = tailText()
+        if (body === '') return messages
+        const owner = session ?? ctx.session.current()
+        const text = `${body}\n\n${TAIL_NOTE}`
+        // 注入不落会话历史：按 `session-core/loop.ts` 的规矩，注入方自己补一条 note，
+        // 「模型可见 ⟺ 日志可重建」才成立。同一份历史重跑时最后一条消息引用不变 → 不重复落。
+        const last = owner.messages[owner.messages.length - 1]
+        if (tailNoted.take(owner.meta.id, last, text)) owner.appendNote(MEMORY_INDEX_KIND, text)
+        // 过上报闸：正文与上一次上报过的逐字相同就不再记卡（二次派生 / 压缩后重注都会走到）。
+        if (report !== undefined && tailReported.take(owner.meta.id, MEMORY_INDEX_KIND, text)) {
+          report({
+            kind: MEMORY_INDEX_KIND,
+            source: 'memory',
+            where: 'user-tail',
+            chars: text.length,
+            preview: contextInjectionPreview(text),
+          })
+        }
+        return [...messages, { role: 'user', content: text }]
+      },
+      { order: 610 },
+    )
 
     // ── 记忆工具 ────────────────────────────────────────────────────────────
 
@@ -384,10 +453,11 @@ export const memoryPlugin: Plugin.Object = {
 
     const offTool = ctx.tools.register(memoryTool)
     ctx.effect(() => offTool, 'memory: tools.register')
-    // 并进 `# agentsMd` 块（与 AGENTS.md 同一块）；每次组装请求时取一次文本，
-    // 所以写入后 rebuild 的当轮效果 = 「同一个会话的下一次请求就带新的记忆」。
-    const offPrompt = ctx.prompt.register('memory', () => promptText(), { order: 60, block: 'agents-md' })
+    // 系统提示只留静态说明（2026-11 P0）：索引正文走尾部投影（见 offMemoryTail），
+    // 写记忆不再改动前缀缓存断点之后的任何字节。关掉长期记忆时这段整体缺席。
+    const offPrompt = ctx.prompt.register('memory', () => (config.enabled ? MEMORY_SECTION_TEXT : ''), { order: 60 })
     ctx.effect(() => offPrompt, 'memory: prompt.register')
+    ctx.effect(() => offMemoryTail, 'memory: prompt.registerProjection')
 
     // ── 服务 ────────────────────────────────────────────────────────────────
 
@@ -867,6 +937,8 @@ export const memoryPlugin: Plugin.Object = {
       reviewing = false
       wroteThisTurn = false
       evalTurns = 0
+      // 过期提醒只在「写入/整理之后的那一个回合」有效，跨会话重开不该再带。
+      staleNote = ''
       injectedThisTurn.clear()
       if (config.enabled && config.pruneEnabled) {
         const message = pruneAndReport()
@@ -887,6 +959,8 @@ export const memoryPlugin: Plugin.Object = {
       failedWrites = 0
       // 回合边界：注入去重复位；这一回合算进评估的轮数（评估下一回合才有「轮数」可看）。
       injectedThisTurn.clear()
+      // 「副本已过期」提醒只在本回合内有效（幂等要求见 staleNote 的注释），回合收尾清掉。
+      staleNote = ''
       if (config.enabled) evalTurns += 1
       const wrote = wroteThisTurn
       wroteThisTurn = false
@@ -915,6 +989,7 @@ export const memoryPlugin: Plugin.Object = {
     return () => {
       offSection()
       offPrompt()
+      offMemoryTail()
       offTool()
     }
   },

@@ -42,12 +42,29 @@ function fakeCtx() {
   const tools: Array<Record<string, unknown>> = []
   const commands: Array<{ spec: Record<string, unknown>; run: (args: unknown) => unknown }> = []
   const prompts: Array<() => string> = []
+  const projections: Array<{
+    id: string
+    apply: (
+      messages: Array<{ role: string; content: string }>,
+      session?: unknown,
+      report?: (view: Record<string, unknown>) => void,
+    ) => Array<{ role: string; content: string }>
+    options?: Record<string, unknown>
+  }> = []
+  const notes: Array<{ id: string; text: string }> = []
   const surfaces = new Map<string, () => unknown>()
   const notices: string[] = []
   const followups: Array<{ text: string; target: string | undefined; kind: string }> = []
   const events: string[] = []
   const uiNotices: string[] = []
   let section: Record<string, unknown> | null = null
+  const session = {
+    meta: { id: 's1', cwd: HOME },
+    messages: [] as Array<{ role: string; content: string }>,
+    appendNote: (id: string, text: string) => {
+      notes.push({ id, text })
+    },
+  }
   const ctx = {
     effect(fn: () => unknown) {
       fn()
@@ -68,6 +85,14 @@ function fakeCtx() {
     prompt: {
       register(_id: string, fn: () => string) {
         prompts.push(fn)
+        return () => undefined
+      },
+      registerProjection(
+        id: string,
+        apply: (typeof projections)[number]['apply'],
+        options?: Record<string, unknown>,
+      ) {
+        projections.push({ id, apply, ...(options === undefined ? {} : { options }) })
         return () => undefined
       },
     },
@@ -95,7 +120,7 @@ function fakeCtx() {
       },
     },
     waiting: { anyFor: () => false },
-    session: { current: () => ({ meta: { id: 's1', cwd: HOME } }) },
+    session: { current: () => session },
     llm: { route: () => ({ baseUrl: 'https://api.test', apiKey: 'fake-key', model: 'test-model' }) },
     get: () => undefined,
     on(event: string) {
@@ -108,6 +133,9 @@ function fakeCtx() {
     tools,
     commands,
     prompts,
+    projections,
+    notes,
+    session,
     surfaces,
     notices,
     followups,
@@ -143,6 +171,9 @@ describe('装配面', () => {
     expect(wired.tools.map((tool) => tool['name'])).toEqual(['schedule'])
     expect(wired.commands.map((item) => item.spec['name'])).toEqual(['schedule'])
     expect(wired.prompts).toHaveLength(1)
+    // 2026-11 P0：任务清单/下次时刻走尾部投影（order 630），系统提示段只剩静态说明。
+    expect(wired.projections.map((projection) => projection.id)).toEqual(['schedule'])
+    expect(wired.projections[0]?.options).toMatchObject({ order: 630 })
     expect(wired.surfaces.has('scheduled')).toBe(true)
     expect(wired.sectionOf()).toMatchObject({ id: 'schedule', order: 32 })
     expect(wired.events).toContain('dsc/turn-end')
@@ -325,7 +356,7 @@ describe('命令 /schedule', () => {
 })
 
 describe('提示词 / 快照 / 设置分区', () => {
-  test('提示词：没有任务或总开关关着给空串；有任务时写清来源与授权边界', async () => {
+  test('提示词：没有任务或总开关关着给空串；有任务时只给静态说明（无标题、无下次时刻）', async () => {
     const wired = mount()
     cleanup = wired.dispose
     expect(wired.prompts[0]!()).toBe('')
@@ -336,9 +367,14 @@ describe('提示词 / 快照 / 设置分区', () => {
       rule: 'daily:09:30',
     })
     const text = wired.prompts[0]!()
-    expect(text).toContain('1 个定时任务')
+    expect(text).toContain('你有定时任务')
     expect(text).toContain('不构成任何授权')
     expect(text).toContain('至多补一次')
+    expect(text).toContain('action=list')
+    // 静态段里不许出现任务标题或绝对/相对触发时刻。
+    expect(text).not.toContain('早报')
+    expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    expect(text).not.toMatch(/每天\s*\d{2}:\d{2}/)
 
     const off = mount({ enabled: false, timeZone: 'UTC' })
     cleanup = off.dispose

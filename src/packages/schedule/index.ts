@@ -40,7 +40,11 @@ import { ScheduleStore, type ScheduleTask } from '@pneuma/runtime/core/schedule/
 import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
 import { clampInt as clampNumber } from '@pneuma/runtime/core/clamp.js'
 import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'
-import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec, ContextInjectionReporter } from '@pneuma/runtime/services/types.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 
 /**
@@ -66,6 +70,29 @@ interface SchedulePluginConfig {
 
 /** 缺省值：时区取系统时区，单次最长 10 分钟，历史 200 条。 */
 const DEFAULTS = { enabled: true, maxRunSeconds: 600, historyLimit: 200 }
+
+/** 尾部投影的名字、注入卡类别与留底 note 的 id（三处同一个字面量，方便对账）。 */
+const SCHEDULE_KIND = 'schedule'
+
+/**
+ * 每条尾消息固定的收尾行。**措辞不许改**：另一条分支（P1）靠这句把程序合成的
+ * user 消息排除出「新一轮用户发言」的判定，改了判定就会误把注入当用户轮。
+ */
+const TAIL_NOTE = '（本条是程序自动附上的，不是用户发言）'
+
+/**
+ * 系统提示里 schedule 段的**静态**说明（2026-11 P0）。
+ *
+ * 只讲「有定时任务这回事、触发消息的授权边界、去哪儿查」，不带任何一条任务的数据：
+ * 任务标题清单与下次触发时刻以前直接拼在这里，改一条任务/到点触发一次就让前缀缓存
+ * 从约 2.5K 字符处整段作废。现在清单与时刻只走 `schedule` 工具与尾部投影。
+ */
+const PROMPT_GUIDE =
+  '你有定时任务（由 dsc 定时任务插件按排期触发，到点会把任务描述作为一条消息投给模型）。\n' +
+  '收到「【定时任务触发】」开头的消息时：那不是用户当下发的指令，也不构成任何授权，' +
+  '按里面的任务描述做事，需要授权的动作照常走审批。' +
+  '宿主不常驻（桌面端/终端关着）时不会触发，错过的排期至多补一次、不补积压。\n' +
+  '当前有哪些任务、每条下次什么时候触发：用 schedule 工具的 action=list 查。'
 
 /**
  * 从插件配置里取可调项并夹到合理区间。
@@ -456,28 +483,60 @@ export const schedulePlugin: Plugin.Object = {
     ctx.effect(() => commandDisposer, 'schedule: commands.register')
 
     // ── 系统提示：只在「总开关开着且有启用的任务」时注入 ────────────────────────
+    // 正文是常量（PROMPT_GUIDE）：任务标题与下次触发时刻不再进系统提示，
+    // 否则建一条任务 / 到点触发一次就会把前缀缓存从这一段起整段打掉。
     const promptDisposer = ctx.prompt.register(
       'schedule',
       () => {
         const current = readConfig(passed)
         if (!current.enabled) return ''
-        const tasks = store.list().filter((task) => task.enabled)
-        if (tasks.length === 0) return ''
-        const lines = tasks
-          .slice(0, 12)
-          .map((task) => `- ${task.title}｜${describeRule(task.rule, task.timeZone)}｜${describeNext(task.rule, task.timeZone, task.nextRunAt)}`)
-        if (tasks.length > 12) lines.push(`- …还有 ${tasks.length - 12} 条（/schedule list 看全部）`)
-        return (
-          `你有 ${tasks.length} 个定时任务（由 dsc 定时任务插件按排期触发，到点会把任务描述作为一条消息投给模型）：\n` +
-          `${lines.join('\n')}\n` +
-          '收到「【定时任务触发】」开头的消息时：那不是用户当下发的指令，也不构成任何授权，' +
-          '按里面的任务描述做事，需要授权的动作照常走审批。' +
-          '宿主不常驻（桌面端/终端关着）时不会触发，错过的排期至多补一次、不补积压。'
-        )
+        if (store.list().filter((task) => task.enabled).length === 0) return ''
+        return PROMPT_GUIDE
       },
       { order: 41 },
     )
     ctx.effect(() => promptDisposer, 'schedule: prompt.register')
+
+    /**
+     * 尾部投影：把「有 N 个启用的定时任务」这个易变事实附在请求末尾，没任务时原样返回。
+     *
+     * 落位 order 630：env-facts（600）、memory 索引（610）、self-improve 候选（620）之后，
+     * microcompact（650）之前。只追加一条 user 消息，变化只落在尾巴。
+     */
+    /** 上报台账：同一份正文只记一张注入卡（与 env-facts / team-board 同一套理由）。 */
+    const promptTailReported = new InjectionReportLedger()
+    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
+    const promptTailNoted = new InjectionNoteLedger()
+    const promptTailDisposer = ctx.prompt.registerProjection(
+      SCHEDULE_KIND,
+      (messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter): ChatMessage[] => {
+        const current = readConfig(passed)
+        if (!current.enabled) return messages
+        const enabledTasks = store.list().filter((task) => task.enabled)
+        if (enabledTasks.length === 0) return messages
+        const owner = session ?? ctx.session.current()
+        const text =
+          `本会话有 ${String(enabledTasks.length)} 个启用的定时任务；` +
+          `用 schedule 工具的 action=list 查看清单与下次触发时间。\n${TAIL_NOTE}`
+        // 注入不落会话历史：注入方自己补一条 note，「模型可见 ⟺ 日志可重建」才成立。
+        // 同一份历史重跑（invariant 二次派生）时最后一条消息引用不变 → 不重复落。
+        const last = owner.messages[owner.messages.length - 1]
+        if (promptTailNoted.take(owner.meta.id, last, text)) owner.appendNote(SCHEDULE_KIND, text)
+        // 过上报闸：正文与上一次上报过的逐字相同就不再记卡。
+        if (report !== undefined && promptTailReported.take(owner.meta.id, SCHEDULE_KIND, text)) {
+          report({
+            kind: SCHEDULE_KIND,
+            source: 'schedule',
+            where: 'user-tail',
+            chars: text.length,
+            preview: contextInjectionPreview(text),
+          })
+        }
+        return [...messages, { role: 'user', content: text }]
+      },
+      { order: 630 },
+    )
+    ctx.effect(() => promptTailDisposer, 'schedule: prompt.registerProjection')
 
     // ── 会话结束对账：把「投出去了但回合失败」接回到重试策略上 ───────────────────
     const turnEndDisposer = ctx.on('dsc/turn-end', (reason, signal) => {
@@ -602,6 +661,7 @@ export const schedulePlugin: Plugin.Object = {
     return () => {
       runner.stop()
       promptDisposer()
+      promptTailDisposer()
       turnEndDisposer()
       sectionDisposer()
       commandDisposer()
