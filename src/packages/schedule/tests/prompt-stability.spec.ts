@@ -7,7 +7,8 @@
  * 2. **静态段不含易变值**：没有任务标题、没有绝对/相对触发时刻，只有「用法 + 授权边界」。
  * 3. **尾部投影**：有任务时往请求末尾追加一条 user 消息，最后一行是固定标记句；
  *    没任务/总开关关着时原样返回同一个数组；同一份历史重跑两次输出逐字相同。
- * 4. **注入卡与留底 note**：正文变了才再记卡；同一份历史的二次派生只落一条 note。
+ * 4. **注入卡与留底状态**：正文变了才再记卡；会话状态按正文哈希去重，同一段正文跨多次
+ *    请求（历史最后一条消息每次不同）只留一条，日志不随请求数增长。
  *
  * @module @pneuma/schedule/tests/prompt-stability
  */
@@ -79,8 +80,14 @@ interface Wired {
   tools: Array<Record<string, unknown>>
   prompts: Array<() => string>
   projections: CapturedProjection[]
-  notes: Array<{ id: string; text: string }>
-  session: { meta: { id: string; cwd: string }; messages: Msg[]; appendNote: (id: string, text: string) => void }
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  states: Array<{ id: string; payload: { hash: string; text: string } }>
+  session: {
+    meta: { id: string; cwd: string }
+    messages: Msg[]
+    state: (id: string) => { hash?: string; text?: string } | undefined
+    appendState: (id: string, payload: { hash: string; text: string }) => void
+  }
   dispose: () => void
 }
 
@@ -88,12 +95,15 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, timeZone: 'U
   const tools: Array<Record<string, unknown>> = []
   const prompts: Array<() => string> = []
   const projections: CapturedProjection[] = []
-  const notes: Array<{ id: string; text: string }> = []
+  const stateMap = new Map<string, { hash?: string; text?: string }>()
+  const states: Array<{ id: string; payload: { hash: string; text: string } }> = []
   const session = {
     meta: { id: 'sched-stability', cwd: HOME },
     messages: [] as Msg[],
-    appendNote: (id: string, text: string) => {
-      notes.push({ id, text })
+    state: (id: string) => stateMap.get(id),
+    appendState: (id: string, payload: { hash: string; text: string }) => {
+      stateMap.set(id, payload)
+      states.push({ id, payload })
     },
   }
 
@@ -145,7 +155,7 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, timeZone: 'U
     tools,
     prompts,
     projections,
-    notes,
+    states,
     session,
     dispose: () => undefined,
   }
@@ -240,17 +250,17 @@ describe('系统提示逐字稳定', () => {
 // ── 2. 尾部投影 ─────────────────────────────────────────────────────────────
 
 describe('尾部投影', () => {
-  test('没有任务：原样返回同一个数组，不报卡、不落 note', () => {
+  test('没有任务：原样返回同一个数组，不报卡、不落状态', () => {
     const wired = mount()
     const projection = tailProjection(wired)
     const base = history()
     const views: Array<Record<string, unknown>> = []
     expect(projection.apply(base, undefined, (view) => views.push(view)), '没任务不注入').toBe(base)
     expect(views).toHaveLength(0)
-    expect(wired.notes).toHaveLength(0)
+    expect(wired.states).toHaveLength(0)
   })
 
-  test('有任务：追加一条 user 消息、末行是标记句；两次调用逐字相同、卡与 note 各只一次', async () => {
+  test('有任务：追加一条 user 消息、末行是标记句；跨请求同正文只落一条状态，条数变了再落一条', async () => {
     const wired = mount()
     await runTool(wired, { action: 'create', title: '早报', prompt: '写早报', rule: 'daily:09:30' })
     const projection = tailProjection(wired)
@@ -265,19 +275,24 @@ describe('尾部投影', () => {
     expect(text.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
     expect(views).toHaveLength(1)
     expect(views[0]).toMatchObject({ kind: 'schedule', source: 'schedule', where: 'user-tail' })
-    expect(wired.notes.filter((item) => item.id === 'schedule')).toHaveLength(1)
+    expect(wired.states.filter((item) => item.id === 'schedule')).toHaveLength(1)
+    expect(wired.states[0]?.payload.text).toBe(text)
 
-    // 同一份历史重跑（invariant 二次派生）：正文逐字相同、不再报卡、不再落 note。
-    const again = projection.apply(base, undefined, (view) => views.push(view))
-    expect(String(again.at(-1)?.content), '二次派生必须给同一个答案').toBe(text)
+    // 跨请求：历史最后一条消息每次都不同，但正文没变 → 状态不追写（日志不随请求数增长）。
+    for (let step = 0; step < 5; step += 1) {
+      wired.session.messages.push({ role: 'assistant', content: `第 ${String(step)} 轮` })
+      const next = projection.apply(history(), undefined, (view) => views.push(view))
+      expect(String(next.at(-1)?.content)).toBe(text)
+    }
+    expect(wired.states.filter((item) => item.id === 'schedule'), '同正文跨请求只留一条').toHaveLength(1)
     expect(views, '正文没变不重复记卡').toHaveLength(1)
-    expect(wired.notes, '同一份历史只落一条 note').toHaveLength(1)
 
-    // 再加一条任务：条数变了 → 正文变了 → 再记一张卡。
+    // 再加一条任务：条数变了 → 正文变了 → 再记一张卡 + 一条状态。
     await runTool(wired, { action: 'create', title: '喝水', prompt: '起来喝水', rule: 'every:30m' })
     const changed = projection.apply(history(), undefined, (view) => views.push(view))
     expect(String(changed.at(-1)?.content)).toContain('本会话有 2 个启用的定时任务')
     expect(views).toHaveLength(2)
+    expect(wired.states.filter((item) => item.id === 'schedule')).toHaveLength(2)
   })
 
   test('全部暂停：原样返回（没有启用的任务就不占尾巴）', async () => {

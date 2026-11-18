@@ -5,7 +5,7 @@
  * 1. **系统提示逐字稳定**：propose 一条候选前后，整份系统提示与 sha256 一个字节都不变；
  *    静态段里没有条数、没有候选正文。
  * 2. **尾部投影**：N=0 原样返回同一个数组；N>0 追加一条 user 消息，最后一行是固定标记句。
- * 3. **同一份历史重跑两次逐字相同**；注入卡与留底 note 各只记一次。
+ * 3. **同一份正文跨多次请求（历史最后一条消息每次不同）只落一条会话状态**；正文变了再落一条。
  * 4. **条数变了才再记卡**。
  *
  * @module @pneuma/self-improve/tests/prompt-stability
@@ -90,8 +90,14 @@ interface Wired {
   tools: Map<string, { run: (args: Record<string, unknown>) => Promise<string> }>
   prompts: CapturedPrompt[]
   projections: CapturedProjection[]
-  notes: Array<{ id: string; text: string }>
-  session: { meta: { id: string; cwd: string }; messages: Msg[]; appendNote: (id: string, text: string) => void }
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  stateWrites: Array<{ name: string; value: unknown }>
+  session: {
+    meta: { id: string; cwd: string }
+    messages: Msg[]
+    state: (name: string) => unknown
+    appendState: (name: string, value: unknown) => void
+  }
   dispose: () => void
 }
 
@@ -100,13 +106,15 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, requireAppro
   const tools = new Map<string, { run: (args: Record<string, unknown>) => Promise<string> }>()
   const prompts: CapturedPrompt[] = []
   const projections: CapturedProjection[] = []
-  const notes: Array<{ id: string; text: string }> = []
   const stateMap = new Map<string, unknown>()
+  const stateWrites: Array<{ name: string; value: unknown }> = []
   const session = {
     meta: { id: 'improve-stability', cwd },
     messages: [] as Msg[],
-    appendNote: (id: string, text: string) => {
-      notes.push({ id, text })
+    state: (name: string) => stateMap.get(name),
+    appendState: (name: string, value: unknown) => {
+      stateMap.set(name, value)
+      stateWrites.push({ name, value })
     },
   }
 
@@ -164,9 +172,8 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, requireAppro
         messages: session.messages,
         filePath: join(HOME, 'sessions', 'improve-stability.jsonl'),
         toolErrors: new Map<string, string>(),
-        state: (name: string) => stateMap.get(name),
-        appendState: (name: string, value: unknown) => stateMap.set(name, value),
-        appendNote: session.appendNote,
+        state: session.state,
+        appendState: session.appendState,
       }),
     },
     transcript: { system: () => undefined },
@@ -184,7 +191,7 @@ function fakeCtx(config: Record<string, unknown> = { enabled: true, requireAppro
     tools,
     prompts,
     projections,
-    notes,
+    stateWrites,
     session,
     dispose: () => undefined,
   }
@@ -263,17 +270,17 @@ describe('系统提示逐字稳定', () => {
 // ── 2. 尾部投影 ─────────────────────────────────────────────────────────────
 
 describe('尾部投影', () => {
-  test('没有待审候选：原样返回同一个数组，不报卡、不落 note', () => {
+  test('没有待审候选：原样返回同一个数组，不报卡、不落状态', () => {
     const wired = mount()
     const projection = tailProjection(wired)
     const base = history()
     const views: Array<Record<string, unknown>> = []
     expect(projection.apply(base, undefined, (view) => views.push(view)), 'N=0 不注入').toBe(base)
     expect(views).toHaveLength(0)
-    expect(wired.notes).toHaveLength(0)
+    expect(wired.stateWrites).toHaveLength(0)
   })
 
-  test('有候选：追加一条 user 消息、末行标记句；两次调用逐字相同、卡与 note 各一次', async () => {
+  test('有候选：追加一条 user 消息、末行标记句；跨请求同正文只落一条状态', async () => {
     const wired = mount()
     await propose(wired, '一条待审经验')
     const projection = tailProjection(wired)
@@ -287,18 +294,25 @@ describe('尾部投影', () => {
     expect(text.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
     expect(views).toHaveLength(1)
     expect(views[0]).toMatchObject({ kind: 'self-improve', source: 'self-improve', where: 'user-tail' })
-    expect(wired.notes.filter((item) => item.id === 'self-improve')).toHaveLength(1)
+    expect(wired.stateWrites.filter((item) => item.name === 'self-improve')).toHaveLength(1)
 
-    // 同一份历史重跑（invariant 二次派生）：逐字相同、不再报卡、不再落 note。
+    // 同一份历史重跑（invariant 二次派生）：逐字相同、不再报卡、不追写状态。
     const again = projection.apply(base, undefined, (view) => views.push(view))
     expect(String(again.at(-1)?.content), '二次派生必须给同一个答案').toBe(text)
     expect(views, '正文没变不重复记卡').toHaveLength(1)
-    expect(wired.notes, '同一份历史只落一条 note').toHaveLength(1)
 
-    // 再登记一条：条数变了 → 正文变了 → 再记一张卡。
+    // 跨请求：历史最后一条消息每次都不同，正文没变 → 状态不追写。
+    for (let step = 0; step < 5; step += 1) {
+      wired.session.messages.push({ role: 'assistant', content: `第 ${String(step)} 步` })
+      expect(String(projection.apply(history()).at(-1)?.content)).toBe(text)
+    }
+    expect(wired.stateWrites.filter((item) => item.name === 'self-improve'), '跨请求同正文只留一条').toHaveLength(1)
+
+    // 再登记一条：条数变了 → 正文变了 → 再记一张卡 + 一条状态。
     await propose(wired, '第二条待审经验')
     const changed = projection.apply(history(), undefined, (view) => views.push(view))
     expect(String(changed.at(-1)?.content)).toContain('候选清单里有 2 条待审经验')
     expect(views).toHaveLength(2)
+    expect(wired.stateWrites.filter((item) => item.name === 'self-improve')).toHaveLength(2)
   })
 })

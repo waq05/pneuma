@@ -50,11 +50,26 @@ import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runt
 import type { MemoryService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
-import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
 import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import { createHash } from 'node:crypto'
 import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import type { ContextInjectionReporter } from '@pneuma/runtime/services/types.js'
+
+/**
+ * 尾部注入的留底条目（会话日志 `state` 记录）：最近一次附给模型的记忆索引全文 + 哈希。
+ *
+ * 为什么按「正文哈希」而不是按「历史最后一条消息」去重：后者每一跳请求都会变（历史在长），
+ * 于是记忆索引常驻时会退化成「每个请求往会话日志写一条完整索引」——索引上限 25K 字符，
+ * 长回合能写出几百 KB，重放也跟着变慢。判据与 env-facts（`packages/prompt/index.ts` 的
+ * `noteEnvFacts`）完全一致：正文变了才写一条，恢复会话时最后一条就是模型当时看到的内容。
+ */
+declare module '@pneuma/runtime/core/session.js' {
+  interface SessionStateMap {
+    'memory-index': { hash: string; text: string }
+  }
+}
 
 /**
  * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
@@ -232,8 +247,6 @@ export const memoryPlugin: Plugin.Object = {
 
     /** 上报台账：同一份正文只记一张注入卡（与 env-facts / team-board 同一套理由）。 */
     const tailReported = new InjectionReportLedger()
-    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
-    const tailNoted = new InjectionNoteLedger()
 
     /**
      * 尾部投影：记忆索引（+ 有的话的过期提醒）附在请求末尾，不再进系统提示。
@@ -248,10 +261,11 @@ export const memoryPlugin: Plugin.Object = {
         if (body === '') return messages
         const owner = session ?? ctx.session.current()
         const text = `${body}\n\n${TAIL_NOTE}`
-        // 注入不落会话历史：按 `session-core/loop.ts` 的规矩，注入方自己补一条 note，
-        // 「模型可见 ⟺ 日志可重建」才成立。同一份历史重跑时最后一条消息引用不变 → 不重复落。
-        const last = owner.messages[owner.messages.length - 1]
-        if (tailNoted.take(owner.meta.id, last, text)) owner.appendNote(MEMORY_INDEX_KIND, text)
+        // 注入不落会话历史：按 `session-core/loop.ts` 的留底规矩，注入方自己把「模型当时
+        // 多看了什么」写进会话状态。判据是**正文哈希**（与 env-facts 的 noteEnvFacts 同一套）：
+        // 同一份索引连续多跳只留一条状态，变了才追一条；用「历史最后一条消息」判会每跳写一次。
+        const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
+        if (owner.state(MEMORY_INDEX_KIND)?.hash !== hash) owner.appendState(MEMORY_INDEX_KIND, { hash, text })
         // 过上报闸：正文与上一次上报过的逐字相同就不再记卡（二次派生 / 压缩后重注都会走到）。
         if (report !== undefined && tailReported.take(owner.meta.id, MEMORY_INDEX_KIND, text)) {
           report({

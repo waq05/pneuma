@@ -8,7 +8,8 @@
  *    没索引时原样返回同一个数组。
  * 3. **过期提醒幂等**：写入后同一回合内连续两次投影逐字相同（投影链对同一请求跑两遍，
  *    一次性消费会破坏 invariant）；到 `dsc/turn-end` 才清掉。
- * 4. **注入卡与留底 note**：卡只报一次；同一份历史的二次派生只落一条 note。
+ * 4. **注入卡与留底状态**：卡只报一次且正文没变不重复报；会话状态按正文哈希去重，
+ *    同一段正文跨多次请求只留一条（25K 字符索引也不会让日志随请求数增长）。
  *
  * @module @pneuma/memory/tests/prompt-stability
  */
@@ -82,9 +83,15 @@ interface Wired {
   tools: CapturedTool[]
   prompts: Array<() => string>
   projections: CapturedProjection[]
-  notes: Array<{ id: string; text: string }>
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  states: Array<{ id: string; payload: { hash: string; text: string } }>
   handlers: Map<string, (reason?: string) => void>
-  session: { meta: { id: string; cwd: string }; messages: Msg[]; appendNote: (id: string, text: string) => void }
+  session: {
+    meta: { id: string; cwd: string }
+    messages: Msg[]
+    state: (id: string) => { hash?: string; text?: string } | undefined
+    appendState: (id: string, payload: { hash: string; text: string }) => void
+  }
   dispose: () => void
 }
 
@@ -93,13 +100,16 @@ function fakeCtx(): Wired {
   const tools: CapturedTool[] = []
   const prompts: Array<() => string> = []
   const projections: CapturedProjection[] = []
-  const notes: Array<{ id: string; text: string }> = []
+  const stateMap = new Map<string, { hash?: string; text?: string }>()
+  const states: Array<{ id: string; payload: { hash: string; text: string } }> = []
   const handlers = new Map<string, (reason?: string) => void>()
   const session = {
     meta: { id: 'mem-stability', cwd },
     messages: [] as Msg[],
-    appendNote: (id: string, text: string) => {
-      notes.push({ id, text })
+    state: (id: string) => stateMap.get(id),
+    appendState: (id: string, payload: { hash: string; text: string }) => {
+      stateMap.set(id, payload)
+      states.push({ id, payload })
     },
   }
 
@@ -152,7 +162,7 @@ function fakeCtx(): Wired {
     tools,
     prompts,
     projections,
-    notes,
+    states,
     handlers,
     session,
     dispose: () => undefined,
@@ -181,9 +191,9 @@ function memoryTool(wired: Wired): CapturedTool {
   return tool!
 }
 
-function write(wired: Wired, content: string): Promise<string> {
+function write(wired: Wired, content: string, target = 'memory'): Promise<string> {
   return memoryTool(wired).run(
-    { target: 'memory', action: 'add', content },
+    { target, action: 'add', content },
     { cwd: wired.session.meta.cwd, sessionId: wired.session.meta.id, sessionPath: '', signal: new AbortController().signal },
   )
 }
@@ -248,17 +258,17 @@ describe('系统提示逐字稳定', () => {
 // ── 2. 尾部投影 ─────────────────────────────────────────────────────────────
 
 describe('尾部投影', () => {
-  test('没有记忆：原样返回同一个数组，不报卡、不落 note', () => {
+  test('没有记忆：原样返回同一个数组，不报卡、不落状态', () => {
     const wired = mount()
     const projection = tailProjection(wired)
     const base = history()
     const views: Array<Record<string, unknown>> = []
     expect(projection.apply(base, undefined, (view) => views.push(view)), '空索引不注入').toBe(base)
     expect(views).toHaveLength(0)
-    expect(wired.notes).toHaveLength(0)
+    expect(wired.states).toHaveLength(0)
   })
 
-  test('有记忆：追加一条 user 消息、末行标记句；连续两次逐字相同、卡与 note 各一次', async () => {
+  test('有记忆：追加一条 user 消息、末行标记句；跨请求同正文只落一条状态', async () => {
     const wired = mount()
     const content = `跨会话事实-${String(Date.now())}`
     await write(wired, content)
@@ -273,13 +283,64 @@ describe('尾部投影', () => {
     expect(text.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
     expect(views).toHaveLength(1)
     expect(views[0]).toMatchObject({ kind: 'memory-index', source: 'memory', where: 'user-tail' })
-    expect(wired.notes.filter((item) => item.id === 'memory-index')).toHaveLength(1)
+    expect(wired.states.filter((item) => item.id === 'memory-index')).toHaveLength(1)
+    expect(wired.states[0]?.payload.text).toBe(text)
 
-    // 同一份历史重跑（invariant 二次派生）：正文逐字相同、不再报卡、不再落 note。
+    // 同一份历史重跑（invariant 二次派生）：正文逐字相同、不再报卡、不追写状态。
     const again = projection.apply(base, undefined, (view) => views.push(view))
     expect(String(again.at(-1)?.content), '二次派生必须给同一个答案（过期提醒不许一次性消费）').toBe(text)
     expect(views, '正文没变不重复记卡').toHaveLength(1)
-    expect(wired.notes, '同一份历史只落一条 note').toHaveLength(1)
+
+    // 跨请求：历史最后一条消息每次都不同，正文没变 → 状态不追写（日志不随请求数增长）。
+    for (let step = 0; step < 5; step += 1) {
+      wired.session.messages.push({ role: 'assistant', content: `第 ${String(step)} 步` })
+      expect(String(projection.apply(history()).at(-1)?.content)).toBe(text)
+    }
+    expect(wired.states.filter((item) => item.id === 'memory-index'), '跨请求同正文只留一条').toHaveLength(1)
+  })
+
+  test('25K 字符的记忆索引：多请求下日志状态条数不增长，正文变了才再落一条', async () => {
+    // 把三格额度放大到能凑出 >25K 的索引（maxIndexChars 缺省 25000，超过就截断）。
+    writeFileSync(
+      join(process.env.DSC_HOME!, 'plugins.json'),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            file: 'memory',
+            disabled: false,
+            config: { globalLimit: 20_000, userLimit: 20_000, workspaceLimit: 20_000, maxIndexChars: 25_000 },
+          },
+        ],
+      }),
+      'utf8',
+    )
+    const wired = mount()
+    await write(wired, 'A'.repeat(12_000))
+    await write(wired, 'B'.repeat(12_000), 'user')
+    const projection = tailProjection(wired)
+
+    const first = String(projection.apply(history()).at(-1)?.content)
+    expect(first.length, '索引正文应接近 25K 上限').toBeGreaterThan(20_000)
+    expect(wired.states.filter((item) => item.id === 'memory-index')).toHaveLength(1)
+    const firstEntryChars = wired.states[0]!.payload.text.length
+
+    // 模拟 10 次真实请求：每次历史都比上一次长，正文不变。
+    for (let step = 0; step < 10; step += 1) {
+      wired.session.messages.push({ role: 'assistant', content: `第 ${String(step)} 步` })
+      expect(String(projection.apply(history()).at(-1)?.content)).toBe(first)
+    }
+    const indexStates = wired.states.filter((item) => item.id === 'memory-index')
+    expect(indexStates, '日志条目数不随请求数增长').toHaveLength(1)
+    // 日志总量就是「最新一份」，不是 11 份叠加。
+    const total = indexStates.reduce((sum, item) => sum + item.payload.text.length, 0)
+    expect(total).toBe(firstEntryChars)
+
+    // 正文变了（再写一条记忆）→ 才再落一条状态。
+    await write(wired, '正文变化后的一条')
+    const changed = String(projection.apply(history()).at(-1)?.content)
+    expect(changed).not.toBe(first)
+    expect(wired.states.filter((item) => item.id === 'memory-index')).toHaveLength(2)
   })
 
   test('写入后的过期提醒在本回合内幂等，回合结束才消失；索引本身一直在', async () => {

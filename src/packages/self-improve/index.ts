@@ -52,7 +52,8 @@ import { contentText, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, ContextInjectionReporter } from '@pneuma/runtime/services/types.js'
-import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import { createHash } from 'node:crypto'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
 import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from './ledger.js'
@@ -139,8 +140,21 @@ const DEFAULT_CONFIG: SelfImproveConfig = {
   maxCandidates: DEFAULT_STORE_OPTIONS.maxEntries,
 }
 
-/** 尾部投影的名字、注入卡类别与留底 note 的 id（三处同一个字面量，方便对账）。 */
+/** 尾部投影的名字、注入卡类别与留底状态条目的 id（三处同一个字面量，方便对账）。 */
 const SELF_IMPROVE_KIND = 'self-improve'
+
+/**
+ * 尾部注入的留底条目（会话日志 `state` 记录）：最近一次附给模型的候选条数全文 + 哈希。
+ *
+ * 按**正文哈希**去重，不按「历史最后一条消息」（后者每跳都变，会退化成每请求写一条日志）：
+ * 判据与 env-facts（`packages/prompt/index.ts` 的 `noteEnvFacts`）一致——正文变了才写，
+ * 恢复会话时最后一条就是模型当时看到的内容。
+ */
+declare module '@pneuma/runtime/core/session.js' {
+  interface SessionStateMap {
+    'self-improve': { hash: string; text: string }
+  }
+}
 
 /**
  * 每条尾消息固定的收尾行。**措辞不许改**：另一条分支（P1）靠这句把程序合成的
@@ -1319,8 +1333,6 @@ export const selfImprovePlugin: Plugin.Object = {
 
     /** 上报台账：同一份正文只记一张注入卡（与 env-facts / team-board 同一套理由）。 */
     const tailReported = new InjectionReportLedger()
-    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
-    const tailNoted = new InjectionNoteLedger()
 
     /**
      * 尾部投影：把「待审候选 N 条」这个易变事实附到请求末尾，N=0 时原样返回。
@@ -1344,10 +1356,10 @@ export const selfImprovePlugin: Plugin.Object = {
         const text =
           `候选清单里有 ${String(pending)} 条待审经验（正文不在你的上下文里，用户 /learnings list 才看得到；` +
           `要变成记忆或技能得由用户 promote）。\n${TAIL_NOTE}`
-        // 注入不落会话历史：注入方自己补一条 note，「模型可见 ⟺ 日志可重建」才成立。
-        // 同一份历史重跑（invariant 二次派生）时最后一条消息引用不变 → 不重复落。
-        const last = owner.messages[owner.messages.length - 1]
-        if (tailNoted.take(owner.meta.id, last, text)) owner.appendNote(SELF_IMPROVE_KIND, text)
+        // 注入不落会话历史：注入方自己把「模型当时多看了什么」写进会话状态。判据是正文哈希
+        // （与 env-facts 的 noteEnvFacts 同一套）：正文没变的后续请求不重复写日志。
+        const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
+        if (owner.state(SELF_IMPROVE_KIND)?.hash !== hash) owner.appendState(SELF_IMPROVE_KIND, { hash, text })
         // 过上报闸：正文与上一次上报过的逐字相同就不再记卡。
         if (report !== undefined && tailReported.take(owner.meta.id, SELF_IMPROVE_KIND, text)) {
           report({

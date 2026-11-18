@@ -73,7 +73,6 @@ interface FakeSession {
   toolErrors: Map<string, string>
   state(name: string): unknown
   appendState(name: string, value: unknown): void
-  appendNote(id: string, text: string): void
 }
 
 interface HarnessOptions {
@@ -94,7 +93,8 @@ interface Harness {
   sections: any[]
   prompts: any[]
   projections: any[]
-  notes: Array<{ id: string; text: string }>
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  stateWrites: Array<{ name: string; value: unknown }>
   events: string[]
   emitted: string[]
   notices: string[]
@@ -121,15 +121,17 @@ function mount(options: HarnessOptions = {}): Harness {
   mkdirSync(cwd, { recursive: true })
   const stateMap = new Map<string, unknown>(Object.entries(options.state ?? {}))
   const messages: Message[] = options.messages ?? []
-  const notes: Array<{ id: string; text: string }> = []
+  const stateWrites: Array<{ name: string; value: unknown }> = []
   const session: FakeSession = {
     meta: { id: 'sess-wiring-1', cwd },
     filePath: options.filePath ?? join(HOME, 'sessions', 'sess-wiring-1.jsonl'),
     messages,
     toolErrors: new Map(Object.entries(options.toolErrors ?? {})),
     state: (name) => stateMap.get(name),
-    appendState: (name, value) => stateMap.set(name, value),
-    appendNote: (id, text) => notes.push({ id, text }),
+    appendState: (name, value) => {
+      stateMap.set(name, value)
+      stateWrites.push({ name, value })
+    },
   }
 
   const tools = new Map<string, any>()
@@ -271,7 +273,7 @@ function mount(options: HarnessOptions = {}): Harness {
     sections,
     prompts,
     projections,
-    notes,
+    stateWrites,
     events,
     emitted,
     notices,
@@ -1077,9 +1079,15 @@ describe('提示词与设置分区', () => {
     expect(first).toContain('候选清单里有 1 条待审经验')
     expect(first).not.toContain('用户原话不该进提示词')
     expect(first?.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
-    // 投影链对同一请求跑两遍：输出必须逐字相同，注入卡/note 只记一次。
+    // 留底按正文哈希去重：同一段正文只落一条会话状态。
+    expect(harness.stateWrites.filter((item) => item.name === 'self-improve')).toHaveLength(1)
+    // 投影链对同一请求跑两遍：输出必须逐字相同，注入卡与状态都不追写。
     expect(harness.tailText()).toBe(first)
-    expect(harness.notes.filter((item) => item.id === 'self-improve')).toHaveLength(1)
+    expect(harness.stateWrites.filter((item) => item.name === 'self-improve'), '同正文不追写').toHaveLength(1)
+    // 跨请求：历史最后一条消息变了、正文没变 → 状态仍不追写。
+    harness.session.messages.push({ role: 'assistant', content: '干完一步' })
+    expect(harness.tailText()).toBe(first)
+    expect(harness.stateWrites.filter((item) => item.name === 'self-improve'), '跨请求同正文只留一条').toHaveLength(1)
     // 系统提示段不随候选条数变化。
     expect(harness.promptText()).toBe(base)
 

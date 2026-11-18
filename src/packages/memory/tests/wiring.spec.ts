@@ -79,7 +79,8 @@ interface Harness {
   tools: CapturedTool[]
   prompts: CapturedPrompt[]
   projections: CapturedProjection[]
-  notes: Array<{ id: string; text: string }>
+  /** 落进会话状态（`appendState`）的记录：留底改成哈希去重后只该随正文变化增长。 */
+  states: Array<{ id: string; payload: unknown }>
   commands: CapturedCommand[]
   sections: CapturedSection[]
   service: MemoryServiceLike
@@ -92,7 +93,8 @@ interface Harness {
   session: {
     meta: { id: string; cwd: string }
     messages: Array<{ role: string; content: string }>
-    appendNote: (id: string, text: string) => void
+    state: (id: string) => unknown
+    appendState: (id: string, payload: unknown) => void
   }
   setCwd: (cwd: string) => void
   setMessages: (messages: Array<{ role: string; content: string }>) => void
@@ -158,7 +160,8 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
   const tools: CapturedTool[] = []
   const prompts: CapturedPrompt[] = []
   const projections: CapturedProjection[] = []
-  const notes: Array<{ id: string; text: string }> = []
+  const states: Array<{ id: string; payload: unknown }> = []
+  const stateMap = new Map<string, unknown>()
   const commands: CapturedCommand[] = []
   const sections: CapturedSection[] = []
   const notices: string[] = []
@@ -174,8 +177,10 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
   harness.session = {
     meta: { id: 'mem-session', cwd: options.cwd ?? newWorkspace() },
     messages: [],
-    appendNote: (id: string, text: string) => {
-      notes.push({ id, text })
+    state: (id: string) => stateMap.get(id),
+    appendState: (id: string, payload: unknown) => {
+      stateMap.set(id, payload)
+      states.push({ id, payload })
     },
   }
 
@@ -251,7 +256,7 @@ function fakeCtx(options: { decision?: 'allow-once' | 'reject'; cwd?: string } =
   harness.tools = tools
   harness.prompts = prompts
   harness.projections = projections
-  harness.notes = notes
+  harness.states = states
   harness.commands = commands
   harness.sections = sections
   harness.notices = notices
@@ -423,13 +428,17 @@ describe('工具写入与读回', () => {
     expect(first).toContain('记忆副本已过期')
     // 尾消息最后一行是固定标记句（P1 靠它排除合成的 user 消息）。
     expect(first?.split('\n').at(-1)).toBe('（本条是程序自动附上的，不是用户发言）')
-    // 投影链对同一请求会跑两遍（真请求 + invariant 重建）：必须逐字相同。
+    // 留底按正文哈希去重：同一段正文只落一条会话状态。
+    expect(harness.states.filter((item) => item.id === 'memory-index')).toHaveLength(1)
+    // 投影链对同一请求会跑两遍（真请求 + invariant 重建）：必须逐字相同，且不追写状态。
     expect(tail(harness)).toBe(first)
-    // 回合结束才清掉提醒；索引本身仍在。
+    expect(harness.states.filter((item) => item.id === 'memory-index'), '同正文不追写').toHaveLength(1)
+    // 回合结束才清掉提醒；索引本身仍在。提醒消失 = 正文变了，再落一条状态。
     harness.handlers.get('dsc/turn-end')?.('completed')
     const after = tail(harness)
     expect(after).toContain(content)
     expect(after).not.toContain('记忆副本已过期')
+    expect(harness.states.filter((item) => item.id === 'memory-index'), '正文变了再落一条').toHaveLength(2)
   })
 
   test('别名归一：memory/global/project 都落全局，profile 落用户，cwd 落工作区', async () => {
