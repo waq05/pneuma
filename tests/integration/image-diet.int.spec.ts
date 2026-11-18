@@ -71,7 +71,13 @@ let ctx: { plugin(plugin: unknown, config: unknown): Promise<unknown>; on(event:
 const text = (value: string): ChatContentPart => ({ type: 'text', text: value })
 /** 一张图（data URL，够断言用，不解码）。 */
 const image = (url: string): ChatContentPart => ({ type: 'image_url', image_url: { url } })
-/** 夹具里的第 n 张图。 */
+/**
+ * 夹具里的第 n 张图。
+ *
+ * P2a 起批量卸载按**张数**攒批（`IMAGE_DIET_BATCH_MIN_IMAGES` = 2）：一张先等，凑够两张
+ * 才一起卸。这里验的是按预算/按龄的判定与投影链顺序，所以每一段都保证有 ≥ 2 张候选
+ * （候选张数在 batch spec 里单独钉）；url 本身长短与判据无关。
+ */
 const url = (n: number): string => `data:image/png;base64,IMG${String(n)}`
 /** 消息的内容片段。 */
 const parts = (message: ChatMessage | undefined): ChatContentPart[] =>
@@ -197,26 +203,30 @@ describe('⑧ 投影链：电脑控制正在跑时最新那张截图不许被卸
     // 截图」的投影已降级为不登记。挂上它才能钉住「截图走通用规则而不是专有文案」。
     const computerUse: ComputerUseModule = await import('@pneuma/runtime/packages/computer-use/index.js')
     await ctx.plugin(computerUse.computerUsePlugin, {})
+    // 用 2x 号段的 url：粘性已卸集合按会话记，和前面 ⑦ 的图错开，免得「已卸」把本段要留的图也带走。
+    // 4 张截图：工具图预算 2 张 → 前两张是候选，凑够一批（2 张）才会一起卸。
     out = rewrite([
       { role: 'user', content: '点一下那个按钮' },
-      shot('s1', url(1)),
-      shot('s2', url(2)),
-      shot('s3', url(3)),
+      shot('s1', url(21)),
+      shot('s2', url(22)),
+      shot('s3', url(23)),
+      shot('s4', url(24)),
     ])
   })
 
   test('最新那张截图仍在（图像本身随请求发送）', () => {
     const shots = out.filter((message) => parts(message).some((part) => part.type === 'text' && part.text.startsWith('屏幕截图')))
-    expect(imageUrls(shots[shots.length - 1])).toEqual([url(3)])
+    expect(imageUrls(shots[shots.length - 1])).toEqual([url(24)])
   })
 
   test('更老的截图被卸载成占位，用的是通用占位文案', () => {
     const shots = out.filter((message) => parts(message).some((part) => part.type === 'text' && part.text.startsWith('屏幕截图')))
-    const oldest = shots[0]
-    expect(imageUrls(oldest)).toHaveLength(0)
-    expect(placeholders(oldest)).toBe(1)
-    expect(textOf(oldest)).toContain(imageDiet.IMAGE_DIET_PLACEHOLDER)
-    expect(textOf(oldest)).not.toContain('已被更新的截图取代')
+    // 两张老截图（第 1、2 张）都换成占位：批量按位置落点，不会把最新那张同 url 的图带走。
+    expect(imageUrls(shots[0])).toHaveLength(0)
+    expect(placeholders(shots[0])).toBe(1)
+    expect(placeholders(shots[1])).toBe(1)
+    expect(textOf(shots[0])).toContain(imageDiet.IMAGE_DIET_PLACEHOLDER)
+    expect(textOf(shots[0])).not.toContain('已被更新的截图取代')
   })
 
   test('挂上电脑操作后截图仍按 toolImageBudget=2 保留 2 张', () => {
@@ -229,7 +239,7 @@ describe('⑨ 投影链：与 drop-images 并存（模型不收图 → 最终无
     services.llm.setModel('test', 'm-text')
     try {
       const out = rewrite([
-        { role: 'user', content: [text('看图'), ...Array.from({ length: 6 }, (_, index) => image(url(index + 1)))] },
+        { role: 'user', content: [text('看图'), ...Array.from({ length: 6 }, (_, index) => image(url(31 + index)))] },
       ])
       expect(imageDiet.countImageParts(out)).toBe(0)
       const userMessage = out.find((message) => message.role === 'user')
@@ -243,7 +253,7 @@ describe('⑨ 投影链：与 drop-images 并存（模型不收图 → 最终无
 
 describe('⑩ 投影链：设置改了就生效（现读配置）', () => {
   test('预算改成 1 → 只留最近 1 张；总开关关掉 → 一张都不动；越界写入被夹到 20', async () => {
-    const input: ChatMessage[] = [{ role: 'user', content: [text('三张'), image(url(1)), image(url(2)), image(url(3))] }]
+    const input: ChatMessage[] = [{ role: 'user', content: [text('三张'), image(url(41)), image(url(42)), image(url(43))] }]
     try {
       await services.settings.save('image-diet', 'userImageBudget', 1)
       expect(imageDiet.countImageParts(rewrite(input))).toBe(1)
@@ -271,14 +281,15 @@ describe('⑪ 真回合端到端：第二轮请求体里的旧截图已卸载、
   let sent: ChatMessage[]
 
   beforeAll(async () => {
-    // 临时工具：返回一段文字与三张图（照 computer-use 截图工具的形状）。
+    // 临时工具：返回一段文字与四张图（照 computer-use 截图工具的形状）。
+    // 4 张才够一批：工具图预算 2 张 → 前两张是候选，凑够 2 张一起卸。
     // 必须在跑回合**之前**注册：假模型的剧本按请求序号发，第一条就是这条工具的调用。
     const offTool = services.tools.register({
       name: 'shot_probe',
-      description: '测试用截图工具：返回一张文字说明与三张图',
+      description: '测试用截图工具：返回一张文字说明与四张图',
       parameters: { type: 'object', properties: {} },
       risk: 'read',
-      run: async () => ({ text: '屏幕快照', images: [url(11), url(12), url(13)] }),
+      run: async () => ({ text: '屏幕快照', images: [url(11), url(12), url(13), url(14)] }),
     })
     try {
       await kernel.runTurn('给我截个图')
@@ -292,23 +303,24 @@ describe('⑪ 真回合端到端：第二轮请求体里的旧截图已卸载、
     expect(sent.some((message) => message.role === 'tool')).toBe(true)
   })
 
-  test('工具结果里的 3 张图只留最近 2 张，最新的那张一定在', () => {
+  test('工具结果里的 4 张图只留最近 2 张，最新的那张一定在', () => {
     const toolMessage = sent.find(
       (message) =>
         message.role === 'tool' &&
         parts(message).some((part) => part.type === 'image_url' || (part.type === 'text' && part.text === imageDiet.IMAGE_DIET_PLACEHOLDER)),
     )
     expect(imageUrls(toolMessage)).toHaveLength(2)
-    expect(imageUrls(toolMessage)).toContain(url(13))
+    expect(imageUrls(toolMessage)).toContain(url(14))
   })
 
-  test('被卸载的那张留了占位，最老的那张（第 1 张）没有发出去', () => {
+  test('被卸载的两张留了占位，最老的两张（第 1、2 张）没有发出去', () => {
     const toolMessage = sent.find(
       (message) =>
         message.role === 'tool' &&
         parts(message).some((part) => part.type === 'image_url' || (part.type === 'text' && part.text === imageDiet.IMAGE_DIET_PLACEHOLDER)),
     )
-    expect(placeholders(toolMessage)).toBe(1)
+    expect(placeholders(toolMessage)).toBe(2)
     expect(imageUrls(toolMessage)).not.toContain(url(11))
+    expect(imageUrls(toolMessage)).not.toContain(url(12))
   })
 })

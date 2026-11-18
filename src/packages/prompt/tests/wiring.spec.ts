@@ -39,11 +39,11 @@ interface InjectionReport {
   preview: string
 }
 
-/** 最小假会话：env-facts 的 hash 去重要真读真写。 */
+/** 最小假会话：env-facts 的 hash 去重与批量落点状态都要真读真写。 */
 interface FakeSession {
   meta: { id: string; cwd: string }
-  state(id: string): { hash?: string; text?: string } | undefined
-  appendState(id: string, payload: { hash: string; text: string }): void
+  state(id: string): { hash?: string; text?: string; keys?: string[] } | undefined
+  appendState(id: string, payload: { hash?: string; text?: string; keys?: string[] }): void
 }
 
 interface PromptService {
@@ -108,7 +108,31 @@ function recordingSession(id: string, cwd = ROOT): { session: FakeSession; state
     states,
     session: {
       meta: { id, cwd },
-      state: (key) => map.get(key) as { hash?: string; text?: string } | undefined,
+      state: (key) => map.get(key) as { hash?: string; text?: string; keys?: string[] } | undefined,
+      appendState: (key, payload) => {
+        map.set(key, payload)
+        states.push({ id: key, payload })
+      },
+    },
+  }
+}
+
+/**
+ * 用「已经落盘的会话状态」造一个**新进程里的会话**：只读得到旧状态，写走自己的账本。
+ * 用来验「日志原文 + 命名投影」可复算：换插件实例重放同一份历史，输出要逐字节相同。
+ */
+function resumedSession(
+  id: string,
+  persisted: ReadonlyMap<string, unknown>,
+  cwd = ROOT,
+): { session: FakeSession; states: Array<{ id: string; payload: unknown }> } {
+  const map = new Map(persisted)
+  const states: Array<{ id: string; payload: unknown }> = []
+  return {
+    states,
+    session: {
+      meta: { id, cwd },
+      state: (key) => map.get(key) as { hash?: string; text?: string; keys?: string[] } | undefined,
       appendState: (key, payload) => {
         map.set(key, payload)
         states.push({ id: key, payload })
@@ -233,11 +257,104 @@ describe('命名投影链', () => {
     expect(folded[0]).toMatchObject({ role: 'system', content: 'A\n\nB' })
     expect(folded.filter((message) => message.role === 'system')).toHaveLength(1)
 
-    const long = 'x'.repeat(9_000)
+    // P2a 起是批量落点：单条候选自己就得能省出阈值（16K 字符）才会当场切。
+    // 9K 的正文切开只省约 3.8K，不够一批——那正是这一轮要的语义，所以这里用 30K。
+    const long = 'x'.repeat(30_000)
     const recent = Array.from({ length: 4 }, () => ({ role: 'tool', content: '最近的结果' }))
     const pruned = h.service.rewrite([{ role: 'tool', content: long }, ...recent])
     expect(String(pruned[0]?.content)).toContain('省掉了')
     expect(String(pruned[0]?.content).length).toBeLessThan(long.length)
+  })
+
+  test('tool-result-prune 批量落点：同一份历史投影两次逐字节相同（invariant 的二次派生）', () => {
+    const h = fakeCtx()
+    const long = 'x'.repeat(30_000)
+    const recent = Array.from({ length: 4 }, () => ({ role: 'tool', content: '最近的结果' }))
+    const messages: Message[] = [{ role: 'tool', content: long }, ...recent]
+    const first = h.service.rewrite(messages)
+    const second = h.service.rewrite(messages)
+    // 第二次进来时 key 已在粘性集合里：输出必须与第一次逐字节相同，否则 invariant 每轮误报。
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+
+  test('批量决定落会话状态：新进程读回同一份状态，投影输出逐字节相同', () => {
+    // 一份同时触发两条批量的历史：1 条超长工具结果（单条就够 16K 字符），4 条带图的
+    // 工具结果（工具图预算 2 张 → 前两张是候选，凑够 2 张一批）。
+    const imageTool = (n: number): Message => ({
+      role: 'tool',
+      content: [
+        { type: 'text', text: `屏幕截图 ${String(n)}` },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,IMG${String(n)}` } },
+      ],
+    })
+    const messages: Message[] = [
+      { role: 'tool', content: 'x'.repeat(30_000) },
+      ...Array.from({ length: 4 }, (_, index) => imageTool(index)),
+    ]
+
+    // 「进程 A」：真会话，批量决定写进会话状态。
+    const first = recordingSession('sess-batch')
+    const pluginA = fakeCtx({ session: first.session })
+    const outputA = pluginA.service.rewrite(messages, first.session)
+    // 两条批量都真的推进了，并且都落了状态。
+    const pruneState = first.states.filter((entry) => entry.id === 'tool-result-prune-batch').at(-1)
+    const imageState = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)
+    expect((pruneState?.payload as { keys?: string[] }).keys).toHaveLength(1)
+    expect((imageState?.payload as { keys?: string[] }).keys).toHaveLength(2)
+    expect(JSON.stringify(outputA)).toContain('省掉了')
+
+    // 「进程 B」：新插件实例，只拿到落盘状态；同一份历史重放。
+    const persisted = new Map<string, unknown>()
+    for (const entry of first.states) persisted.set(entry.id, entry.payload)
+    const resumed = resumedSession('sess-batch', persisted)
+    const pluginB = fakeCtx({ session: resumed.session })
+    const outputB = pluginB.service.rewrite(messages, resumed.session)
+
+    expect(JSON.stringify(outputB)).toBe(JSON.stringify(outputA))
+    // 状态已经够了，新进程不该再写一条（hash 去重）。
+    expect(resumed.states).toHaveLength(0)
+  })
+
+  test('历史压缩变短：旧批量集合作废并写回空集合，重发的同 url 图不被误卸', () => {
+    const first = recordingSession('sess-shrink')
+    // 声明图片能力：否则 drop-images（900）会把图全剥，看不到 image-diet 的决定。
+    const plugin = fakeCtx({ session: first.session, modalities: ['text', 'image'] })
+    const imageTool = (imageUrl: string): Message => ({
+      role: 'tool',
+      content: [
+        { type: 'text', text: '屏幕截图' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
+    })
+    const urlA = 'data:image/png;base64,IMG-A'
+    // 4 条工具图：工具图预算 2 张 → 前两张凑一批卸掉，state 记下「做决定时 4 条消息」。
+    plugin.service.rewrite(
+      [imageTool(urlA), imageTool('data:image/png;base64,IMG-B'), imageTool('data:image/png;base64,IMG-C'), imageTool('data:image/png;base64,IMG-D')],
+      first.session,
+    )
+    const stored = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)?.payload as
+      | { length?: number; keys?: string[] }
+      | undefined
+    expect(stored?.keys).toHaveLength(2)
+    expect(stored?.length).toBe(4)
+
+    // 压缩：历史缩成 2 条，旧图所在消息整条没了；用户又贴回同一张图（当前位置 1，只出现一次）。
+    const compacted: Message[] = [
+      { role: 'assistant', content: '（压缩摘要）' },
+      { role: 'user', content: [{ type: 'text', text: '又贴一次' }, { type: 'image_url', image_url: { url: urlA } }] },
+    ]
+    const after = plugin.service.rewrite(compacted, first.session)
+    // 变短那一轮不卸新图：它按预算该留，不能被旧 hash 兜底带走。
+    const images = after.flatMap((message) =>
+      Array.isArray(message.content) ? message.content.filter((part) => (part as { type?: string }).type === 'image_url') : [],
+    )
+    expect(images).toHaveLength(1)
+    // 作废后的空集合写回状态（长度 = 本轮的 2），下一轮历史变长也不会让旧决定复活。
+    const rewritten = first.states.filter((entry) => entry.id === 'image-diet-batch').at(-1)?.payload as
+      | { length?: number; keys?: string[] }
+      | undefined
+    expect(rewritten?.keys).toHaveLength(0)
+    expect(rewritten?.length).toBe(2)
   })
 
   test('drop-images：模型不声明图片输入时换成一句说明；声明了原样保留', () => {

@@ -41,6 +41,17 @@ interface Services {
 /** 四次真实用户回合、八个工具结果（最旧三个才够大够旧），末尾一个带图的工具结果。 */
 const BIG = 'x'.repeat(4_000)
 
+/**
+ * 图片 url：P2a 起批量卸载按**张数**攒批（`IMAGE_DIET_BATCH_MIN_IMAGES` = 2），与 url 长短无关。
+ * 这份历史里 A1、A2 是更早回合的图（keepRounds=2 判死），正好两张候选 → 一批卸掉；
+ * A3 在保留窗口内，必须还在。
+ */
+const imageUrl = (tag: string): string => `data:image/png;base64,${tag}`
+const IMG_A1 = imageUrl('A1')
+const IMG_A2 = imageUrl('A2')
+const IMG_A3 = imageUrl('A3')
+const IMG_NEWEST = imageUrl('NEWEST')
+
 /** 一个文本段。 */
 const textPart = (text: string): ChatContentPart => ({ type: 'text', text })
 /** 一个图片段。 */
@@ -83,17 +94,17 @@ function imageUrlsOf(message: ChatMessage): string[] {
 /** 造出「事故现场」的那段混合历史。 */
 function buildHistory(): ChatMessage[] {
   const history: ChatMessage[] = []
-  history.push(userWith('第一轮：看看这个', ['data:image/png;base64,A1']))
+  history.push(userWith('第一轮：看看这个', [IMG_A1]))
   for (let index = 1; index <= 2; index += 1) {
     history.push(asstCall(`c${String(index)}`, 'bash', { command: `echo ${String(index)}` }))
     history.push(toolOut(`c${String(index)}`, `第${String(index)}个结果 ${BIG}`))
   }
-  history.push(userWith('第二轮：再看这个', ['data:image/png;base64,A2']))
+  history.push(userWith('第二轮：再看这个', [IMG_A2]))
   for (let index = 3; index <= 4; index += 1) {
     history.push(asstCall(`c${String(index)}`, 'read', { path: `f${String(index)}.ts` }))
     history.push(toolOut(`c${String(index)}`, `第${String(index)}个结果 ${BIG}`))
   }
-  history.push(userWith('第三轮：还有这个', ['data:image/png;base64,A3']))
+  history.push(userWith('第三轮：还有这个', [IMG_A3]))
   for (let index = 5; index <= 6; index += 1) {
     history.push(asstCall(`c${String(index)}`, 'grep', { pattern: `p${String(index)}` }))
     history.push(toolOut(`c${String(index)}`, `第${String(index)}个结果 ${BIG}`))
@@ -101,7 +112,7 @@ function buildHistory(): ChatMessage[] {
   history.push(userWith('第四轮：顺手看一眼屏幕'))
   history.push(asstCall('c7', 'screenshot', {}))
   // 末尾这个工具结果带图（模拟「当前正在看的那张截图」），必须活下来。
-  history.push({ role: 'tool', tool_call_id: 'c7', content: [textPart('屏幕截图'), imagePart('data:image/png;base64,NEWEST')] })
+  history.push({ role: 'tool', tool_call_id: 'c7', content: [textPart('屏幕截图'), imagePart(IMG_NEWEST)] })
   history.push(asstCall('c8', 'bash', { command: 'ok' }))
   history.push(toolOut('c8', `第八个结果 ${BIG}`))
   return history
@@ -178,8 +189,8 @@ describe('① 四层各自生效', () => {
 
   test('图片卸载：更早回合的图 A1 已卸载，最新那张截图仍在', () => {
     const allImages = sent.flatMap(imageUrlsOf)
-    expect(allImages).not.toContain('data:image/png;base64,A1')
-    expect(allImages).toContain('data:image/png;base64,NEWEST')
+    expect(allImages).not.toContain(IMG_A1)
+    expect(allImages).toContain(IMG_NEWEST)
   })
 
   test('图片卸载：占位文本出现在被卸载的位置', () => {
@@ -193,7 +204,7 @@ describe('② 顺序：image-diet 在 env-facts 之前', () => {
   test('image-diet 先于 env-facts：第三轮的图 A3 仍在（快照没白占一格）', () => {
     // 判别点：r3 那张图。image-diet 若跑在 env-facts 之后，末尾的合成快照会顶掉一个回合
     // 额度，keepRounds=2 的切点后移一格，r3 的图会被一起卸掉；跑在它之前则 r3 的图还在。
-    expect(sent.flatMap(imageUrlsOf)).toContain('data:image/png;base64,A3')
+    expect(sent.flatMap(imageUrlsOf)).toContain(IMG_A3)
   })
 
   test('env-facts：环境快照恰好一条，且落在请求最后一条', () => {
