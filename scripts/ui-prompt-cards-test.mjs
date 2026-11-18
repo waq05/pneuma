@@ -216,12 +216,14 @@ console.log('[5] 样式：组件用到的每个类名都在 views.css 里有规�
     region !== '' && !/rgba?\(|hsla?\(/.test(region) && !/#[0-9a-fA-F]{3,8}/.test(region), region.slice(0, 80))
 }
 
-console.log('[6] 文案：27 个键在 zh / en 都在，真译过，占位符两边都留')
+console.log('[6] 文案：28 个键在 zh / en 都在，真译过，占位符两边都留')
 {
   const keys = Object.keys(zh).filter((key) => key.startsWith('transcript.prompt.') || key.startsWith('transcript.injection.'))
   // 26 → 27（2026-11-11）：注入卡头行多了一句口径提示（`transcript.injection.newOnlyTip`），
   // 「卡片记的是这一跳新增了哪些注入」这句话得有个正式的字典位。
-  check('两张卡一共 27 个键', keys.length === 27, String(keys.length))
+  // 27 → 28（2026-11-18）：团队板快照注入（kind=`team-board`）要一个中文标签
+  // （`transcript.injection.kind.teamBoard`），否则卡片只能显示裸 kind。
+  check('两张卡一共 28 个键', keys.length === 28, String(keys.length))
   for (const key of keys) {
     check(`zh 有 ${key}`, typeof zh[key] === 'string' && zh[key] !== '')
     check(`en 有 ${key}`, typeof en[key] === 'string' && en[key] !== '')

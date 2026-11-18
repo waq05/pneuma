@@ -90,6 +90,9 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   sandbox: t('transcript.injection.kind.sandbox'),
   'todo-reminder': t('transcript.injection.kind.todoReminder'),
   'repeat-reminder': t('transcript.injection.kind.repeatReminder'),
+  // 2026-11 团队板快照：看板变化后由 subagent 投影注到请求尾部（kind 在契约常量表外，
+  // 见 packages/subagent/board-snapshot.ts 的 BOARD_SNAPSHOT_KIND 注释）。
+  'team-board': t('transcript.injection.kind.teamBoard'),
 }
 
 /** 一类注入在收起行里的写法（认不出的类别退回原始 kind）。 */

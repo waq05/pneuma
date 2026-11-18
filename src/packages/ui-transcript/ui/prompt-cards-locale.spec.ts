@@ -27,11 +27,11 @@ const PREFIXES = ['transcript.prompt.', 'transcript.injection.']
 const keysOf = (dict: Record<string, unknown>): string[] =>
   Object.keys(dict).filter((key) => PREFIXES.some((prefix) => key.startsWith(prefix))).sort()
 
-describe('两张卡一共 27 个键（2026-11-11 起含注入卡的 newOnlyTip）', () => {
-  test('中文与英文表里正好 27 个，且键集逐项一致（缺译 / 多键都不放过）', () => {
+describe('两张卡一共 28 个键（2026-11-11 起含注入卡的 newOnlyTip；2026-11-18 起含团队板快照标签）', () => {
+  test('中文与英文表里正好 28 个，且键集逐项一致（缺译 / 多键都不放过）', () => {
     const zhKeys = keysOf(zh)
     const enKeys = keysOf(en)
-    expect(zhKeys).toHaveLength(27)
+    expect(zhKeys).toHaveLength(28)
     expect(zhKeys).toEqual(enKeys)
   })
 
