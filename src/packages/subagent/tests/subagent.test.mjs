@@ -36,6 +36,8 @@ function fakeContext() {
   const captured = { tools: [], sections: undefined, prompts: [], projections: [], provided: {} }
   const ctx = {
     session: { current: () => ({ meta: { id: 'package-test' } }) },
+    // 宿主事件口：写名册/任务板会推 dsc/changed，本文件不钉推送次数，给空实现占位。
+    emit: () => undefined,
     tools: {
       register: (entry) => {
         captured.tools.push(entry)

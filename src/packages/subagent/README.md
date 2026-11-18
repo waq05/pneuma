@@ -21,6 +21,7 @@
 - **模型与思考强度可选（需用户授权）**：设置页「队友模型」打开开关并勾选授权清单后，spawn 可以带 `model`（只能用 `parseModelRef` 归一成 `端点/模型`，且必须落在清单里）与 `effort`（default / off / low / high / max）；开关关闭时带 `model` 直接拒绝并指路去设置页。优先级：spawn 显式 > 角色文件 `model` > 旧配置 `defaultModel`（兼容兜底）> 跟随当前会话；`effort` 为 spawn > 角色文件 > 跟随模型默认。工牌开工冻结，名册提示只列授权清单内的模型，队友系统提示不列清单（index.ts:224-345 解析、944-947 冻结、564-573 与 1017 两处提示）。
 - 审批取全局上限与角色意愿里更严的那个，弹卡时写明是谁在请求（index.ts:15-16）。
 - 另有一条只读审查通道：`review` 派 read/glob/grep、approval 固定 forbid 的队友，findings 写回发起会话（index.ts:850-932）。
+- **面板即时刷新 + 队友 token 上视图（2026-11）**：任务板或名册任一写动作成功后插件发一次 `dsc/changed`，状态面板的「子智能体 / 共享任务」区立刻重算，不再等 5 秒轮询；只读动作（list/get/activity/inbox 读）不发。推送落点：名册集中在 `writeRoster`，任务板在 `runTeamTask` 的 create/写动作分支，另有派活绑定认领、队友收工自动结项、`team_message send` 的板子活动与设置页「清空任务板」几处。队友累计 token 在收工时写进名册 `tokens` 字段；`team.list()` 视图里在队取内存值、收工取名册值，老名册没有这一项就不填（界面不画 0）。
 
 ## Known Limitations（已知限制）
 

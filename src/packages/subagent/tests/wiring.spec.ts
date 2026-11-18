@@ -8,7 +8,7 @@
  *
  * @module dsc/packages/subagent/tests/wiring.spec
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
@@ -83,6 +83,8 @@ interface Harness {
   resolverFns: Array<(sessionId: string) => unknown>
   systems: Array<{ text: string; sessionId?: string }>
   emitted: Array<Record<string, unknown>>
+  /** 宿主事件（`ctx.emit`）：用来钉「写任务板/名册后推 dsc/changed、只读动作不推」。 */
+  events: Array<{ name: string; args: unknown[] }>
   followups: Array<{ text: string; sessionId?: string; origin?: string }>
   decisions: Array<Record<string, unknown>>
   /** 队友实际请求过的模型路由（路由参数，用于钉「旧配置 defaultModel 仍作兜底」）。 */
@@ -173,6 +175,17 @@ function readRoster(): Array<Record<string, unknown>> {
   }
 }
 
+/**
+ * 手改名册后把 mtime 推到未来：插件按 mtime 做读缓存，同一毫秒内改写会被当成「没动」
+ * 而命中旧缓存，钉不住「在队取内存、收工取名册」这条取舍。
+ */
+let rosterMtimeBump = 0
+function bumpRosterMtime(): void {
+  rosterMtimeBump += 1000
+  const when = new Date(Date.now() + rosterMtimeBump)
+  utimesSync(join(HOME, 'team', 'roster.json'), when, when)
+}
+
 /** 真 Session：父会话是队友归属、汇报落点与 fork 种子的来源。 */
 function newSession(cwd = WORKSPACE): SessionT {
   const file = join(HOME, 'sessions', `parent-${String(Date.now())}-${String(Math.random()).slice(2)}.jsonl`)
@@ -218,6 +231,7 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   const resolverFns: Harness['resolverFns'] = []
   const systems: Harness['systems'] = []
   const emitted: Harness['emitted'] = []
+  const events: Harness['events'] = []
   const followups: Harness['followups'] = []
   const decisions: Harness['decisions'] = []
   const routeCalls: Harness['routeCalls'] = []
@@ -243,6 +257,10 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
 
   const ctx = {
     session: { current: () => harness.session },
+    // cordis 的宿主事件口：写动作落点推 dsc/changed，只读动作不推，用例靠 events 钉住。
+    emit(name: string, ...args: unknown[]) {
+      events.push({ name, args })
+    },
     tools: {
       register(entry: CapturedTool) {
         tools.push(entry)
@@ -379,6 +397,7 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   harness.resolverFns = resolverFns
   harness.systems = systems
   harness.emitted = emitted
+  harness.events = events
   harness.followups = followups
   harness.decisions = decisions
   harness.routeCalls = routeCalls
@@ -837,6 +856,86 @@ describe('任务板与团队服务', () => {
     expect(String(await run({ action: 'delete', id: 't1', expected_revision: 3 }))).toContain('任务板第 4 版')
     expect(String(await run({ action: 'list' }))).toContain('任务板是空的')
     expect(String(await run({ action: 'dance' }))).toContain('不认识的 action')
+  })
+
+  test('写动作成功后各推一次 dsc/changed；list/get/activity/inbox 只读不推', async () => {
+    const harness = fakeCtx()
+    const tool = harness.tools.find((entry) => entry.name === 'team_task') as CapturedTool
+    const run = (args: Record<string, unknown>): Promise<string> =>
+      tool.run(args, { sessionId: harness.session.meta.id }) as Promise<string>
+    const changed = (): number => harness.events.filter((event) => event.name === 'dsc/changed').length
+
+    expect(String(await run({ action: 'list' }))).toContain('任务板是空的')
+    expect(String(await run({ action: 'activity' }))).toContain('活动')
+    expect(changed(), '只读的 list / activity 一发都不该有').toBe(0)
+
+    expect(String(await run({ action: 'create', subject: '完成后面板立刻刷新' }))).toContain('已建 t1')
+    expect(changed(), 'create 发一次').toBe(1)
+
+    expect(String(await run({ action: 'get', id: 't1' }))).toContain('标题：完成后面板立刻刷新')
+    expect(changed(), '只读的 get 不发').toBe(1)
+
+    expect(String(await run({ action: 'claim', id: 't1', expected_revision: 1 }))).toContain('in_progress')
+    expect(changed(), 'claim 发一次').toBe(2)
+
+    expect(String(await run({ action: 'note', id: 't1', expected_revision: 2, text: '做了一半' }))).toContain('最新进展')
+    expect(changed(), 'note 发一次').toBe(3)
+
+    expect(String(await run({ action: 'complete', id: 't1', expected_revision: 3 }))).toContain('completed')
+    expect(changed(), 'complete 发一次（界面靠它立刻看到任务完成）').toBe(4)
+
+    const messageTool = harness.tools.find((entry) => entry.name === 'team_message') as CapturedTool
+    expect(String(await messageTool.run({ action: 'inbox' }, { sessionId: harness.session.meta.id }))).toContain('信箱')
+    expect(changed(), 'team_message 的 inbox 读也不发').toBe(4)
+  })
+
+  test('团队服务 list() 填 tokens：在队取内存、收工取名册、老名册缺字段就不填', async () => {
+    const harness = fakeCtx()
+    const service = harness.services.get('team') as { list: () => Array<Record<string, unknown>> }
+
+    // ① 在队（收工后仍可续接，内存里还留着）：取内存那份 7（假模型每轮 usage 3+4）。
+    //    同时把名册同一条改成 999 + 换掉任务文案并推进 mtime：任务文案来自名册说明确实
+    //    重读了名册，而 tokens 仍是 7 说明没有回读名册。
+    const first = await spawnAndSettle(harness, { role: 'explorer', background: true, name: 'tok-live' })
+    writeJson(join(HOME, 'team', 'roster.json'), {
+      teammates: readRoster().map((entry) =>
+        entry['name'] === first.name ? { ...entry, tokens: 999, task: '名册改过的任务文案' } : entry,
+      ),
+    })
+    bumpRosterMtime()
+    const liveView = service.list().find((item) => item['name'] === first.name)
+    expect(liveView?.['task'], '名册确实被重读了（文案取自名册）').toBe('名册改过的任务文案')
+    expect(liveView?.['tokens'], '在队取内存值 7，不回读名册的 999').toBe(7)
+
+    // ② 一次性小工收工后已从在队表摘掉：只能取名册里那份 7。
+    const once = await spawnAndSettle(harness, {
+      role: 'explorer',
+      background: true,
+      keep: false,
+      name: 'tok-roster',
+    })
+    expect(readRoster().find((entry) => entry['name'] === once.name)?.['tokens']).toBe(7)
+    expect(service.list().find((item) => item['name'] === once.name)?.['tokens'], '收工取名册值 7').toBe(7)
+
+    // ③ 老名册记录没有 tokens 字段（字段后加）：视图不填，界面不画 0。
+    const withLegacy = readRoster()
+    withLegacy.push({
+      name: 'tok-legacy',
+      role: 'explorer',
+      state: 'idle',
+      task: '旧名册留下的那一行',
+      file: join(HOME, 'sessions', 'legacy.jsonl'),
+      cwd: WORKSPACE,
+      parent: 'lead',
+      depth: 1,
+      rounds: 1,
+      startedAt: Date.now(),
+    })
+    writeJson(join(HOME, 'team', 'roster.json'), { teammates: withLegacy })
+    bumpRosterMtime()
+    const legacyView = service.list().find((item) => item['name'] === 'tok-legacy')
+    expect(legacyView, '老名册那行仍然要出现在视图里').toBeDefined()
+    expect('tokens' in (legacyView as Record<string, unknown>), '没有 tokens 就别填 0').toBe(false)
   })
 
   test('团队服务：list/board/peek 只读查看，peek 拒绝队友目录之外的文件', async () => {

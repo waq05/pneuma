@@ -176,6 +176,8 @@ function fakeCtx(config?: Record<string, unknown>): Harness {
 
   const ctx = {
     session: { current: () => harness.session },
+    // 宿主事件口：写名册/任务板会推 dsc/changed，本文件不钉推送次数，给个空实现即可。
+    emit: () => undefined,
     tools: {
       register(entry: CapturedTool) {
         tools.push(entry)

@@ -145,6 +145,11 @@ export interface TeammateView {
    * 界面据此把「队友」与「共享任务」两处对起来。
    */
   taskId?: string
+  /**
+   * 累计 token（输入+输出，端点真值）。状态面板的队友行照着画「58.1M tok」。
+   * 老名册没有这一项（字段后加），读档时按 undefined 处理：界面不显示，不画 0。
+   */
+  tokens?: number
 }
 
 /**

@@ -610,6 +610,12 @@ interface RosterRecord {
   sessionId?: string
   /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；老记录没有这一项。 */
   taskId?: string
+  /**
+   * 收工时累计消耗的 token（输入+输出，端点真值）。状态面板的队友行照它画「58.1M tok」，
+   * 与内联卡同一口径（{@link Teammate.tokens}）。老记录没有这一项，读档时按 undefined
+   * 处理——界面不画，也不显示一个假的 0。
+   */
+  tokens?: number
 }
 
 /** 名字合法字符，跟角色名同一套。 */
@@ -748,6 +754,19 @@ export const subagentPlugin: Plugin.Object = {
       rosterStamp = stamp
       return rosterCache
     }
+    /**
+     * 任务板或名册变了：让界面立刻重建快照。
+     *
+     * 为什么要有：面板快照原先只跟着 5 秒轮询走，队友收工、任务完成最多要晚 5 秒才看见。
+     * 写动作落点统一调这一个（写名册、写任务板），只读动作（list/get/activity/inbox 读）
+     * 一个都不调——查询一次就白推一帧，等于把轮询换成忙推。
+     *
+     * 允许同一拍多发：每次 `dsc/changed` 只是让宿主重算一次快照，比漏掉「完成任务」那一拍
+     * 便宜得多，所以这里不做节流。
+     */
+    const touchUi = (): void => {
+      ctx.emit('dsc/changed')
+    }
     const writeRoster = (records: RosterRecord[]): void => {
       try {
         mkdirSync(join(ctx.settings.about().home, 'team'), { recursive: true })
@@ -758,6 +777,10 @@ export const subagentPlugin: Plugin.Object = {
       // 写失败也照此记缓存：下次读 mtime 对不上会强制回读
       rosterCache = [...records]
       rosterStamp = rosterMtime()
+      // 名册是界面快照的数据源之一（队友行、收工时间）：写完必须让宿主重算。
+      // 写文件失败时进程内的 list() 也已经看得到这份 records，同样要推，否则界面与
+      // 内存里的视图会分叉到下一次别的插件碰巧发事件。
+      touchUi()
     }
     const remember = (teammate: Teammate): void => {
       const record: RosterRecord = {
@@ -771,6 +794,9 @@ export const subagentPlugin: Plugin.Object = {
         depth: teammate.depth,
         rounds: teammate.rounds,
         startedAt: teammate.startedAt,
+        // 累计 token 落进名册：收工后进程里可能已经没有这个队友了（一次性/移出），
+        // 面板的队友行只能从这份记录读。老名册缺这一项 → 读出来是 undefined。
+        tokens: teammate.tokens,
         mode: teammate.mode,
         // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
         sessionId: teammate.parentSession.meta.id,
@@ -813,6 +839,9 @@ export const subagentPlugin: Plugin.Object = {
             ? '（队友没有留下文字结论，按收工自动结项）'
             : teammate.lastText.trim().slice(0, 800)
         boardUpdate(sessionId, task.id, board.revision, 'complete', { by: teammate.name, text: summary })
+        // 队友收工时自动结项也是写板：面板「共享任务」区要立刻看到 completed，
+        // 不能等 5 秒轮询（这条路径不经 runTeamTask，得单独推一帧）。
+        touchUi()
       } catch {
         // 板子被并发改过 / 写不进去：不阻断收工，Lead 还能在板上手动 complete
       }
@@ -1417,6 +1446,9 @@ ${body}
           // 出生会话同理：在队的问内存里那个会话对象，收工的问名册（老记录没有这一项）
           const sessionId = live?.parentSession.meta.id ?? record.sessionId
           const taskId = live?.taskId ?? record.taskId
+          // token：在队的以内存为准（还在涨），收工的以名册为准。老名册没有这一项就是
+          // undefined——只在有值时填，界面据此不画 0（0 本身是合法值，照实填）。
+          const tokens = live === undefined ? record.tokens : live.tokens
           views.push({
             name: record.name,
             role: record.role,
@@ -1435,6 +1467,7 @@ ${body}
             ...(finishedAt === undefined ? {} : { finishedAt }),
             ...(sessionId === undefined ? {} : { sessionId }),
             ...(taskId === undefined ? {} : { taskId }),
+            ...(tokens === undefined ? {} : { tokens }),
           })
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
@@ -1766,6 +1799,8 @@ ${body}
         }
         try {
           boardUpdate(currentId, taskId, board.revision, 'claim', { owner: name, assignee: name, by: caller.name })
+          // 派活时顺手认领也是写板：面板上的负责人与绑定要立刻变。
+          touchUi()
         } catch (error) {
           return `认领 ${taskId} 失败：${error instanceof Error ? error.message : String(error)}`
         }
@@ -1931,7 +1966,11 @@ ${body}
               created.warnings.length === 0
                 ? ''
                 : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
-            if (args.claim_now !== true) return `已建 ${created.task.id}：${created.task.subject}${warnings}`
+            if (args.claim_now !== true) {
+              // 板子变了：面板的任务区立刻重画（原先要等 5 秒轮询）。
+              touchUi()
+              return `已建 ${created.task.id}：${created.task.subject}${warnings}`
+            }
             // 认领走正常的 claim：依赖没做完一样会被拦下，正好复用同一套校验
             try {
               boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', {
@@ -1939,8 +1978,11 @@ ${body}
                 by: ownerDefault,
               })
             } catch (error) {
+              // 认领失败但任务建成了：板子也确实变了，照样推一帧再报错
+              touchUi()
               return `已建 ${created.task.id}：${created.task.subject}，但没能认领：${error instanceof Error ? error.message : String(error)}${warnings}`
             }
+            touchUi()
             return `已建 ${created.task.id}：${created.task.subject}，状态直接进 in_progress（认领人 ${ownerDefault}）${warnings}`
           }
           case 'list': {
@@ -2004,6 +2046,10 @@ ${body}
             }
             if (action === 'assign') payload.assignee = args.assignee === null ? null : String(args.assignee ?? '')
             const result = boardUpdate(sessionId, id, revision, action as BoardAction, payload)
+            // 所有写动作（claim/release/complete/reopen/note/block/unblock/assign/
+            // set_dependencies/delete）都在这里成功落板：统一推一帧，界面任务区与
+            // 「刚完成」状态立刻刷新。九个动作共用这一个落点，不会漏。
+            touchUi()
             const ready = result.board.tasks.filter((task) => isReady(result.board, task)).map((task) => task.id)
             const latest = result.task.notes[0]
             const extraParts: string[] = []
@@ -2125,6 +2171,8 @@ ${body}
           kind: 'message',
           text: `${from} → ${targets.join('、')}：${text.replace(/\s+/g, ' ').slice(0, 120)}`,
         })
+        // 活动时间线也是面板读的快照数据：这条写进去了，界面该跟着变。
+        touchUi()
       } catch {
         // 板子写不进去不影响消息本身已经投递
       }
@@ -2548,7 +2596,10 @@ ${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
           return t('action.roleWritten', { file })
         }
         if (name === 'clear-board') {
-          return t('action.clearBoard', { count: resetBoard(ctx.session.current().meta.id) })
+          const count = resetBoard(ctx.session.current().meta.id)
+          // 清板也是写板：面板「共享任务」区要立刻空掉，不能等下一拍轮询。
+          touchUi()
+          return t('action.clearBoard', { count })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

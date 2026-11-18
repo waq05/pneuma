@@ -102,6 +102,8 @@ function fakeContext(): {
   const owner: FakeOwner = { meta: { id: 'stability-session' }, messages: [], appendNote: (id, text) => notes.push({ id, text }) }
   const ctx = {
     session: { current: () => owner },
+    // 宿主事件口：写名册/任务板会推 dsc/changed，本文件只读提示与投影，给空实现占位。
+    emit: () => undefined,
     tools: {
       register: () => () => {},
       list: () => [],
