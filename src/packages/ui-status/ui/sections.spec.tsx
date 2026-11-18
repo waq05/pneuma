@@ -469,12 +469,19 @@ describe('折叠桶（FoldRow / FoldPreviewCard）', () => {
 })
 
 describe('子智能体区（AgentSection）', () => {
-  test('在跑的排前面；行尾状态词、一次性标记、停止钮与点击打开运行记录', async () => {
+  test('在跑的排前面；行内 token / 耗时 / 状态词、一次性标记、停止钮与点击打开运行记录', async () => {
+    const startedAt = Date.UTC(2026, 0, 1)
     const mates = [
       mate({ name: 'idle-1', state: 'idle', startedAt: 2000 }),
-      mate({ name: 'run-late', state: 'working', startedAt: 3000 }),
+      mate({ name: 'run-late', state: 'working', startedAt: 3000, tokens: 58_100_000 }),
       mate({ name: 'run-early', state: 'working', mode: 'one-shot', startedAt: 1000 }),
-      mate({ name: 'bad-1', state: 'failed', startedAt: 500, sessionId: 'abc' }),
+      mate({
+        name: 'bad-1',
+        state: 'failed',
+        startedAt,
+        finishedAt: startedAt + (50 * 60 + 6) * 1000,
+        sessionId: 'abc',
+      }),
       mate({ name: 'other', state: 'working', sessionId: 'zzz' }),
     ]
     const opened: string[] = []
@@ -489,26 +496,53 @@ describe('子智能体区（AgentSection）', () => {
     expect(rows.map((row) => row.getAttribute('data-sp-agent-state'))).toEqual([
       'working',
       'working',
-      'failed',
       'idle',
+      'failed',
     ])
-    expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe('2 在跑 · 共 4')
+    // 分区头照 dsh：「X 已完成 · Y 在跑」。
+    expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe('2 已完成 · 2 在跑')
     expect(textOf(rows[0]?.querySelector('.sp-row-mode'))).toBe(zh['status.agent.modeOneShot'])
-    expect(rows[2]?.querySelector('.sp-row-time')?.getAttribute('data-tone')).toBe('danger')
+    expect(rows[3]?.querySelector('.sp-row-time')?.getAttribute('data-tone')).toBe('danger')
     expect(section('agent')?.querySelectorAll('.sp-row-stop')).toHaveLength(2)
+    // 行尾右箭头（dsh 面板那一格）。
+    expect(rows.every((row) => row.querySelector('.sp-row-arrow') !== null)).toBe(true)
+    // token 只在有值时画：run-late 有 58.1M，其余（undefined）不画。
+    expect(textOf(rows[1]?.querySelector('.sp-row-tokens'))).toBe('58.1M tok')
+    expect(section('agent')?.querySelectorAll('.sp-row-tokens')).toHaveLength(1)
+    // 耗时：收工的按 startedAt→finishedAt 冻结，秒补成两位（「50分06秒」）。
+    expect(textOf(rows[3]?.querySelector('.sp-row-elapsed'))).toBe('50分06秒')
 
     fireEvent.click(rows[0]?.querySelector('.sp-row-stop') as HTMLElement)
     await flush()
     expect(callsOf(harness, 'stopTeammate')[0]?.args).toEqual(['run-early'])
     expect(toastText()).toContain('已叫停 run-early')
 
-    fireEvent.click(rows[3]?.querySelector('.sp-row-open') as HTMLElement)
+    fireEvent.click(rows[2]?.querySelector('.sp-row-open') as HTMLElement)
     expect(opened).toEqual(['idle-1'])
+  })
+
+  test('token 无值或 0 都不画（不显示假的 0）；全员收工时读数只报「N 已完成」', async () => {
+    const harness = harnessOf({
+      teammates: [
+        mate({ name: 'no-tokens', state: 'idle', tokens: undefined }),
+        mate({ name: 'zero-tokens', state: 'idle', tokens: 0 }),
+        mate({ name: 'some-tokens', state: 'idle', tokens: 912_400 }),
+      ],
+    })
+    mountPanel(harness)
+    await flush()
+    expandSection('agent')
+    const rows = [...(section('agent')?.querySelectorAll('.sp-row-agent') ?? [])] as HTMLElement[]
+    expect(rows).toHaveLength(3)
+    expect(section('agent')?.querySelectorAll('.sp-row-tokens')).toHaveLength(1)
+    const tokenCells = [...(section('agent')?.querySelectorAll('.sp-row-tokens') ?? [])] as HTMLElement[]
+    expect(textOf(tokenCells[0])).toBe('912.4K tok')
+    expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe('3 已完成')
   })
 })
 
 describe('共享任务区（TeamBoardSection）', () => {
-  test('行读数分四档、详情一次只开一条', async () => {
+  test('行读数四档 + 状态灯、详情一次只开一条、右箭头随展开转', async () => {
     const board: TeamBoardView = {
       revision: 1,
       tasks: [
@@ -522,7 +556,8 @@ describe('共享任务区（TeamBoardSection）', () => {
     mountPanel(harness)
     await flush()
     expandSection('team')
-    expect(textOf(section('team')?.querySelector('.sp-section-trail'))).toBe('3 条未完成 · 共 4')
+    // 分区头照 dsh：「N 已完成 · M 未完成」。
+    expect(textOf(section('team')?.querySelector('.sp-section-trail'))).toBe('1 已完成 · 3 未完成')
     const rows = [...(section('team')?.querySelectorAll('.sp-row-task') ?? [])] as HTMLElement[]
     expect(rows.map((row) => row.getAttribute('data-sp-task-state'))).toEqual([
       'in_progress',
@@ -530,11 +565,21 @@ describe('共享任务区（TeamBoardSection）', () => {
       'pending',
       'completed',
     ])
+    // 状态灯四态：进行中带旋转弧、被依赖挡琥珀、待开始空心圈、完成实心绿。
+    expect(rows[0]?.querySelector('.sp-lamp-run')?.getAttribute('data-sp-lamp')).toBe('running')
+    expect(rows[1]?.querySelector('.sp-lamp')?.getAttribute('data-sp-lamp')).toBe('blocked')
+    expect(rows[2]?.querySelector('.sp-lamp')?.getAttribute('data-sp-lamp')).toBe('pending')
+    expect(rows[3]?.querySelector('.sp-lamp')?.getAttribute('data-sp-lamp')).toBe('done')
     expect(textOf(rows[1]?.querySelector('.sp-row-time'))).toBe(zh['status.team.stateBlocked'])
+    expect(rows[1]?.querySelector('.sp-row-time')?.getAttribute('data-tone')).toBe('warn')
     expect(textOf(rows[2]?.querySelector('.sp-row-time'))).toBe(zh['status.team.statePending'])
     expect(textOf(rows[1]?.querySelector('.sp-row-note'))).toBe(zh['status.team.unowned'])
+    // 行尾右箭头：收起指右，展开后 aria-expanded 翻真（旋转交给 CSS）。
+    expect(rows[0]?.querySelector('.sp-row-arrow')).not.toBeNull()
+    expect(rows[0]?.querySelector('.sp-row-open')?.getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(rows[0]?.querySelector('.sp-row-open') as HTMLElement)
+    expect(rows[0]?.querySelector('.sp-row-open')?.getAttribute('aria-expanded')).toBe('true')
     let detail = section('team')?.querySelector('.sp-task-detail') as HTMLElement
     expect(textOf(detail)).toContain('把 ui 层补到 60%')
     expect(textOf(detail)).toContain('预计改：src/a.ts')

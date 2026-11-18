@@ -2737,11 +2737,15 @@
    *   -sp-row-h      行最小高度（任务行、队友行、活动行同一数值）
    * 2026-11-18 用户报障「同层级间距不一致、共享任务与最近活动局促」——根因是行内距
    * （3px/2px）、行间距（2px)、分区间距（6+6px）、头与内容间距（0-3px）各写一套。
-   * 统一后每个层级只有一个值，改动时改这里，不再散落。 */
+   * 统一后每个层级只有一个值，改动时改这里，不再散落。
+   *
+   * 另有一格**不是间距**的尺寸：共享任务行的状态灯槽宽（--sp-lamp-w）。任务标题、
+   * 任务详情、最近活动条目的左缘都从它算出来，换灯的表宽不会把三处对不齐。 */
   --sp-gap-row: var(--dsc-sp-1);
   --sp-gap-block: var(--dsc-sp-3);
   --sp-pad-x: var(--dsc-sp-3);
   --sp-row-h: 30px;
+  --sp-lamp-w: 14px;
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
   display: flex;
@@ -3108,7 +3112,7 @@
   flex-basis: 100%;
   font-size: var(--dsc-fs-tool);
   line-height: 1.5;
-  padding: 0 0 var(--sp-gap-block) calc(7px + var(--sp-gap-block));
+  padding: 0 0 var(--sp-gap-block) calc(var(--sp-lamp-w) + var(--sp-gap-block));
 }
 
 .sp-task-detail p {
@@ -3191,7 +3195,7 @@
    右内距不变（8px），行尾时间与任务行读数右缘对齐。 */
 .sp-row-activity {
   cursor: default;
-  padding-left: calc(var(--sp-pad-x) + 7px + var(--sp-gap-block));
+  padding-left: calc(var(--sp-pad-x) + var(--sp-lamp-w) + var(--sp-gap-block));
 }
 
 .sp-row-activity:hover {
@@ -3336,6 +3340,130 @@
 
 .sp-row-time[data-tone='run'] {
   color: var(--dsc-accent);
+}
+
+/* 被依赖挡住的任务：琥珀（与「等依赖」这颗状态灯同色）。 */
+.sp-row-time[data-tone='warn'] {
+  color: var(--dsc-orange);
+}
+
+/* ── 共享任务行的状态灯（照 dsh 的 StateDot）──
+   槽宽固定 --sp-lamp-w（14px），四种形态在同一个槽里居中，所以换灯不会让任务标题
+   左右跳；活动条目与任务详情的左缩进也从同一个变量算（见上两处 padding-left）。
+   - 进行中：外圈轨道（呼吸）+ 旋转弧，1.5s 一圈，与 dsh 同一套节奏；
+   - 完成：实心绿点（10px 槽里的 8px 核，视觉上仍是一个点）；
+   - 待开始：空心圈；被依赖挡住：琥珀空心圈。
+   四态不靠颜色单通道区分：空心/实心/弧线三种形状本身就不同。 */
+.sp-lamp {
+  align-items: center;
+  color: var(--dsc-green);
+  display: inline-flex;
+  flex: none;
+  height: var(--sp-lamp-w);
+  justify-content: center;
+  width: var(--sp-lamp-w);
+}
+
+.sp-lamp-done::before {
+  background: var(--dsc-green);
+  border-radius: 50%;
+  content: '';
+  height: 8px;
+  width: 8px;
+}
+
+.sp-lamp-pending::before,
+.sp-lamp-blocked::before {
+  border: 1.5px solid var(--dsc-text-quaternary);
+  border-radius: 50%;
+  box-sizing: border-box;
+  content: '';
+  height: 9px;
+  width: 9px;
+}
+
+.sp-lamp-blocked::before {
+  border-color: var(--dsc-orange);
+}
+
+/* 轨道与弧：dsh 的 spinner 参数（r 9.5 / 描边 2 / 弧长 12→24）。 */
+.sp-lamp-track,
+.sp-lamp-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.sp-lamp-track {
+  animation: sp-lamp-breathe 1.5s ease-in-out infinite;
+  opacity: 0.25;
+}
+
+.sp-lamp-arc {
+  animation: sp-lamp-dash 1.5s ease-in-out infinite;
+  stroke-dasharray: 12 150;
+}
+
+/* 旋转挂在 svg 上（轨道是正圆，跟着转看不出差别；弧靠它转起来）。 */
+.sp-lamp-run {
+  animation: sp-lamp-spin 1.5s linear infinite;
+}
+
+@keyframes sp-lamp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sp-lamp-dash {
+  0% {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+
+  50% {
+    stroke-dasharray: 24 150;
+    stroke-dashoffset: -6;
+  }
+
+  100% {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes sp-lamp-breathe {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ── 队友行的 token / 耗时 / 右箭头（dsh 面板那一行：名字 / 角色 / 58.1M tok / 50分06秒 / ›）──
+   三格都是只读读数：等宽数字防跳，右缘与行尾状态词同一档内距。 */
+.sp-row-tokens,
+.sp-row-elapsed {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行尾右箭头：收起指右、展开转 180°（任务行 / 队友行共用同一条过渡）。 */
+.sp-row-arrow {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  transition: transform var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+.sp-row-open[aria-expanded='true'] .sp-row-arrow {
+  transform: rotate(180deg);
 }
 
 /* Git 增减读数（+A −M）：绿 / 红各占一档，等宽数字防跳（面板标题与胶囊共用）。 */
@@ -3866,6 +3994,16 @@
   }
   .sp-row[data-state='working'] .sp-icon-run {
     animation: none;
+  }
+  /* 任务状态灯：停掉旋转 / 呼吸 / 弧长变化，弧固定在一小段（形状仍看得出「在跑」）。 */
+  .sp-lamp-run,
+  .sp-lamp-track,
+  .sp-lamp-arc {
+    animation: none;
+  }
+  .sp-lamp-arc {
+    stroke-dasharray: 18 150;
+    stroke-dashoffset: -3;
   }
 }
 

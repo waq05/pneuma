@@ -44,8 +44,8 @@
   "status.todo.clearTip": "Clear the task list (the model rebuilds it on its next update)",
   "status.todo.clear": "Clear list",
   "status.section.agent": "Subagents",
-  "status.agent.trailRunning": "{n} running · {total} total",
-  "status.agent.trailCount": "{n} total",
+  "status.agent.trailRunning": "{done} done · {running} running",
+  "status.agent.trailCount": "{n} done",
   "status.agent.stateWorking": "Running",
   "status.agent.stateIdle": "Done",
   "status.agent.modeOneShot": "One-shot",
@@ -58,8 +58,8 @@
   "status.agent.stopAria": "Stop {name}",
   "status.agent.stopTip": "Stop this teammate (best effort; finished runs keep their result)",
   "status.section.team": "Shared tasks",
-  "status.team.trail": "{n} open · {total} total",
-  "status.team.trailDone": "All {n} done",
+  "status.team.trail": "{done} done · {open} open",
+  "status.team.trailDone": "{n} done",
   "status.team.statePending": "Ready",
   "status.team.stateBlocked": "Blocked",
   "status.team.stateInProgress": "In progress",
@@ -122,5 +122,6 @@
   "status.ago.ago": "{text} ago",
   "status.duration.hms": "{h}h{m}m",
   "status.duration.ms": "{m}m{s}s",
-  "status.duration.s": "{s}s"
+  "status.duration.s": "{s}s",
+  "status.tokens": "{text} tok"
 }

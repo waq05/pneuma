@@ -220,9 +220,13 @@ function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never,
     }
     poll()
     const timer = window.setInterval(poll, 3000)
+    // 宿主一推帧就补一拍（写名册 / 队友收工都会触发）：名册在面板上要「当场」变，
+    // 3 秒轮询只当兜底。订阅回调只催 poll，可见性规则仍由各自的面判定。
+    const off = channel.subscribe(poll)
     return () => {
       alive = false
       window.clearInterval(timer)
+      off()
     }
   }, [channel, actions])
   return <TeammateReader mates={list} />

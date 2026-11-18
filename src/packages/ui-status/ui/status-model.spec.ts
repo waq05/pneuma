@@ -21,6 +21,7 @@ import {
   formatAgo,
   formatCountdown,
   formatDuration,
+  formatTokens,
   longestElapsedMs,
   longestWorkElapsedMs,
   mateElapsedMs,
@@ -358,6 +359,21 @@ test('超过一小时时只到分（3.7 小时 → 3小时42分）', () => {
 test('负数与 NaN 给 null（不编一个数出来）', () => {
   expect(formatDuration(-1)).toBeNull()
   expect(formatDuration(Number.NaN)).toBeNull()
+})
+
+test('队友行的秒补成两位（50分06秒 / 6秒）', () => {
+  expect(formatDuration((50 * 60 + 6) * 1000, true)).toBe('50分06秒')
+  expect(formatDuration(6_000, true)).toBe('6秒')
+  // 不传第二参时沿用别处的读数口径（倒计时 / 多久前不补零）。
+  expect(formatDuration((50 * 60 + 6) * 1000)).toBe('50分6秒')
+})
+
+test('token 记法：百万一位小数；undefined 与 0 不画', () => {
+  expect(formatTokens(58_100_000)).toBe('58.1M tok')
+  expect(formatTokens(912_400)).toBe('912.4K tok')
+  expect(formatTokens(873)).toBe('873 tok')
+  expect(formatTokens(undefined)).toBeNull()
+  expect(formatTokens(0)).toBeNull()
 })
 
 test('还在跑的队友按 now 算已运行', () => {

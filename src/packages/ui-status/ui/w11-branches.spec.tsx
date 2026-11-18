@@ -451,6 +451,30 @@ describe('轮询：git / 名册 / 任务板', () => {
     expect(section('agent')).toBeNull()
   })
 
+  test('宿主推帧：订阅回调立刻重拉名册与任务板（5 秒轮询只当兜底）', async () => {
+    const harness = harnessOf({
+      mates: [mate({ name: 'w1' })],
+      board: board(1, [boardTask('t1')]),
+    })
+    mount(harness)
+    await flush()
+    const matesBefore = callsOf(harness, 'listTeammates').length
+    const boardBefore = callsOf(harness, 'listTeamBoard').length
+
+    harness.state.mates = [mate({ name: 'w1' }), mate({ name: 'w2', state: 'idle', tokens: 58_100_000 })]
+    harness.state.board = board(2, [boardTask('t1', { subject: '推帧后的任务' })])
+    await act(async () => {
+      harness.emit()
+      await Promise.resolve()
+    })
+    await flush()
+    // 不等 5 秒：推一帧就各多一拍。
+    expect(callsOf(harness, 'listTeammates').length).toBe(matesBefore + 1)
+    expect(callsOf(harness, 'listTeamBoard').length).toBe(boardBefore + 1)
+    expect(textOf(section('team'))).toContain('推帧后的任务')
+    expect(textOf(section('agent'))).toContain('w2')
+  })
+
   test('任务板：同板不重画、版本 / 长度 / 字段变化才更新；null 忽略、失败清空', async () => {
     const harness = harnessOf({ board: board(1, [boardTask('t1'), boardTask('t2', { status: 'completed' })]) })
     mount(harness)

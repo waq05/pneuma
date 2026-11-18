@@ -44,8 +44,8 @@
   "status.todo.clearTip": "清空任务清单（模型下一次更新清单会重建它）",
   "status.todo.clear": "清空清单",
   "status.section.agent": "子智能体",
-  "status.agent.trailRunning": "{n} 在跑 · 共 {total}",
-  "status.agent.trailCount": "共 {n} 位",
+  "status.agent.trailRunning": "{done} 已完成 · {running} 在跑",
+  "status.agent.trailCount": "{n} 已完成",
   "status.agent.stateWorking": "在跑",
   "status.agent.stateIdle": "已完成",
   "status.agent.modeOneShot": "一次性",
@@ -58,8 +58,8 @@
   "status.agent.stopAria": "停掉 {name}",
   "status.agent.stopTip": "停掉这个队友（尽力而为，已跑完的改不了结果）",
   "status.section.team": "共享任务",
-  "status.team.trail": "{n} 条未完成 · 共 {total}",
-  "status.team.trailDone": "{n} 条全部完成",
+  "status.team.trail": "{done} 已完成 · {open} 未完成",
+  "status.team.trailDone": "{n} 已完成",
   "status.team.statePending": "待开工",
   "status.team.stateBlocked": "等依赖",
   "status.team.stateInProgress": "进行中",
@@ -122,5 +122,6 @@
   "status.ago.ago": "{text}前",
   "status.duration.hms": "{h}小时{m}分",
   "status.duration.ms": "{m}分{s}秒",
-  "status.duration.s": "{s}秒"
+  "status.duration.s": "{s}秒",
+  "status.tokens": "{text} tok"
 }
