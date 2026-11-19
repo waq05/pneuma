@@ -32,7 +32,7 @@
     "description": "可收成胶囊的多分区总览浮层：Git、目标、计划、进程、终端、工作流、子智能体与智能体团队（只读任务板）",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1"
+      "api": "^0.9.2"
     },
     "toggleable": true
   },

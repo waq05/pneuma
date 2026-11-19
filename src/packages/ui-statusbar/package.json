@@ -32,7 +32,7 @@
     "description": "底部状态栏：轮次、token 与上下文三段读数",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1",
+      "api": "^0.9.2",
       "phase": "early"
     },
     "toggleable": true
