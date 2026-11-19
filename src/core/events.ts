@@ -69,8 +69,14 @@ export type CoreEvent =
   /**
    * 模型开始吐某个工具调用的名字，参数还没到齐（对照 dsh 的 `preparing` 节点）。
    * 它计一次调用、不解析参数，界面上只渲染成不可展开的一行。
+   *
+   * `args` 是**已经收到的参数原文**（多半是半截 JSON）：模型边吐参数、这里边更新，
+   * 界面据此把「准备运行命令 · pnpm bu」这种半截详情也报出来（对照 dsh 的 ToolArgs
+   * 实时视图，process-activity.ts:65-86）。没有字节时字段缺席，不报空串。
+   * `index` 是这条调用在本次消息里的序号（OpenAI 的 tool_calls[].index）：同一条调用的
+   * 多次更新靠它认人——同名工具并行两条时，只按名字认会串。
    */
-  | { type: 'tool/prepare'; name: string }
+  | { type: 'tool/prepare'; name: string; args?: string; index?: number }
   /**
    * 这条工具调用的结果；`ms` 是「发起 → 结果」的墙钟耗时（毫秒）。
    *

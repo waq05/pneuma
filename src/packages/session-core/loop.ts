@@ -518,9 +518,20 @@ export class MiniAgent {
             // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索。
             // 工具名同样是模型的输出 token（对照 dsh 的 isTokenDelta：具名工具增量算首 token），
             // 所以它也要参与首字延迟——只出工具调用、不吐正文的一步否则就没有首字时刻了。
-            onToolPrepare: (name) => {
+            //
+            // 名字到齐之后的每一次回调带的是**累积参数原文**（半截 JSON）：界面靠它把
+            // 「准备运行命令 · pnpm bu」这种半截详情显示到组头上（2026-11-18）。没字节时
+            // 不给这个字段，免得事件里多一个空串。
+            onToolPrepare: (name, argsText, index) => {
               if (firstTokenAt === null) firstTokenAt = Date.now()
-              this.deps.emit({ type: 'tool/prepare', name })
+              this.deps.emit({
+                type: 'tool/prepare',
+                name,
+                // 类型守卫不只为省字节：有调用方按单参回调（老探针、第三方），
+                // 不带守卫会往事件里塞 `args: undefined` / `index: undefined`。
+                ...(typeof index === 'number' ? { index } : {}),
+                ...(typeof argsText === 'string' && argsText !== '' ? { args: argsText } : {}),
+              })
             },
             // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒。
             // 先落盘再报到界面（dsh 的「先持久、后等待」）：重试提示是这一轮发生过的事，

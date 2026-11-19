@@ -116,8 +116,13 @@ export class Transcript {
    * 那一刻才发号）小，壳那边就一路把它排到思考行前面——正是用户报的「思考内容行在工具
    * 调用行下面」。**发号只许在条目真正进 list 的那一刻做**（见 `tool/call`），这条不变量
    * 由 `scripts/transcript-order-test.mjs` 逐条钉住。
+   *
+   * `args` 是模型边吐边长的参数原文（2026-11-18）：准备中那一行要显示
+   * 「准备运行命令 · pnpm bu」这种半截详情，所以这里跟着 `tool/prepare` 原地更新，
+   * 不再只留一个名字。`index` 是这条调用在本次消息里的序号，同一条调用的多次更新靠它认人
+   * （同名工具并行两条时，只按名字认会串）。
    */
-  private prepared: { name: string; ts: number | null }[] = []
+  private prepared: { name: string; ts: number | null; index?: number; args?: string }[] = []
   private seq = 1
   /** 直播尾段（`message`/`turn/end`/清空时重置）。 */
   private segments: LiveSegment[] = []
@@ -257,8 +262,10 @@ export class Transcript {
       call: {
         callId: '',
         name: item.name,
-        // 参数这会儿还没到齐，一条都不解析（对照 dsh 的「不解析参数」）
+        // 参数这会儿多半还没到齐，所以 `argsText` 仍是空串（它是「终稿参数」的那一格，
+        // 界面各处拿它真解析）——半截原文单开 `argsPreview`，只有组头读它。
         argsText: '',
+        ...(item.args === undefined ? {} : { argsPreview: item.args }),
         status: 'preparing',
       },
       ...(item.ts === null ? {} : { ts: item.ts }),
@@ -738,7 +745,30 @@ export class Transcript {
         // （对照 dsh 的 preparing 节点）。这条不往 list 里 push、也不在这里发号，理由见
         // `prepared` 的注释——它由 liveEntries() 合成在最后（负 id），`tool/call` 到达时
         // 才正式落进 list 并领一个当刻的正 id。
-        this.prepared.push({ name: event.name, ts: this.eventTs })
+        //
+        // 同一条调用在参数流动期间会来很多次（名字那一拍 + 参数每长一段一次）：按 `index`
+        // 认人**原地更新**。原地更新还有一个必须保住的东西——`ts`，dsh 的口径是「准备中的
+        // 调用使用首个具名 delta 的时间」，跟着最后一次刷新会让这一行的时刻一路往后跳。
+        //
+        // 已知代价：`streamChat` 重试 / 流中断恢复时，llm 侧每轮重试都新建 `callsByIndex`
+        // （index 从 0 重来），而这里不随重试清空——新一次 prepare 会命中上一轮留下的同 index
+        // 那一行，于是 `ts` 保留的是**上一次尝试**的时刻。影响只是时刻差几十毫秒到几秒；
+        // 比原来「每次 prepare 都 push 一条」留下的重复行好。真要严格对齐，得在
+        // `model/retry` 里清掉本轮还没升级的条目。
+        const index = event.index
+        const at = index === undefined ? -1 : this.prepared.findIndex((item) => item.index === index)
+        const fresh = at < 0 ? undefined : this.prepared[at]
+        if (fresh === undefined) {
+          this.prepared.push({
+            name: event.name,
+            ts: this.eventTs,
+            ...(index === undefined ? {} : { index }),
+            ...(event.args === undefined || event.args === '' ? {} : { args: event.args }),
+          })
+        } else {
+          fresh.name = event.name
+          if (event.args !== undefined && event.args !== '') fresh.args = event.args
+        }
         // 模型已经在吐工具名了：刚才那段还在流式的正文，就是这一步的前言——当场降成
         // 过程行，读者不会看到「大字正文忽然缩成小字」的换挡。只标最后一段：前面若还有
         // 一段思考，那是思考行的事。
