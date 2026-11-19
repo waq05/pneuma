@@ -96,6 +96,23 @@ function systemPrompt(): string {
   return services.prompt.systemPrompt(ws)
 }
 
+/**
+ * 模型这一次会收到的完整请求：系统提示之外还有投影链追加的尾部注入。
+ *
+ * 2026-11 P0 起，记忆索引与「副本已过期」提醒都走请求末尾的 user 注入（order 610），
+ * 不在系统提示里——要看它们得跑一遍投影链。
+ */
+function requestText(): string {
+  const prompt = services.prompt as unknown as {
+    rewrite(messages: Array<{ role: string; content: unknown }>, session: unknown): Array<{ role: string; content: unknown }>
+  }
+  return JSON.stringify(prompt.rewrite([], services.session.current()))
+}
+
+/** 尾部注入里的记忆栏位说明（`PROMPT_HEADER` 的第一句）。 */
+const MEMORY_HEADER_NEEDLE = '长期记忆（过去几次会话里攒下来的事实'
+
+
 /** 当前会话的消息全文（复盘是否起了就看它）。 */
 function messagesText(): string {
   return JSON.stringify(services.session.current().messages)
@@ -227,61 +244,71 @@ describe('③ 老 `§` 纯文本向后兼容：读 → 写 → 形状合法', ()
   })
 })
 
-describe('① 记忆当轮生效：写入后同一会话的下一次注入快照里就有', () => {
+describe('① 记忆当轮生效：写入后同一会话的下一次请求末尾就有', () => {
   /** 这一节用的标记（同一会话里只出现一次就够了）。 */
   const marker = '同轮生效标记XYZ-2026'
 
   test('写入前注入里没有这条标记，写入回执说已记下', async () => {
-    expect(systemPrompt()).not.toContain(marker)
+    expect(requestText()).not.toContain(marker)
     const result = String(await memoryTool.run({ target: 'global', action: 'add', content: marker }, runCtx()))
     expect(result).toMatch(/已记下|已更新/)
   })
 
-  test('同一会话的下一次 systemPrompt 里立刻有这条标记（不等新会话/压缩）', () => {
-    expect(systemPrompt()).toContain(marker)
+  test('同一会话的下一次请求末尾立刻有这条标记（不等新会话/压缩），且系统提示里没有', () => {
+    expect(requestText()).toContain(marker)
+    expect(systemPrompt()).not.toContain(marker)
     expect(services.memory.snapshot()).toContain(marker)
   })
 })
 
-describe('⑦ 一次性「记忆副本已过期」提醒', () => {
-  test('写入后紧接着的一次请求带上过期提醒，读过一次就不再出现', async () => {
+describe('⑦ 「记忆副本已过期」提醒：本回合内幂等，回合结束清掉', () => {
+  test('写入后同一回合的每次请求都带、turn-end 后不再出现', async () => {
     await memoryTool.run({ target: 'global', action: 'add', content: '过期提醒探针条目' }, runCtx())
-    const first = systemPrompt()
-    const second = systemPrompt()
+    const first = requestText()
+    const second = requestText()
     expect(first).toContain('记忆副本已过期')
-    expect(second).not.toContain('记忆副本已过期')
+    // 投影链对同一请求会跑两遍（invariant 派生），同一回合内必须幂等：第二遍仍带着它。
+    expect(second).toContain('记忆副本已过期')
+    services.emit('dsc/turn-end', 'completed', {
+      sessionId: services.session.current().meta.id,
+      sessionPath: services.session.current().filePath,
+    })
+    expect(requestText()).not.toContain('记忆副本已过期')
   })
 })
 
-describe('② 与 AGENTS.md 合并注入 `# agentsMd`', () => {
-  test('只有记忆、没有 AGENTS.md 时标题仍在，且只有一个', () => {
+describe('② 记忆索引不再并进 `# agentsMd` 块', () => {
+  test('只有记忆、没有 AGENTS.md 时不出 `# agentsMd` 块，索引只走请求末尾', () => {
     const base = systemPrompt()
-    expect(base).toContain('# agentsMd')
-    expect((base.match(/# agentsMd/g) ?? []).length).toBe(1)
+    // 记忆不再并进 agentsMd 块：没有 AGENTS.md 就整块不出现，系统提示只留一句静态说明。
+    expect(base).not.toContain('# agentsMd')
+    expect(base).toContain('【长期记忆】')
+    expect(requestText()).toContain(MEMORY_HEADER_NEEDLE)
   })
 
-  test('AGENTS.md 与记忆索引进同一个块，标题在先、仍只有一个', () => {
+  test('AGENTS.md 在系统提示的 `# agentsMd` 块里，记忆索引单独走请求末尾', () => {
     const marker = 'AGENTS-合并块标记-7788'
     try {
       writeFileSync(join(ws, 'AGENTS.md'), `项目说明：${marker}\n`, 'utf8')
       const merged = systemPrompt()
       const titleAt = merged.indexOf('# agentsMd')
       const agentsAt = merged.indexOf(marker)
-      const memoryAt = merged.indexOf('全局事实记忆')
       expect(titleAt).toBeGreaterThanOrEqual(0)
       expect(agentsAt).toBeGreaterThan(titleAt)
-      expect(memoryAt).toBeGreaterThan(titleAt)
-      expect(memoryAt).toBeGreaterThan(agentsAt)
       expect((merged.match(/# agentsMd/g) ?? []).length).toBe(1)
+      // 记忆索引不在这块里：系统提示不带栏位说明，尾部注入带。
+      expect(merged).not.toContain(MEMORY_HEADER_NEEDLE)
+      expect(requestText()).toContain(MEMORY_HEADER_NEEDLE)
     } finally {
       rmSync(join(ws, 'AGENTS.md'), { force: true })
     }
   })
 
-  test('撤掉 AGENTS.md 后标题仍在、记忆仍在', () => {
+  test('撤掉 AGENTS.md 后块消失、记忆仍在（在请求末尾）', () => {
     const only = systemPrompt()
-    expect(only).toContain('# agentsMd')
-    expect(only).toContain('全局事实记忆')
+    expect(only).not.toContain('# agentsMd')
+    expect(only).not.toContain(MEMORY_HEADER_NEEDLE)
+    expect(requestText()).toContain(MEMORY_HEADER_NEEDLE)
   })
 })
 
@@ -307,8 +334,8 @@ describe('④ 类型解析与注入呈现', () => {
     expect(types).toContain('fact')
   })
 
-  test('注入里把 feedback / reference 的类型标记打在正文前，缺省类型不写前缀', () => {
-    const text = systemPrompt()
+  test('尾部注入里把 feedback / reference 的类型标记打在正文前，缺省类型不写前缀', () => {
+    const text = requestText()
     expect(text).toContain('[feedback] 用户要求提交信息用中文')
     expect(text).toContain('[reference] 参考 docs/deploy.md')
     expect(text).not.toContain('[fact]')

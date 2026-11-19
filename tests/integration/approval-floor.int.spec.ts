@@ -63,7 +63,12 @@ const REAL_POWERSHELL =
   '`t' +
   String.raw`{1}" -f $n, $_.FullName.Replace((Get-Location).Path + "\","") } | Sort-Object -Descending | Select-Object -First 25`
 
-describe('[1] PowerShell 的 `"\"` 不再被当成「引号没闭合」', () => {
+// [1][2] 钉的是 PowerShell 的引号语义：门槛判据按平台选 shell，CI 的 Linux 分片跑不了
+// （那边 `shellOf` 走 posix，`"\` 不是转义符，两条必然按另一种口径判）。跳过不算放水：
+// Windows 车道照跑同一条。
+const describePowershell = process.platform === 'win32' ? describe : describe.skip
+
+describePowershell('[1] PowerShell 的 `"\"` 不再被当成「引号没闭合」', () => {
   test('那条真实命令不再被拒', async () => {
     const verdict = await decide(REAL_POWERSHELL)
     expect(verdict.action).not.toBe('deny')
@@ -79,7 +84,7 @@ describe('[1] PowerShell 的 `"\"` 不再被当成「引号没闭合」', () => 
   })
 })
 
-describe('[2] 命令替换照旧拒，但给出可照做的改法', () => {
+describePowershell('[2] 命令替换照旧拒，但给出可照做的改法', () => {
   test('内层是只读命令也拒（fail-closed），理由里说明怎么拆', async () => {
     const verdict = await decide('echo $(Get-Date)')
     expect(verdict.action).toBe('deny')
