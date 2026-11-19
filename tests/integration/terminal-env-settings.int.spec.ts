@@ -133,7 +133,9 @@ describe('② 下拉里只有真探到的终端', () => {
 
   test('有一行检测结果、「重新检测」按钮', () => {
     const info = section()?.fields?.find((field) => field.type === 'info')
-    expect(info?.text).toContain('PowerShell')
+    // 检测结果那一行写的是「当前生效的那个解释器」：Windows 是 PowerShell，POSIX 是 sh。
+    // 写死一边会让另一半平台红（2026-11-19 Linux CI 就是这么红的）。
+    expect(info?.text).toContain(process.platform === 'win32' ? 'PowerShell' : 'sh')
     const button = section()?.fields?.find((field) => field.type === 'button')
     expect(button?.action).toBe('redetect')
   })

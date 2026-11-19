@@ -189,7 +189,9 @@ describe('③ 四个选择折成四套保真参数', () => {
   const envVars: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '' }
   const planOf = (choice: Parameters<typeof shellPlan>[0]) => shellPlan(choice, 'echo hi', cwd, envVars)
 
-  test('powershell：file 落在 powershell.exe，参数与退出码/UTF-8 补丁都在', () => {
+  // 只在 Windows 跑：POSIX 上没有 powershell，`shellPlan('powershell')` 会回落到 sh
+  // （这正是 auto 的语义），断言 powershell.exe 只在 Windows 成立。
+  test.skipIf(!IS_WIN)('powershell：file 落在 powershell.exe，参数与退出码/UTF-8 补丁都在', () => {
     const plan = planOf('powershell')
     expect(plan.file).toMatch(/powershell\.exe$/i)
     expect(plan.args[0]).toBe('-NoProfile')
