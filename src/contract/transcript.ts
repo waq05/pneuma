@@ -26,6 +26,16 @@ export interface ToolCallView {
   name: string
   /** 模型产出的原始 arguments JSON 字符串（截断由 UI 决定）。 */
   argsText: string
+  /**
+   * **准备中**（`status === 'preparing'`）时已经收到的参数原文，可能是半截 JSON
+   * （2026-11-18）。组头拿它显示「准备运行命令 · pnpm bu」。
+   *
+   * 为什么不并进 `argsText`：`argsText` 的语义是「这次调用的终稿参数」，界面各处拿它
+   * 真解析（文件路径、改动 diff、摘要）。半截 JSON 塞进去，那些读法要么解析失败、要么
+   * 把 `{"command":"pnpm bu` 原样画到摘要上（评审实测过）。单开一个字段，只有组头读它，
+   * 别的读法一个字节都看不到。派发之后这个字段不再更新（`argsText` 那时是终稿）。
+   */
+  argsPreview?: string
   /** 工具结果文本（可能为空：无结果或尚未完成）。 */
   resultText?: string
   status: ToolStatus

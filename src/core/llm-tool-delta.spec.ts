@@ -26,24 +26,44 @@ const junkDelta = {
 describe('null / 脏值只是「这片没给」', () => {
   test('首发分片落名字与参数，并通知一次「准备中」', () => {
     const calls = new Map<number, { id: string; name: string; arguments: string }>()
-    const prepared: string[] = []
-    applyToolCallDelta(calls, { index: 0, id: 'call_1', function: { name: 'run_code', arguments: '{"co' } }, (name) => prepared.push(name))
+    const prepared: { name: string; argsText: string }[] = []
+    applyToolCallDelta(
+      calls,
+      { index: 0, id: 'call_1', function: { name: 'run_code', arguments: '{"co' } },
+      (name, argsText) => prepared.push({ name, argsText }),
+    )
     const first = calls.get(0)
     expect(first?.name).toBe('run_code')
     expect(first?.arguments).toBe('{"co')
-    expect(prepared).toEqual(['run_code'])
+    // 2026-11-18 起回调多带「累积参数原文」：组头拿它显示「准备运行命令 · pnpm bu」。
+    expect(prepared).toEqual([{ name: 'run_code', argsText: '{"co' }])
   })
 
-  test('后续分片的 null 名字 / null ID 不覆盖已收到的，参数继续累积，不重复报「准备中」', () => {
+  test('后续分片的 null 名字 / null ID 不覆盖已收到的，参数继续累积；参数增长会再报一次', () => {
     const calls = new Map<number, { id: string; name: string; arguments: string }>()
-    const prepared: string[] = []
-    applyToolCallDelta(calls, { index: 0, id: 'call_1', function: { name: 'run_code', arguments: '{"co' } }, (name) => prepared.push(name))
-    applyToolCallDelta(calls, { index: 0, id: null, function: { name: null, arguments: 'de": 1}' } }, (name) => prepared.push(name))
+    const prepared: { name: string; argsText: string }[] = []
+    applyToolCallDelta(
+      calls,
+      { index: 0, id: 'call_1', function: { name: 'run_code', arguments: '{"co' } },
+      (name, argsText) => prepared.push({ name, argsText }),
+    )
+    applyToolCallDelta(
+      calls,
+      { index: 0, id: null, function: { name: null, arguments: 'de": 1}' } },
+      (name, argsText) => prepared.push({ name, argsText }),
+    )
     const merged = calls.get(0)
     expect(merged?.name).toBe('run_code')
     expect(merged?.id).toBe('call_1')
     expect(merged?.arguments).toBe('{"code": 1}')
-    expect(prepared).toHaveLength(1)
+    // 名字没变（只有参数长了一段）：报的是同一名字 + 新的累积原文，不是「又声明了一遍名字」。
+    expect(prepared).toEqual([
+      { name: 'run_code', argsText: '{"co' },
+      { name: 'run_code', argsText: '{"code": 1}' },
+    ])
+    // 名字重复到达、却一个参数字节都没给：不报。
+    applyToolCallDelta(calls, { index: 0, function: { name: 'run_code' } }, (name, argsText) => prepared.push({ name, argsText }))
+    expect(prepared).toHaveLength(2)
   })
 
   test('首片全 null 时各字段落成空串，绝不落成 null（那是白屏的根）', () => {
@@ -62,5 +82,51 @@ describe('null / 脏值只是「这片没给」', () => {
     const dirty = new Map<number, { id: string; name: string; arguments: string }>()
     expect(() => applyToolCallDelta(dirty, junkDelta)).not.toThrow()
     expect(dirty.get(3)).toEqual({ id: '', name: '', arguments: '' })
+  })
+})
+
+describe('准备中回调：参数前缀的节奏与边界（2026-11-18）', () => {
+  /** 一条调用 + 回调记录器。 */
+  const recorder = () => {
+    const calls = new Map<number, { id: string; name: string; arguments: string }>()
+    const seen: { name: string; argsText: string; index: number }[] = []
+    const push = (delta: Parameters<typeof applyToolCallDelta>[1]) => {
+      applyToolCallDelta(calls, delta, (name, argsText, index) => seen.push({ name, argsText, index }))
+    }
+    return { seen, push }
+  }
+
+  test('一片增量最多报一次：名字与参数同片到达时不先报旧文本再报新文本', () => {
+    const { seen, push } = recorder()
+    push({ index: 0, function: { name: 'bash', arguments: '{"command":"ls' } })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.argsText).toBe('{"command":"ls')
+  })
+
+  test('参数超过 4096 上限后截断，且前缀不再变化时不再刷事件', () => {
+    const { seen, push } = recorder()
+    push({ index: 0, function: { name: 'write', arguments: `{"content":"${'a'.repeat(4200)}` } })
+    const capped = seen[seen.length - 1]?.argsText ?? ''
+    expect(capped.length).toBeLessThanOrEqual(4096)
+    const before = seen.length
+    push({ index: 0, function: { arguments: 'x'.repeat(2000) } })
+    expect(seen.length).toBe(before)
+  })
+
+  test('同名并行两条：index 各自回调，互不串', () => {
+    const { seen, push } = recorder()
+    push({ index: 0, function: { name: 'read', arguments: '{"file_path":"a' } })
+    push({ index: 1, function: { name: 'read', arguments: '{"file_path":"b' } })
+    expect(seen.map((item) => item.index)).toEqual([0, 1])
+    expect(seen.map((item) => item.argsText)).toEqual(['{"file_path":"a', '{"file_path":"b'])
+  })
+
+  test('名字后到、参数先到：名字到齐那一拍只报一次（带上已收到的参数）', () => {
+    const { seen, push } = recorder()
+    push({ index: 0, function: { name: null, arguments: '{"command":"p' } })
+    expect(seen).toHaveLength(0)
+    push({ index: 0, function: { name: 'bash', arguments: 'npm' } })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toEqual({ name: 'bash', argsText: '{"command":"pnpm', index: 0 })
   })
 })

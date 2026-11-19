@@ -99,6 +99,27 @@ export function discover(patterns, exclude = []) {
     .sort()
 }
 
+/**
+ * 探针子进程的环境：把我们自己的环境「隔离用不到的那几位」剔掉。
+ *
+ * 为什么需要：每条探针的隔离做法是 `process.env.HOME = 临时目录`（见各探针抬头），
+ * 而 `dscPath()` / `dshPath()` 优先读 `DSC_HOME` / `DSH_HOME`——用户把 numa 数据目录
+ * 挪到别的盘（比如 `DSC_HOME=D:\waqData\dsc`）之后，临时 HOME 就被绕过，探针会直接读写
+ * **真实**数据目录：轻则断言红（读到真实 plugins.json / settings.json），重则往用户目录里
+ * 写一堆临时会话与设置（2026-11-19 实测踩过：62 个 Temp 假工作区、237 个假会话）。
+ *
+ * 只剔这两个落点开关，其余环境变量（PATH / 凭据相关的 key 名等）原样带过去：探针里
+ * 「没配 key 时怎么提示」这类断言需要它们照常存在。
+ *
+ * @returns 子进程该用的 env
+ */
+function probeEnv() {
+  const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
+  delete env.DSC_HOME
+  delete env.DSH_HOME
+  return env
+}
+
 /** 一条探针的结论。 */
 function runOne(file, timeoutMs) {
   return new Promise((done) => {
@@ -113,7 +134,7 @@ function runOne(file, timeoutMs) {
       {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+        env: probeEnv(),
       },
     )
     let out = ''

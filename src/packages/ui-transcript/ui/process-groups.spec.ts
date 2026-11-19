@@ -27,6 +27,8 @@ import {
   groupSteps,
   joinLiveDetail,
   liveTitleOf,
+  liveToolDetail,
+  preparingToolDetail,
   seatPlan,
   STEP_TITLE_SEPARATOR,
   stepGroupTitle,
@@ -421,4 +423,129 @@ describe('seatPlan 对新分轮产物的回归闸', () => {
 test('组头的分隔符照 dsh 原样（类别与详情两段各带空格）', () => {
   expect(joinLiveDetail('正在运行命令', 'pnpm build')).toBe(`正在运行命令${STEP_TITLE_SEPARATOR}pnpm build`)
   expect(joinLiveDetail('正在运行命令', '')).toBe('正在运行命令')
+})
+
+// ── 直播尾补全（2026-11-18）：思考内容与准备中的半截参数 ──────────────────────
+
+describe('没有跑着的工具时：组头摘录正在流式的思考（2026-11-18 补回）', () => {
+  /** 直播尾的条目是负 id（adapter 的 liveEntries），定稿后才换成正 id。 */
+  const liveThink = (text: string): TranscriptEntry => ({ kind: 'thinking', id: -(seq += 1), text })
+  const headerText = (group: StepGroup, liveDetail: boolean): string => {
+    const live = liveTitleOf(group)
+    const label = stepGroupTitle(group.counts, group.closed, undefined, live.preparing)
+    return joinLiveDetail(label, group.closed || !liveDetail ? '' : live.detail)
+  }
+
+  test('只有直播思考也成组，详情取最后一段非空思考', () => {
+    const entries = [
+      entry('user', { text: '看看日志' }),
+      liveThink('先确认日志在哪。\n\n现在读一下最近那段崩溃记录，看是哪个依赖。'),
+    ]
+    const group = groupSteps(entries, [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    expect(group.running).toBeUndefined()
+    expect(group.runningDetail).toBe('现在读一下最近那段崩溃记录，看是哪个依赖。')
+  })
+
+  test('标准档组头 = 正在分析请求 · 思考内容；紧凑档不带详情', () => {
+    const entries = [entry('user', { text: '看看' }), liveThink('先跑一下测试。')]
+    const group = groupSteps(entries, [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    expect(headerText(group, true)).toBe(`正在分析请求${STEP_TITLE_SEPARATOR}先跑一下测试。`)
+    expect(headerText(group, false)).toBe('正在分析请求')
+  })
+
+  test('最后一段是空白时取前面的段落', () => {
+    const entries = [entry('user', { text: '看看' }), liveThink('先用 grep 找入口。\n\n   \n')]
+    const group = groupSteps(entries, [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    expect(group.runningDetail).toBe('先用 grep 找入口。')
+  })
+
+  test('定稿的思考不摘进组头详情（dsh 也只认运行中的助手步）', () => {
+    const entries = [entry('user', { text: '看看' }), entry('thinking', { text: '这条已经想完了。' })]
+    const group = groupSteps(entries, [round(0, 0, 1)], () => false).groups[0] as StepGroup
+    expect(group.runningDetail).toBeUndefined()
+  })
+
+  test('多条思考里取最近那条直播的', () => {
+    const entries = [
+      entry('user', { text: '看看' }),
+      entry('thinking', { text: '上一段已经想完。' }),
+      liveThink('当前这段：先跑一下测试。'),
+    ]
+    const group = groupSteps(entries, [round(0, 0, 2, null)], () => true).groups[0] as StepGroup
+    expect(group.runningDetail).toBe('当前这段：先跑一下测试。')
+  })
+})
+
+describe('准备中：组头从半截 JSON 里读参数前缀（2026-11-18 新增）', () => {
+  test('半截命令：值未闭合也能读', () => {
+    expect(preparingToolDetail('{"command":"pnpm bu')).toBe('pnpm bu')
+  })
+
+  test('半截命令：值已闭合、后面的键还在流', () => {
+    expect(preparingToolDetail('{"command":"pnpm build","timeout":')).toBe('pnpm build')
+  })
+
+  test('转义换行折成空格；转义写一半就停住（不猜）', () => {
+    expect(preparingToolDetail('{"command":"echo a\\nb"}')).toBe('echo a b')
+    expect(preparingToolDetail('{"command":"echo \\')).toBe('echo')
+  })
+
+  test('一个可读字段都没有时不给假详情', () => {
+    expect(preparingToolDetail('{"timeout":30')).toBe('')
+    expect(preparingToolDetail('')).toBe('')
+  })
+
+  test('参数已到齐时与派发后的取法一致', () => {
+    expect(preparingToolDetail('{"file_path":"a.ts"}')).toBe('a.ts')
+  })
+
+  test('嵌套对象里的同名字段不算顶层字段', () => {
+    expect(preparingToolDetail('{"options":{"command":"nested"},"timeout":')).toBe('')
+  })
+
+  test('值里出现的「"command":」字样不算键', () => {
+    expect(preparingToolDetail('{"description":"say \\"command\\": \\"evil\\"","timeout":')).toBe('say "command": "evil"')
+  })
+
+  test('重复键取最后一个（与 JSON.parse 一致）', () => {
+    expect(preparingToolDetail('{"command":"old","command":"new"}')).toBe('new')
+  })
+
+  test('半个代理项被裁掉，完整的代理对原样保留', () => {
+    expect(preparingToolDetail('{"command":"x\\ud83d')).toBe('x')
+    expect(preparingToolDetail('{"command":"x\\ud83d\\ude00"}')).toBe('x😀')
+  })
+
+  test('派发之后半截 JSON 仍退回工具名（老口径不变）', () => {
+    expect(liveToolDetail('bash', '{"command":"pnpm bu')).toBe('bash')
+  })
+
+  test('组头：准备中的详情来自 argsPreview', () => {
+    const entries: TranscriptEntry[] = [
+      entry('user', { text: '跑一下' }),
+      entry('tool', {
+        id: -(seq += 1),
+        call: { callId: '', name: 'bash', argsText: '', argsPreview: '{"command":"pnpm bu', status: 'preparing' },
+      }),
+    ]
+    const group = groupSteps(entries, [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    expect(group.running).toBe('commands')
+    expect(group.preparing).toBe(true)
+    expect(group.runningDetail).toBe('pnpm bu')
+    expect(stepGroupTitle(group.counts, false, 'commands', true)).toContain('准备运行命令')
+  })
+
+  test('通用类别：还没参数时退回工具名，参数到了就用参数', () => {
+    const make = (argsPreview: string): TranscriptEntry[] => [
+      entry('user', { text: '试试' }),
+      entry('tool', {
+        id: -(seq += 1),
+        call: { callId: '', name: 'some_tool', argsText: '', argsPreview, status: 'preparing' },
+      }),
+    ]
+    const empty = groupSteps(make(''), [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    const filled = groupSteps(make('{"title":"核对入口"'), [round(0, 0, 1, null)], () => true).groups[0] as StepGroup
+    expect(empty.runningDetail).toBe('some_tool')
+    expect(filled.runningDetail).toBe('核对入口')
+  })
 })

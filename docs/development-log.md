@@ -17505,3 +17505,55 @@ plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reac
   中性路径）。
 - 回退到旧清单时按当前时间重新记新鲜期，想立刻拿新数据要点一次「刷新」（与 DSH「刷新才联网」同口径）；
   磁盘层的旧清单仍保留，供下次失败兜底。
+
+### 2026-11-18 直播尾补全：思考内容进组头、准备中的参数前缀进组头
+
+**报障与依据**：用户贴了参考实现的截图（一行「正在分析请求 · Now, why would the user see …」），
+说 numa 的正文直播尾不全——只看得到「正在调用工具」这类抬头，看不到最新一步的具体内容
+（思考正文、工具的具体参数）。逐条核下来是两处**真实缺口**，不是链路坏了。
+
+**缺口一（思考）**：`groupSteps` 里未收口的组只从「运行中的工具参数」取实时详情，没有工具时
+`runningDetail` 一个字段都不写；而做这件事的纯函数 `reasoningDetail()` 从 2026-10-30 起**零调用**。
+实测下来那段时间屏幕上只有一句光秃秃的「正在分析请求」，思考正文全在默认收起的组体里。
+参考实现的 `processActivity` 一直有这条兜底（`process-activity.ts` 的
+`if (running === undefined) runningDetail = liveReasoningDetail(nodes)`）。
+
+**缺口二（工具）**：内核的 `tool/prepare` 事件只带工具名（`src/core/events.ts`），参数在
+`applyToolCallDelta` 里攒着、却从不往外报。于是「模型决定调什么」与「工具真的开跑」之间那几秒，
+组头只有一个名字（通用类别）或者空着。参考实现用参数视图的 `textPrefix` 读流式前缀，
+准备阶段就能显示「准备运行命令 · pnpm bu」。
+
+**改法（两处互不依赖）**：
+
+| 决策 | 理由 |
+| --- | --- |
+| 思考兜底只认**负 id**（还在流式）的那条，取最后一段非空段落 | 定稿的思考行说的是「刚才那段已经想完」，组头要回答的是「此刻在想什么」；参考实现同样只从 `status === 'running'` 的助手步里取。多条时从后往前找第一个能取出一句话的，空段落跳过 |
+| `tool/prepare` 加可选 `args`（累积原文）与 `index`，参数每长一段报一次 | 组头要边流边显示半截命令。`index` 是 OpenAI 的 `tool_calls[].index`——同一条调用的多次更新靠它认人，同名并行两条时只按名字认会串 |
+| 累积原文在**内核侧**截到 4096 UTF-16 单元，且不劈代理对；文本没变化就不重复报 | 每段都带「累积到现在」的原文，一段 20KB 的补丁边流边报会按平方涨；超过上限之后前缀恒定，再报只是白重建快照 |
+| adapter 的 `prepared` 按 `index` **原地更新**，`ts` 保留首个具名 delta 的时间 | 以前每次 prepare 事件都 push 一条，直接改会让准备中的行翻倍；`ts` 跟最后一次刷新会让这一行的时刻一路往后跳 |
+| 半截原文走 `argsPreview`，**不塞 `argsText`** | `argsText` 的语义是「这次调用的终稿参数」，界面各处拿它真解析（工具摘要 / 文件路径 / 改动 diff）。半截 JSON 塞进去会被摘要的 `JSON.parse` 失败兜底原样画出来（`{"command":"pnpm bu` 上屏且随每段抖动） |
+| 半截参数由界面自己扫（`preparingToolDetail`），转义只吃「后一位已到」的那些 | 参数是模型一个字一个字吐出来的，`JSON.parse` 在半截状态一定抛错。扫描器跟踪 `{}`/`[]` 深度与字符串态，只在深度 1 的键位取值——不然嵌套对象里的同名字段、值里冒充的键都会被误认成顶层字段 |
+| 一个字段都没读到就**不显示**（通用类别才补工具名） | 名字到了、内容还没到，写出来是假信息。这处与参考实现**有意保留差异**：参考实现是所有类别都留空直到参数视图闭合，numa 保留旧口径只给通用类别补工具名，代价是通用类别会先显示工具名、参数到了再跳成参数 |
+
+**怎么验的**：
+
+- `pnpm run typecheck`、`pnpm run build` 0 错；`pnpm run check:style` 全过。
+- `pnpm test`：`src/packages/ui-transcript/ui/process-groups.spec.ts` 新增两段（直播思考兜底 5 条、
+  准备中半截参数 12 条：值未闭合 / 值已闭合后续键还在流 / 转义换行 / 转义写一半 / 没有可读字段 /
+  参数已到齐 / 嵌套键不算 / 值里冒充的键不算 / 重复键取最后一个 / 半个代理项裁掉 / 组头详情取
+  argsPreview / 通用类别回退）；`src/core/llm-tool-delta.spec.ts` 新增一段（一片增量最多报一次、
+  4096 上限与去重、同名并行 index 0/1、名字后到时只报一次）；`tests/integration/transcript-order.int.spec.ts`
+  新增两条（准备中的 argsPreview 非空、argsText 仍是空串；同名并行各占一行）。
+- `pnpm run check:ui` 82/82；`pnpm run check:core` 123/126（三条失败里 `skills-roots-test` 与
+  `tui-subagent-live-test` 是既有问题，`teammate-session-open-test` 是并发偶发，单独跑 exit 0）。
+
+**顺手修掉一个门禁隔离的坑**：`scripts/_check-runner.mjs` 派发探针时直接继承了父进程环境，
+而本机把数据目录挪到了 D 盘（`DSC_HOME=D:\waqData\dsc`）——探针靠 `process.env.HOME` 换临时目录的
+隔离被 `DSC_HOME` 盖过，于是读写真实 `~/.dsc`（实测写进去 62 个临时工作区的假会话）。
+修法：新增 `probeEnv()`，派发子进程时删掉 `DSC_HOME` / `DSH_HOME` 两个落点开关；随后用
+「外壳仍有 DSC_HOME」的条件跑 `check:ui` 82/82、单跑之前必红的 `config-file-switch-test` 38/38。
+
+**留下的一句**：准备中的那一行只在**实时路径**有；重放历史时参数已定稿，走的是 `liveToolDetail`。
+`takePrepared()` 升级工具行时仍按名字配对（老口径），`index` 只用来认「同一条调用的多次更新」——
+两条口径没并成一条；另外重试 / 流恢复后同 index 会命中上一轮留下的行，`ts` 保留第一次尝试的时刻
+（差几十毫秒到几秒，比原来留重复行好），这两条都记在 adapter 的 `prepared` 注释里。

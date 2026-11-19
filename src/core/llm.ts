@@ -325,16 +325,26 @@ export interface StreamHandlers {
   /** 增量回调（思考/正文二选一到达）。 */
   onDelta(kind: 'text' | 'reasoning', text: string): void
   /**
-   * 模型开始吐某个工具调用的**名字**（参数还没到齐）。
+   * 模型开始吐某个工具调用的**名字**，以及此后参数每长一段的回声（参数还没到齐）。
    *
    * 对照 dsh 的 `preparing` 节点：那边是「具名实时 delta 可以创建该节点」，它计一次调用、
    * 不解析参数、只渲染不可展开的一行。为什么值得单独报一声——从「模型决定要调什么」到
    * 「参数攒齐、工具真的开跑」之间有一段真空，那段时间界面上原本一点线索都没有，
    * 长参数（比如一整段补丁）能空上好几秒。
    *
-   * 名字可能是分片拼出来的，所以**同一个 index 只会报一次**（从「还没有名字」变到有名字时）。
+   * 名字可能是分片拼出来的，所以**名字只在「从没有名字变成有名字」那一拍报**；
+   * 之后参数每来一段再报一次，`argsText` 是这条调用**累积到现在**的参数原文
+   * （多半是半截 JSON，界面自己按前缀读，见 `process-activity.ts` 的同位读法）。
+   * 为什么不干脆等参数到齐再说：dsh 的组头在准备阶段就能显示「准备运行命令 · pnpm bu」，
+   * 那段真空里界面有内容可读；照 numa 之前的做法只能显示一个工具名。
+   *
+   * @param name 工具名（可能是分片拼出来的，取完整那一次）
+   * @param argsText 累积的参数原文（超过 {@link PREPARE_ARGS_MAX} 时截断）
+   * @param index 这条调用在本次消息里的序号（OpenAI 的 `tool_calls[].index`）
    */
-  onToolPrepare?(name: string): void
+  // 后两个参数是可选的：它们只是补充信息，按单参回调的老调用方（探针 / 第三方适配器）
+  // 不该因为这条增强就编译不过；`applyToolCallDelta` 自己永远按三参回调。
+  onToolPrepare?(name: string, argsText?: string, index?: number): void
   /**
    * 拿到响应头之后报一次服务端追踪号（成功与失败都报）。
    *
@@ -494,6 +504,38 @@ export interface ToolCallDelta {
 }
 
 /**
+ * 「准备中」回调里参数原文的上限（UTF-16 单元）。
+ *
+ * 为什么要截：回调每来一段参数就报一次，而每次报的是**累积到现在**的整段原文——
+ * 一段 20KB 的补丁（write 的 content）边流边报，总量会按平方涨。界面上要的只是
+ * 「这一阶段在干什么」的那一句（`command` / `file_path` 都在参数最前面），4KB 足够
+ * 覆盖；dsh 那边也是先读 512 单元的前缀、不够再翻倍（process-activity.ts:65-86）。
+ */
+const PREPARE_ARGS_MAX = 4096
+
+/**
+ * 把参数原文截到 {@link PREPARE_ARGS_MAX}，且不把代理对劈成半个字符。
+ *
+ * 半个代理对送到界面上会渲染成 `�`，而组头那一行是用户唯一看得见的直播线索。
+ */
+function clipPrepareArgs(text: string): string {
+  if (text.length <= PREPARE_ARGS_MAX) return text
+  let cut = PREPARE_ARGS_MAX
+  const last = text.charCodeAt(cut - 1)
+  // 0xD800-0xDBFF 是高代理项：它后面那个低位必须一起留下，否则这一位不是字符
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1
+  return text.slice(0, cut)
+}
+
+/**
+ * 每条调用上一次报出去的「准备中」内容（名字 + 截断后的参数原文）。
+ *
+ * 用 WeakMap 而不是往 `ToolCall` 上加字段：`ToolCall` 会被 `StreamResult.toolCalls`
+ * 带进会话记录（`appendAssistant`），多一个内部字段就是往用户的 jsonl 里多写东西。
+ */
+const PREPARE_REPORTED = new WeakMap<ToolCall, { name: string; argsText: string }>()
+
+/**
  * 把一条流式工具调用增量并进「按 index 累积」的调用表。
  *
  * 为什么逐字段判 `typeof === 'string'` 而不是判「有没有值」（2026-10-30 白屏事故）：
@@ -505,30 +547,47 @@ export interface ToolCallDelta {
  *
  * @param calls - 这次请求的调用表（键是流里的 index，同一个 index 会分多片到齐）
  * @param call - 这一片的增量
- * @param onName - 第一次拿到名字时的回调（界面据此先画一张「准备中」的卡）
+ * @param onPrepare - 「准备中」回调：拿到名字那一拍报一次，之后参数每长一段再报一次
+ *   （名字与累积参数一起给，界面据此把半截命令显示到组头上）。**一片增量最多报一次**：
+ *   名字与参数在同一片里到达时合并成一次，不先报旧文本再报新文本。
  */
 export function applyToolCallDelta(
   calls: Map<number, ToolCall>,
   call: ToolCallDelta,
-  onName?: (name: string) => void,
+  onPrepare?: (name: string, argsText: string, index: number) => void,
 ): void {
   const id = typeof call.id === 'string' ? call.id : ''
   const name = typeof call.function?.name === 'string' ? call.function.name : ''
   const args = typeof call.function?.arguments === 'string' ? call.function.arguments : ''
+  /**
+   * 报「准备中」，同一份名字 + 截断后文本只报一次。
+   *
+   * 为什么去重：参数超过 {@link PREPARE_ARGS_MAX} 之后，后面每一片截出来的前缀完全一样，
+   * 再报只是让每条事件都带 4KB 重复文本、每个快照都白重建一次（20KB 的补丁会白报几千次）。
+   * 文本一变才报，频率就跟正文 delta 同量级。
+   */
+  const report = (target: ToolCall, index: number): void => {
+    if (target.name === '') return
+    const argsText = clipPrepareArgs(target.arguments)
+    const previous = PREPARE_REPORTED.get(target)
+    if (previous !== undefined && previous.name === target.name && previous.argsText === argsText) return
+    PREPARE_REPORTED.set(target, { name: target.name, argsText })
+    onPrepare?.(target.name, argsText, index)
+  }
   const existing = calls.get(call.index)
   if (existing === undefined) {
-    calls.set(call.index, { id, name, arguments: args })
+    const created: ToolCall = { id, name, arguments: args }
+    calls.set(call.index, created)
     // 首次拿到工具名就报一声「准备中」——参数这会儿多半还没开始到
-    if (name !== '') onName?.(name)
+    report(created, call.index)
     return
   }
   if (id !== '') existing.id = id
-  if (name !== '') {
-    // 名字也可能被分片切开：只在「从没有名字变成有名字」那一次报
-    if (existing.name === '') onName?.(name)
-    existing.name = name
-  }
+  // 名字也可能被分片切开：只在「从没有名字变成有名字」那一次改，值本身照旧记最新的
+  if (name !== '') existing.name = name
   if (args !== '') existing.arguments += args
+  // 名字与参数都在这一片里到达时，只报这一次（带的是合并后的最新文本）
+  report(existing, call.index)
 }
 
 /** 发起一次流式对话（openai-completions 适配器的实现；经 LlmService.stream 派发）。 */
