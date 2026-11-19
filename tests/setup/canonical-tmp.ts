@@ -31,7 +31,7 @@ for (const key of ['TEMP', 'TMP', 'TMPDIR'] as const) {
   const value = process.env[key]
   if (value === undefined || value.trim() === '') continue
   try {
-    process.env[key] = realpathSync(value)
+    process.env[key] = realpathSync.native(value)
   } catch {
     // 指向的目录不存在：保留原值，让用例按原始环境报错。
   }

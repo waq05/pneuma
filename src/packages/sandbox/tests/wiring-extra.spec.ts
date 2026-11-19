@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
-const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-sandbox-wiring-extra-')))
+const HOME = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-sandbox-wiring-extra-')))
 process.env['DSC_HOME'] = HOME
 
 /** 可编排的假后端状态（vi.mock 的工厂在 import 之前跑，只能用 vi.hoisted 的共享对象）。 */
