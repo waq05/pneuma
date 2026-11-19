@@ -115,6 +115,9 @@ function termRecord(overrides: Partial<TerminalRecord> = {}): TerminalRecord {
 }
 
 describe('shellPlan：四档终端各自怎么拼', () => {
+  // 这条会真的探一次本机 shell（`shellPlan('auto')` 不起子进程但首次会读注册表/路径）：
+  // GitHub Windows runner 冷启动实测 5.4s，撞到默认 5000ms 上限。它是真探针，不是纯函数，
+  // 给 30s 上限（同文件其他 spawn 用例走的是它们自己的超时参数）。
   test('sh：原样交给 sh -c；当前平台默认档与选择一致', () => {
     const env = { PATH: 'x' }
     expect(shellPlan('sh', 'echo hi', '/work', env)).toEqual({ file: 'sh', args: ['-c', 'echo hi'], env, cwd: '/work' })
@@ -129,7 +132,7 @@ describe('shellPlan：四档终端各自怎么拼', () => {
     } else {
       expect(auto).toEqual({ file: 'sh', args: ['-c', 'echo hi'], env, cwd: '/work' })
     }
-  })
+  }, 30_000)
 
   // pwsh / powershell 两档按实现只在 Windows 上生效（非 win32 的 shellPlan 一律回落 sh），
   // 所以这组断言只在 win32 上跑；sh 档的等价覆盖在上一条用例里。
