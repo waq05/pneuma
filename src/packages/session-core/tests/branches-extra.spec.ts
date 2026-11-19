@@ -19,7 +19,7 @@
  * @module @pneuma/session-core/tests/branches-extra.spec
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync , realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
@@ -27,7 +27,7 @@ import type { ChatMessage, StreamHandlers, StreamRequest, StreamResult } from '@
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardVerdict } from '@pneuma/runtime/core/tool-guards.js'
 
-const HOME = mkdtempSync(join(tmpdir(), 'dsc-session-core-branches-'))
+const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-session-core-branches-')))
 const DSC = join(HOME, '.dsc')
 mkdirSync(DSC, { recursive: true })
 const savedEnv = {
@@ -73,7 +73,7 @@ afterAll(() => {
 
 /** 建一个临时工作目录。 */
 function workDir(): string {
-  return mkdtempSync(join(tmpdir(), 'dsc-branches-work-'))
+  return realpathSync(mkdtempSync(join(tmpdir(), 'dsc-branches-work-')))
 }
 
 /** 写文件（父目录一次建好）。 */
