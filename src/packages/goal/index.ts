@@ -312,12 +312,21 @@ export const goalPlugin: Plugin.Object = {
       const target = signal?.sessionId ?? ctx.session.current().meta.id
       if (target !== ctx.session.current().meta.id) return
       setTimeout(() => {
-        // 这 0ms 里用户可能已经切走：续跑只推它自己那条会话，不隔会话点火。
-        if (ctx.session.current().meta.id !== target) return
-        const reminder = service.takeGoalRound()
-        if (reminder === null) return
-        ctx.transcript.system(`目标自动续跑：继续推进「${service.goalView()?.objective ?? ''}」`)
-        ctx.agent.followup(reminder, undefined, undefined, 'notice')
+        // 0ms 定时器可能在插件卸载之后才轮到：integration 层「起内核 → 跑一轮 → dispose」
+        // 的用例里，dispose 会让 cordis 的服务上下文失活，这里再取 session 就抛出
+        // `cannot get required service "session" in inactive context`——它落在定时器回调
+        // 里没人接，被 Vitest 记成 Unhandled Error，整份集成 job 跟着红（2026-11-19 查账）。
+        // 内核都卸了，续跑没有任何意义：静默收场，别把定时器的正常竞态变成未捕获异常。
+        try {
+          // 这 0ms 里用户可能已经切走：续跑只推它自己那条会话，不隔会话点火。
+          if (ctx.session.current().meta.id !== target) return
+          const reminder = service.takeGoalRound()
+          if (reminder === null) return
+          ctx.transcript.system(`目标自动续跑：继续推进「${service.goalView()?.objective ?? ''}」`)
+          ctx.agent.followup(reminder, undefined, undefined, 'notice')
+        } catch {
+          // 上下文已失活（插件卸载 / 内核 dispose）：本就不该再续跑。
+        }
       }, 0)
     })
 

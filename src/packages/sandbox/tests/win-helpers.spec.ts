@@ -6,12 +6,12 @@
  *
  * @module dsc/packages/sandbox/tests/win-helpers.spec
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync , realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
-const HOME = mkdtempSync(join(tmpdir(), 'dsc-win-helpers-'))
+const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-win-helpers-')))
 process.env['DSC_HOME'] = HOME
 
 let setup: typeof import('../win/setup.js')
@@ -114,8 +114,8 @@ describe('writeRootsFor', () => {
     // cwd 与附加根必须同一个函数、同一个 cwd 展开）。拿 `/work/repo` 这种假路径断言字面串
     // 不再成立——规范化会把盘符相对路径折成本盘的 `D:\work\repo`。改用真目录按真实拼法比，
     // 顺便把「尾巴多一个分隔符算同一个目录」也钉住。
-    const work = mkdtempSync(join(tmpdir(), 'dsc-writeroot-work-'))
-    const extra = mkdtempSync(join(tmpdir(), 'dsc-writeroot-extra-'))
+    const work = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-writeroot-work-')))
+    const extra = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-writeroot-extra-')))
     const roots = backend.writeRootsFor(work + sep, [work, extra + sep])
     const lower = (path: string): string => path.toLowerCase()
     const rootPaths = roots.filter((item) => item.side === 'root').map((item) => lower(item.path))
@@ -128,7 +128,7 @@ describe('writeRootsFor', () => {
   })
 
   test('附加根里的相对路径按 cwd 展开，不落到宿主进程的 cwd', () => {
-    const work = mkdtempSync(join(tmpdir(), 'dsc-writeroot-rel-'))
+    const work = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-writeroot-rel-')))
     const roots = backend.writeRootsFor(work, ['sub/dir'])
     const rootPaths = roots.filter((item) => item.side === 'root').map((item) => item.path.toLowerCase())
     expect(rootPaths).toContain(join(work, 'sub', 'dir').toLowerCase())

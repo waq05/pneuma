@@ -38,7 +38,7 @@
  *
  * @module dsc/tests/support/tmp-dir
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll } from 'vitest'
@@ -103,6 +103,15 @@ export function createTempDir(prefix = `${TEMP_PREFIX}test-`): string {
     throw new TypeError(`createTempDir：prefix 不能包含路径分隔符或 ".."（收到 ${JSON.stringify(prefix)}）`)
   }
   const dir = mkdtempSync(join(tmpdir(), prefix))
-  registerRunDir(dir, currentRunPid())
-  return dir
+  // 统一成**真实路径**再交出去。
+  //
+  // GitHub 的 Windows runner 上 `os.tmpdir()` 给的是 8.3 短名
+  // （`C:\Users\RUNNER~1\AppData\Local\Temp`），而路径策略那边会 `realpath` 成
+  // `C:\Users\runneradmin\…`：两串前缀对不上，于是「工作区内写」被判到工作区外、
+  // junction 指到 DSC_HOME 也认不出、`writeRootsFor` 的授权根多一份短名副本——
+  // 2026-11-19 之前 Windows 车道那 12 条红全是这一个根因。
+  // 先 `realpath` 一次，之后测试里派生的所有路径都只有一种写法。
+  const canonical = realpathSync(dir)
+  registerRunDir(canonical, currentRunPid())
+  return canonical
 }

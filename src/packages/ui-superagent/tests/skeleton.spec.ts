@@ -20,6 +20,14 @@ import { apply, name } from '../index.js'
 /** 按相对本文件的路径读文本。 */
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
 
+/**
+ * 界面壳版本：插件清单的 pneuma.client.api 必须等于它的 ^ 区间。
+ *
+ * 不写死具体版本号：发版时根版本一抬，这里就该跟着走。写死 ^0.9.1 的结果是
+ * 每次发版都要手改（0.9.2 就漏了，CI 上这条红）。读根 package.json 拿当下版本。
+ */
+const SHELL_VERSION = (JSON.parse(read('../../../../package.json')) as { version: string }).version
+
 /** cordis.patch.yml 的形状：顶层是若干 `{ insert: [...] }`。 */
 interface PatchDoc {
   insert?: { id?: string; name?: string; disabled?: boolean }[]
@@ -32,12 +40,12 @@ test('插件对象：导出的 name 与目录名同源、apply 是函数', () =>
   expect(apply()).toBeUndefined()
 })
 
-test('清单声明：pneuma.client.api 是 ^0.9.1，cordis.patch.yml 恰好一条 insert 行', () => {
+test('清单声明：pneuma.client.api 等于壳版本，cordis.patch.yml 恰好一条 insert 行', () => {
   const pkg = JSON.parse(read('../package.json')) as {
     pneuma: { client: { api: string; platform: string } }
   }
   // 为什么钉 api：界面半面对的契约区间写在清单里，壳的构建按它校验（ui-shell/build-plugins.mjs）。
-  expect(pkg.pneuma.client.api, 'pneuma.client.api 不是 ^0.9.1').toBe('^0.9.1')
+  expect(pkg.pneuma.client.api, `pneuma.client.api 不是 ^${SHELL_VERSION}`).toBe(`^${SHELL_VERSION}`)
   expect(pkg.pneuma.client.platform, 'pneuma.client.platform 不是 pneuma').toBe('pneuma')
 
   const patch = YAML.parse(read('../cordis.patch.yml')) as PatchDoc[]

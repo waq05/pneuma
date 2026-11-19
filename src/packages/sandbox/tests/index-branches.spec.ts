@@ -26,7 +26,7 @@
  *
  * @module dsc/packages/sandbox/tests/index-branches.spec
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync , realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -34,7 +34,7 @@ import { Win32Error } from '../win/ffi.js'
 import type { BoundWin32 } from '../win/ffi.js'
 import { unprotectSecret } from '../win/account.js'
 
-const HOME = mkdtempSync(join(tmpdir(), 'dsc-sandbox-index-branches-'))
+const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-sandbox-index-branches-')))
 process.env['DSC_HOME'] = HOME
 
 /** 可编排的假后端状态（vi.mock 工厂在 import 前跑，只能用 vi.hoisted 的共享对象）。 */

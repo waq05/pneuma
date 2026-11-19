@@ -13,12 +13,12 @@
  *
  * @module dsc/packages/sandbox/tests/wiring-extra.spec
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync , realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
-const HOME = mkdtempSync(join(tmpdir(), 'dsc-sandbox-wiring-extra-'))
+const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-sandbox-wiring-extra-')))
 process.env['DSC_HOME'] = HOME
 
 /** 可编排的假后端状态（vi.mock 的工厂在 import 之前跑，只能用 vi.hoisted 的共享对象）。 */
