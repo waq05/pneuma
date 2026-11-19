@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/subagent",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型；另带一块按会话分开的共享任务板",
   "private": true,
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/host-stdio",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "桌面壳与宿主进程的协议桥：stdio / parentPort 双传输自动选一种，并提供 interactive（有没有人能答审批卡）与 HOST_BROWSER_SERVICE（侧栏浏览器链路）",
   "private": true,
   "type": "module",

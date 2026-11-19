@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-prompt",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "输入框上方那三张卡：审批卡、计划审阅卡、提问卡；数据读快照里的 pendingApproval / pendingPlan / pendingQuestion",
   "private": true,
   "type": "module",

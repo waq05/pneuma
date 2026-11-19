@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/llm",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "配置端点间切换模型与思考强度",
   "private": true,
   "type": "module",

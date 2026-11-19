@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/self-improve",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "把你纠正过它的地方记成候选；你确认后才写成技能，每次改动留台账可回滚",
   "private": true,
   "type": "module",

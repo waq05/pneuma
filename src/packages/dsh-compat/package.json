@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/dsh-compat",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "让按 dsh 写法做的外部插件也能装进来跑；补 logger、模块解析与工具注册的差异",
   "private": true,
   "type": "module",

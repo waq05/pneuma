@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/dock-browser",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "让模型操作桌面端侧栏那台浏览器；看页面可免审批，动手每次要确认",
   "private": true,
   "type": "module",

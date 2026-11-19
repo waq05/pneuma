@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/superagent-webhook",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Super Agent 的第三种来源：只发不收的 webhook 出站渠道（加来源 = 只加一个插件包）",
   "private": true,
   "type": "module",

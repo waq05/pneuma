@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/mcp",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "连上 MCP 服务器，把它们的工具接进来给模型用；支持本机命令（stdio）与 HTTP 两种连法",
   "private": true,
   "type": "module",

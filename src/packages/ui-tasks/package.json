@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-tasks",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "输入框上方的会话目标条",
   "private": true,
   "type": "module",
