@@ -27,7 +27,7 @@ import type { ChatMessage, StreamHandlers, StreamRequest, StreamResult } from '@
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardVerdict } from '@pneuma/runtime/core/tool-guards.js'
 
-const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-session-core-branches-')))
+const HOME = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-session-core-branches-')))
 const DSC = join(HOME, '.dsc')
 mkdirSync(DSC, { recursive: true })
 const savedEnv = {
@@ -73,7 +73,7 @@ afterAll(() => {
 
 /** 建一个临时工作目录。 */
 function workDir(): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), 'dsc-branches-work-')))
+  return realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-branches-work-')))
 }
 
 /** 写文件（父目录一次建好）。 */

@@ -208,7 +208,7 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
 }
 
 function tempHome(prefix = 'dsc-w11-policy-'): string {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)))
   homes.push(home)
   return home
 }

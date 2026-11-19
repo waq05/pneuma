@@ -110,8 +110,11 @@ export function createTempDir(prefix = `${TEMP_PREFIX}test-`): string {
   // `C:\Users\runneradmin\…`：两串前缀对不上，于是「工作区内写」被判到工作区外、
   // junction 指到 DSC_HOME 也认不出、`writeRootsFor` 的授权根多一份短名副本——
   // 2026-11-19 之前 Windows 车道那 12 条红全是这一个根因。
-  // 先 `realpath` 一次，之后测试里派生的所有路径都只有一种写法。
-  const canonical = realpathSync(dir)
+  // 用 `.native`：`fs.realpathSync`（非 native）在 Windows 上走 `_wfullpath`，**不展开**
+  // 8.3 短名；而路径策略那边用 `realpathSync.native`（GetFinalPathNameByHandleW）会展开成
+  // 长名。两边一个短一个长，前缀永远对不上——这就是 2026-11-19 之前 Windows 车道那 12 条
+  // 红的根因。统一成 `.native` 之后，测试里派生的所有路径都只有长名一种写法。
+  const canonical = realpathSync.native(dir)
   registerRunDir(canonical, currentRunPid())
   return canonical
 }

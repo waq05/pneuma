@@ -16,7 +16,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
 
-const ROOT = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-home-paths-')))
+const ROOT = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-home-paths-')))
 const HOME = join(ROOT, 'home')
 const DSC_HOME = join(ROOT, 'dsc-home')
 mkdirSync(HOME, { recursive: true })

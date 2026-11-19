@@ -34,7 +34,7 @@ import { Win32Error } from '../win/ffi.js'
 import type { BoundWin32 } from '../win/ffi.js'
 import { unprotectSecret } from '../win/account.js'
 
-const HOME = realpathSync(mkdtempSync(join(tmpdir(), 'dsc-sandbox-index-branches-')))
+const HOME = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-sandbox-index-branches-')))
 process.env['DSC_HOME'] = HOME
 
 /** 可编排的假后端状态（vi.mock 工厂在 import 前跑，只能用 vi.hoisted 的共享对象）。 */
