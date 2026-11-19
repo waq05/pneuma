@@ -89,7 +89,9 @@ describe('探测浏览器可执行文件', () => {
   })
 
   test('配置的路径优先但要存在；否则按候选顺序取第一个存在的；都没有给 null', () => {
-    const configured = 'C:\\custom\\chrome.exe'
+    // 配置路径会先 resolve() 再查存在性：用当前平台的绝对路径，
+    // Windows 盘符形态在 POSIX 上会被 resolve 成 cwd 下的相对路径。
+    const configured = join(workdir(), 'chrome.exe')
     expect(probeExecutable({ ...CONFIG, executablePath: configured }, { exists: (path) => path === configured })).toBe(
       configured,
     )

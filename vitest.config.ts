@@ -27,6 +27,7 @@ import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { jsToTsFallback } from './tests/plugins/js-to-ts.js'
+import { TERMINAL_TEST_ENV } from './tests/support/test-env.js'
 
 /**
  * `@dsc/*` 别名：直接读界面壳的构建期别名表，不另抄一份。
@@ -245,6 +246,9 @@ export default defineConfig({
      * 这条只补「被强杀 / CI 取消」留下的残留，门槛 24 小时，不误伤正在并行跑的另一份。
      */
     globalSetup: ['tests/setup/global-clean.ts'],
+    // 测试一律按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧，
+    // tui / integration / snapshot 三层探针都靠逐帧读假 stdout 断言。
+    env: TERMINAL_TEST_ENV,
     // 覆盖率（P3 第 3 项）：只出报告不设门（概要设计 §9.1——先看清盲区分布，
     // P4 冻结基线、P6 逐目录抬杠）。纯类型文件与入口不算覆盖面。
     coverage: {

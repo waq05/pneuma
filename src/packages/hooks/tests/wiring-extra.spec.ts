@@ -19,6 +19,16 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 const HOME = mkdtempSync(join(tmpdir(), 'dsc-hooks-extra-'))
 process.env['DSC_HOME'] = HOME
 
+/**
+ * 假会话目录：钩子脚本以它当 `cwd` 被 spawn，所以必须真实存在。
+ *
+ * 这里原来写死 Windows 风格的 `C:/repo`：Linux 上 `/bin/sh` 一看到不存在的 cwd 就 ENOENT
+ * （错误文案是 `钩子脚本没能启动（spawn /bin/sh ENOENT）`）；Windows 上它能不能过取决于
+ * 机器上恰好有没有 `C:\repo`，同样是坏前提。
+ */
+const REPO = join(HOME, 'repo')
+mkdirSync(REPO, { recursive: true })
+
 const HOOKS_FILE = join(HOME, 'hooks.json')
 const TRUST_FILE = join(HOME, 'hooks-trusted.json')
 const LIFECYCLE_FILE = join(HOME, 'lifecycle-hooks.json')
@@ -84,13 +94,13 @@ function input(overrides: Record<string, unknown> = {}): never {
   return {
     toolName: 'bash',
     risk: 'exec',
-    cwd: 'C:/repo',
+    cwd: REPO,
     args: { command: 'rm -rf build' },
     command: 'rm -rf build',
     target: '',
     signal: new AbortController().signal,
     sessionId: 'sess-1',
-    sessionPath: 'C:/repo/.dsc/sessions/a.jsonl',
+    sessionPath: join(REPO, '.dsc', 'sessions', 'a.jsonl'),
     ...overrides,
   } as never
 }
@@ -114,8 +124,8 @@ function fakeCtx(options: { passed?: unknown } = {}) {
   const notices: string[] = []
   const notes: Array<{ kind: string; text: string }> = []
   const session = {
-    meta: { id: 'sess-1', cwd: 'C:/repo' },
-    filePath: 'C:/repo/.dsc/sessions/a.jsonl',
+    meta: { id: 'sess-1', cwd: REPO },
+    filePath: join(REPO, '.dsc', 'sessions', 'a.jsonl'),
     messages: [{ role: 'assistant', content: '刚说完的话' }],
     appendNote: (kind: string, text: string): void => {
       notes.push({ kind, text })
@@ -329,14 +339,14 @@ describe('事件投影细节', () => {
 
     // 新开会话（没有 filePath）→ source=startup。
     for (const handler of harness.handlers.get('dsc/session-open') ?? []) {
-      handler({ session: { meta: { id: 'sess-open', cwd: 'C:/repo' } }, filePath: undefined })
+      handler({ session: { meta: { id: 'sess-open', cwd: REPO } }, filePath: undefined })
     }
     await waitFor(() => lines().length >= 1)
     const started = lines()[0]!
     expect(started).toMatchObject({
       hook_event_name: 'session-start',
       session_id: 'sess-1',
-      cwd: 'C:/repo',
+      cwd: REPO,
       tool_name: '',
       mode: '',
       policy: 'auto-edit',

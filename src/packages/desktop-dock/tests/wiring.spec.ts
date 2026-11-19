@@ -469,7 +469,9 @@ describe('git op（真仓库）', () => {
 
 // ── 终端 ─────────────────────────────────────────────────────────────────────
 
-describe('终端 op（真子进程）', () => {
+// 终端 op 直连 Windows 专属可执行文件（`node.exe` / `powershell.exe` / `cmd.exe`，见 index.ts 的
+// spawnShell）：POSIX 上这些名字不存在，spawn 直接 ENOENT，所以这组只在 win32 上跑。
+describe.skipIf(process.platform !== 'win32')('终端 op（真子进程）', () => {
   test('term-spawn/input/kill：白名单 shell、真实输入输出、退出事件', async () => {
     const dir = tempDir('term-')
     const harness = mount({ sessionCwd: dir })

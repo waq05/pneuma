@@ -194,8 +194,12 @@ test('normalizeLearningsState / workspaceKeyOf：坏形状回落默认值，空 
     readSkills: ['a', 'b'],
     createdSkills: [],
   })
-  expect(store.workspaceKeyOf('C:\\')).toMatch(/^[a-z0-9-]+-[0-9a-f]{8}$/)
-  expect(store.workspaceKeyOf('D:\\a\\b')).toBe(store.workspaceKeyOf('d:/a/b/'))
+  // 同一路径的不同写法按平台给样本：Windows 用盘符 + 反斜杠，POSIX 用正斜杠与结尾斜杠。
+  const root = process.platform === 'win32' ? 'C:\\' : '/'
+  const dir = process.platform === 'win32' ? 'D:\\a\\b' : '/a/b'
+  const sameDir = process.platform === 'win32' ? 'd:/a/b/' : '/a/b/'
+  expect(store.workspaceKeyOf(root)).toMatch(/^[a-z0-9-]+-[0-9a-f]{8}$/)
+  expect(store.workspaceKeyOf(dir)).toBe(store.workspaceKeyOf(sameDir))
 })
 
 test('readCandidates：坏行/缺字段/未知 kind 或 state 跳过，同 id 最后一条生效', () => {

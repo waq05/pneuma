@@ -19,6 +19,7 @@
 import { fileURLToPath, URL } from 'node:url'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
+import { TERMINAL_TEST_ENV } from './tests/support/test-env.js'
 import { jsToTsFallback } from './tests/plugins/js-to-ts.js'
 
 export default defineConfig({
@@ -33,6 +34,8 @@ export default defineConfig({
     // 真模型冒烟也会建临时 HOME；收尾口径与主配置一致（全绿清、有红留）。
     globalSetup: ['tests/setup/global-clean.ts'],
     include: ['tests/live/**/*.live.spec.ts'],
+    // 测试进程按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧。
+    env: TERMINAL_TEST_ENV,
     environment: 'node',
     // 一条请求 + 一次工具往返就可能 60s 以上；给到 3 分钟，红的就该是真红。
     testTimeout: 180_000,

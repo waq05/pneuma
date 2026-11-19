@@ -17,7 +17,7 @@
  *
  * @module dsc/core/plugin-loader-extra.spec
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
@@ -635,6 +635,12 @@ writeText(
     '',
   ].join('\n'),
 )
+
+// POSIX 上 `resolveExecutable` 还要查可执行位（core/executable.ts 的 `isRunnable` 里
+// `accessSync(X_OK)`）：只写内容的 `.cjs` 是 0644，会被判成「找不到 pnpm」，于是安装/卸载
+// 全部走失败分支。补上执行位后，两边都按 `.cjs → node <脚本>` 这条真实路径跑（Windows 上
+// chmod 不影响能否启动，`.cjs` 本来就交给 node 起）。
+chmodSync(FAKE_PNPM, 0o755)
 
 /** 一个带 package.json 的 profile 目录。 */
 function npmProfile(name: string, manifest: Record<string, unknown>): string {

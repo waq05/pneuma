@@ -14,7 +14,7 @@
  * @module @pneuma/doctor/tests/wiring-extra
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { afterAll, describe, expect, test } from 'vitest'
@@ -217,12 +217,15 @@ describe('数据两项与工具：会话目录、磁盘、文件遍历', () => {
 })
 
 describe('/doctor 命令：--json 与 --bundle 两条通道', () => {
+  // 抹 ~ 的被测基准是 `homedir()`（`redactHome` 的实现口径）；本文件的 DSC_HOME 在 POSIX 上
+  // 是 /tmp/...，本来就不在家目录下，不能拿它当「应当被抹掉」的样本。
+  const homePath = join(homedir(), 'pneuma-doctor-home')
   /** 固定报告：不跑九项真检查。 */
   function report(): HealthReport {
     return {
       at: Date.UTC(2026, 10, 16, 0, 0),
       entries: [
-        { id: 'install', title: '安装', status: 'ok', summary: `在 ${home}`, detail: `应用根：${home}` },
+        { id: 'install', title: '安装', status: 'ok', summary: `在 ${homePath}`, detail: `应用根：${homePath}` },
         {
           id: 'session',
           title: '会话',
@@ -273,7 +276,8 @@ describe('/doctor 命令：--json 与 --bundle 两条通道', () => {
     expect(parsed.status).toBe('warn')
     expect(parsed.counts.warn).toBe(1)
     expect(Object.keys(parsed.checks)).toEqual(['install', 'session'])
-    expect(text).not.toContain(home)
+    expect(text).not.toContain(homedir())
+    expect(text).toContain('~')
   })
 
   test('--bundle 写出 gzip 包；--with-session 才带会话摘要', async () => {

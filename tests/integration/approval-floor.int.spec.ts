@@ -107,8 +107,12 @@ describePowershell('[2] 命令替换照旧拒，但给出可照做的改法', ()
 describe('[3] bash 超时的文案：说清楚「正在终止」与下一步', () => {
   test('超时后不再说「已终止进程」，而是「已请求终止」，并给出两条出路', async () => {
     const bash = createBashTool({ timeoutMs: 1_000, maxTimeoutMs: 2_000, outputChars: 8_000 })
+    // 拖过时限的命令要跟着平台换：Windows 的 bash 字段走 PowerShell（Start-Sleep），
+    // POSIX 走 sh（sleep）。写死一边另一半平台会以「命令不存在、退出码 127」秒退，
+    // 根本走不到超时分支（2026-11-19 Linux CI 的报错原文就是 `Start-Sleep: not found`）。
+    const slowCommand = process.platform === 'win32' ? 'Start-Sleep -Seconds 5' : 'sleep 5'
     const output = await bash.run(
-      { command: 'Start-Sleep -Seconds 5' },
+      { command: slowCommand },
       { cwd, signal, sessionId: 'floor-bash-int', sessionPath: 'floor-bash-int.jsonl' },
     )
     expect(output).not.toContain('已终止进程')

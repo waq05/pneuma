@@ -44,8 +44,12 @@ afterAll(() => {
 const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
 
 test('shadowRoot：同一路径的不同写法折成同一个键', () => {
-  expect(shadowRoot('D:\\a\\b'), '反斜杠与正斜杠、结尾斜杠应当同键').toBe(shadowRoot('D:/a/b/'))
-  expect(shadowRoot('D:\\a\\b'), '不同目录应当不同键').not.toBe(shadowRoot('D:\\a\\c'))
+  // 同一路径的不同写法按平台给样本：Windows 用盘符 + 反斜杠，POSIX 用正斜杠与结尾斜杠。
+  const dir = process.platform === 'win32' ? 'D:\\a\\b' : '/proj/a/b'
+  const sameDir = process.platform === 'win32' ? 'D:/a/b/' : '/proj/a/b/'
+  const otherDir = process.platform === 'win32' ? 'D:\\a\\c' : '/proj/a/c'
+  expect(shadowRoot(dir), '反斜杠与正斜杠、结尾斜杠应当同键').toBe(shadowRoot(sameDir))
+  expect(shadowRoot(dir), '不同目录应当不同键').not.toBe(shadowRoot(otherDir))
 })
 
 test('shadowRoot：仓库落在 DSC_HOME 下，不在工作区里', () => {

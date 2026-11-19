@@ -105,6 +105,8 @@ import {
 import { sandboxTmpDir } from '../policy.js'
 
 const ORIGINAL_PLATFORM = process.platform
+/** 当前跑在 Windows 上吗：反斜杠 / 盘符路径的用例依赖 node:path 的 win32 语义，只在 win32 上有意义。 */
+const WIN32 = ORIGINAL_PLATFORM === 'win32'
 const ENTRY = fileURLToPath(new URL('./runner-entry.js', import.meta.url))
 
 const sandboxHome = (): string => st.dscHome
@@ -171,17 +173,22 @@ describe('probeWindowsToken', () => {
     expect(probe).toEqual({ available: false, detail: '非 Windows 平台' })
   })
 
+  /*
+   * 下面五条验的是 `probeWindowsToken` 平台判定**之后**的分支（backend.ts:99 非 win32 直接返回），
+   * 所以临时把 process.platform 当 win32 才走得到；FFI、existsSync、解释器都是可注入的假实现。
+   */
+
   test('FFI 底座不可用：原因原样带进 detail', () => {
     st.ffiOk = false
     st.ffiWhy = 'koffi 装不上'
-    const probe = probeWindowsToken()
+    const probe = withPlatform('win32', () => probeWindowsToken())
     expect(probe.available).toBe(false)
     expect(probe.detail).toContain('koffi 装不上')
   })
 
   test('runner 构建产物缺失：点名路径并提示先 build', () => {
     st.existsImpl = () => false
-    const probe = probeWindowsToken()
+    const probe = withPlatform('win32', () => probeWindowsToken())
     expect(probe.available).toBe(false)
     expect(probe.detail).toContain('runner 入口没有构建产物')
     expect(probe.detail).toContain(ENTRY)
@@ -190,7 +197,7 @@ describe('probeWindowsToken', () => {
   test('DSC_NODE 指向不存在的解释器：探测阶段就点名', () => {
     process.env.DSC_NODE = 'C:\\没有这个\\node.exe'
     st.existsImpl = (path) => path === ENTRY
-    const probe = probeWindowsToken()
+    const probe = withPlatform('win32', () => probeWindowsToken())
     expect(probe.available).toBe(false)
     expect(probe.detail).toContain('DSC_NODE 指向的解释器不存在')
   })
@@ -198,7 +205,7 @@ describe('probeWindowsToken', () => {
   test('DSC_NODE 是空白：等同没给，可用', () => {
     process.env.DSC_NODE = '   '
     st.existsImpl = () => true
-    const probe = probeWindowsToken()
+    const probe = withPlatform('win32', () => probeWindowsToken())
     expect(probe.available).toBe(true)
     expect(probe.detail).toContain('受限令牌后端可用')
     expect(probe.detail).toContain('解释器：node')
@@ -207,7 +214,7 @@ describe('probeWindowsToken', () => {
   test('DSC_NODE 指向真实存在的文件：按 override 解释器报', () => {
     process.env.DSC_NODE = 'C:\\tools\\node.exe'
     st.existsImpl = () => true
-    const probe = probeWindowsToken()
+    const probe = withPlatform('win32', () => probeWindowsToken())
     expect(probe.available).toBe(true)
     expect(probe.detail).toContain('解释器：override')
   })
@@ -216,7 +223,9 @@ describe('probeWindowsToken', () => {
 // ── writeRootsFor：工作区 / 临时目录 / 附加根的归并与 SID ──────────────────
 
 describe('writeRootsFor', () => {
-  test('工作区 + 私有临时目录，外加去重后的附加根', () => {
+  // Windows 专属：样本是盘符/反斜杠路径，writeRootsFor 内部用 node:path 规范化（Linux 上是 posix 语义），
+  // 「C:\ws」与「c:\WS」在 Linux 上会被解析成不同路径，去重与 path 断言都无从谈起。
+  test.skipIf(!WIN32)('工作区 + 私有临时目录，外加去重后的附加根', () => {
     const roots = writeRootsFor('C:\\ws\\', [' C:\\extra ', 'c:\\WS', '', 'D:\\extra2\\'])
     expect(roots.map((root) => root.side)).toEqual(['root', 'temp', 'root', 'root'])
     expect(roots[0]).toMatchObject({ path: 'C:\\ws', side: 'root' })
@@ -322,9 +331,11 @@ describe('createWindowsTokenRunner · workspace-write 授权', () => {
     expect(st.grantCalls).toEqual(expected.map((root) => ({ path: root.path, sid: root.sid })))
 
     const rootArgs = plan!.args.filter((_arg, index, all) => all[index - 1] === '--root')
+    // 路径用 writeRootsFor 的结果拼：Linux 的 node:path 是 posix 语义，附加根「C:\extra」会被解析到 cwd 下，
+    // 写死 `C:\extra` 只在 Windows 上成立。要验的是「--root 带哪两条根、SID 与路径对得上」。
     expect(rootArgs).toEqual([
-      `${expected[0]!.sid}=C:\\ws-a`,
-      `${expected[2]!.sid}=C:\\extra`,
+      `${expected[0]!.sid}=${expected[0]!.path}`,
+      `${expected[2]!.sid}=${expected[2]!.path}`,
     ])
     // temp 绝不进 --root（runner 会拿 rootWriteSid 复算 → 退 127）。
     expect(rootArgs.join('\n')).not.toContain(expected[1]!.path)

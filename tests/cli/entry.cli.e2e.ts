@@ -149,7 +149,12 @@ describe('真入口 e2e（bin/dsc.js）', () => {
           target,
           [
             // TUI 起来要装配全部插件；冷启动给足 10 秒（CI 上比开发机慢）。
-            { send: '你好\r', delayMs: 10_000 },
+            //
+            // 文字与回车必须**分两次写**：ink 的 `useInput` 把一次发来的 chunk 当一段输入，
+            // `'你好\r'` 一整包会被当成文本插进输入框（回车不认作 `key.return`），消息永远
+            // 发不出去——Linux 上 C3 卡满 90 秒就是这么来的（Windows 不看这条，只此一处）。
+            { send: '你好', delayMs: 10_000 },
+            { send: '\r', delayMs: 500 },
             // 等回复真的画出来，再按退出组合键（第一次 Ctrl+C 是打断，第二次才退出）。
             { send: '\u0003', after: '收到，这里是测试回复。' },
             { send: '\u0003', delayMs: 200 },

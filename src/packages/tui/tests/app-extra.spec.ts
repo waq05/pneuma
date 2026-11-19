@@ -727,7 +727,9 @@ describe('Ctrl+V 剪贴板三种结果', () => {
 describe('提交时的图片合流', () => {
   test('正文里的本地图片路径读成 data URL 随 submit 发送', async () => {
     const app = await mount()
-    await app.press(`${pngPath} 看图`)
+    // 路径不许放开头：POSIX 的临时路径以 `/` 起头，排版上会被 Composer 当成斜杠命令，
+    // 回车走的是「命令补全/执行」而不是 submit（2026-11-19 Linux CI 查账）。
+    await app.press(`看图 ${pngPath}`)
     await app.press('\r')
 
     const last = app.calls.submit.at(-1)

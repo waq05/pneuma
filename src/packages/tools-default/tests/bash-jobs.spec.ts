@@ -131,7 +131,9 @@ describe('shellPlan：四档终端各自怎么拼', () => {
     }
   })
 
-  test('PowerShell 家族：-NoProfile -Command，前面钉 UTF-8、末尾带退出码', () => {
+  // pwsh / powershell 两档按实现只在 Windows 上生效（非 win32 的 shellPlan 一律回落 sh），
+  // 所以这组断言只在 win32 上跑；sh 档的等价覆盖在上一条用例里。
+  test.skipIf(process.platform !== 'win32')('PowerShell 家族：-NoProfile -Command，前面钉 UTF-8、末尾带退出码', () => {
     const env = {}
     for (const choice of ['pwsh', 'powershell'] as const) {
       const plan = shellPlan(choice, 'ls', 'C:/w', env)
