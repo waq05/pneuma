@@ -194,6 +194,8 @@ import { sandboxDir, setupScriptPath, setupStatePath } from '../win/account.js'
 import type { SpawnPlan } from '../../../core/tools/command-runner.js'
 
 const ORIGINAL_PLATFORM = process.platform
+/** 当前跑在 Windows 上吗：反斜杠 / 盘符路径的用例依赖 node:path 的 win32 语义，只在 win32 上有意义。 */
+const WIN32 = ORIGINAL_PLATFORM === 'win32'
 const homes: string[] = []
 
 function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
@@ -224,7 +226,13 @@ function findAbsentDrive(): string | null {
   return null
 }
 
-const ABSENT_DRIVE = findAbsentDrive()
+/**
+ * 一个本机确实不存在的盘符（不存在才拿得到 unresolvable 分支）。
+ *
+ * 只在 win32 上找：POSIX 上「盘符路径」不是绝对路径，会被 resolve 到 cwd 下，永远解析得出来，
+ * 那个 unresolvable 分支在 Linux 上根本走不到。
+ */
+const ABSENT_DRIVE = WIN32 ? findAbsentDrive() : null
 
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: ORIGINAL_PLATFORM, configurable: true })
@@ -376,9 +384,10 @@ describe('缓存目录白名单', () => {
   test('win32：按 LOCALAPPDATA / USERPROFILE 拼，缺变量跳过', () => {
     const all = policy.cacheRootCandidates('win32', { LOCALAPPDATA: 'C:\\L', USERPROFILE: 'C:\\U' })
     expect(all).toHaveLength(11)
-    expect(all[0]).toBe('C:\\L\\npm-cache')
-    expect(all).toContain('C:\\U\\.cargo\\registry\\cache')
-    expect(all).toContain('C:\\U\\.cache\\pnpm')
+    // 期望值也用 join 拼：实现里走的是 node:path，Windows 上给反斜杠、Linux 上给正斜杠，两边都该过。
+    expect(all[0]).toBe(join('C:\\L', 'npm-cache'))
+    expect(all).toContain(join('C:\\U', '.cargo', 'registry', 'cache'))
+    expect(all).toContain(join('C:\\U', '.cache', 'pnpm'))
 
     const onlyLocal = policy.cacheRootCandidates('win32', { LOCALAPPDATA: 'C:\\L' })
     expect(onlyLocal).toHaveLength(4)
@@ -390,7 +399,11 @@ describe('缓存目录白名单', () => {
     const env = { LOCALAPPDATA: 'C:\\L', USERPROFILE: 'C:\\U' }
     const exists = (path: string): boolean => path.includes('npm-cache') || path.includes('pip')
     const kept = policy.existingCacheRoots('win32', env, exists)
-    expect(kept).toEqual(['C:\\L\\npm-cache', 'C:\\L\\pip\\Cache', 'C:\\U\\.cache\\pip'])
+    expect(kept).toEqual([
+      join('C:\\L', 'npm-cache'),
+      join('C:\\L', 'pip', 'Cache'),
+      join('C:\\U', '.cache', 'pip'),
+    ])
     expect(policy.existingCacheRoots('win32', env, () => false)).toEqual([])
   })
 })
@@ -515,7 +528,8 @@ describe('canonicalizePath', () => {
     expect(result.reason).toContain('PROGRA~1')
   })
 
-  test('盘符不存在：unresolvable', () => {
+  // Windows 专属：只有盘符路径才会出现「盘符不存在、逐级退到根也解不开」，POSIX 上同一串会被当相对路径拼到 cwd 下。
+  test.skipIf(!WIN32)('盘符不存在：unresolvable', () => {
     if (ABSENT_DRIVE === null) {
       expect(true).toBe(true)
       return
@@ -526,9 +540,13 @@ describe('canonicalizePath', () => {
     expect(result.reason).toContain('判不清落点')
   })
 
-  test('path === "/" 与盘根：stripTrailingSep 保留根', () => {
+  test('path === "/"：stripTrailingSep 保留根', () => {
     const result = policy.canonicalizePath('/', { win32: true, cwd: tempHome() })
     expect(result.path.length).toBeGreaterThan(0)
+  })
+
+  // Windows 专属：`C:\` 只有在 win32 的 node:path 下才是绝对路径，Linux 上会被拼到 cwd 后面。
+  test.skipIf(!WIN32)('盘根：stripTrailingSep 保留盘根', () => {
     const root = policy.canonicalizePath('C:\\', { win32: true, cwd: 'C:\\' })
     expect(root.path).toBe('C:\\')
   })
@@ -537,25 +555,27 @@ describe('canonicalizePath', () => {
 // ── 受保护名 ───────────────────────────────────────────────────────────────
 
 describe('protectedWriteReason', () => {
-  const home = 'C:\\Users\\me\\.dsc'
+  // 样本用 POSIX 形状：函数内部用 node:path 的 basename（跟着当前平台走），Windows 形状串在 Linux 上取不到文件名。
+  // win32 标志仍传 true，验的是「归一成反斜杠 + 小写后」的判定；非 win32 口径见下面第三条。
+  const home = '/home/me/.dsc'
 
   test('Git / SSH / .env 家族 / 凭据基名 / 密钥扩展名', () => {
-    expect(policy.protectedWriteReason('C:\\ws\\.git\\config', home, true)).toContain('Git 元数据')
-    expect(policy.protectedWriteReason('C:\\ws\\.ssh\\id_rsa', home, true)).toContain('SSH 凭据')
-    expect(policy.protectedWriteReason('C:\\ws\\.env.local', home, true)).toContain('.env 家族')
-    expect(policy.protectedWriteReason('C:\\ws\\id_rsa', home, true)).toContain('凭据/私钥')
-    expect(policy.protectedWriteReason('C:\\ws\\auth.json', home, true)).toContain('凭据/私钥')
-    expect(policy.protectedWriteReason('C:\\ws\\server.pem', home, true)).toContain('密钥/证书')
-    expect(policy.protectedWriteReason('C:\\ws\\store.PFX', home, true)).toContain('密钥/证书')
-    expect(policy.protectedWriteReason('C:\\ws\\credentials.json', home, true)).toContain('凭据文件')
+    expect(policy.protectedWriteReason('/ws/.git/config', home, true)).toContain('Git 元数据')
+    expect(policy.protectedWriteReason('/ws/.ssh/id_rsa', home, true)).toContain('SSH 凭据')
+    expect(policy.protectedWriteReason('/ws/.env.local', home, true)).toContain('.env 家族')
+    expect(policy.protectedWriteReason('/ws/id_rsa', home, true)).toContain('凭据/私钥')
+    expect(policy.protectedWriteReason('/ws/auth.json', home, true)).toContain('凭据/私钥')
+    expect(policy.protectedWriteReason('/ws/server.pem', home, true)).toContain('密钥/证书')
+    expect(policy.protectedWriteReason('/ws/store.PFX', home, true)).toContain('密钥/证书')
+    expect(policy.protectedWriteReason('/ws/credentials.json', home, true)).toContain('凭据文件')
   })
 
   test('dsc 家目录里的控制文件才拒；同名的外部文件放行', () => {
-    expect(policy.protectedWriteReason('C:\\Users\\me\\.dsc\\config.yaml', home, true)).toContain('dsc 自己的配置')
-    expect(policy.protectedWriteReason('C:\\Users\\me\\.dsc\\plugins.json', home, true)).toContain('dsc 自己的配置')
-    expect(policy.protectedWriteReason('C:\\ws\\config.yaml', home, true)).toBeNull()
+    expect(policy.protectedWriteReason('/home/me/.dsc/config.yaml', home, true)).toContain('dsc 自己的配置')
+    expect(policy.protectedWriteReason('/home/me/.dsc/plugins.json', home, true)).toContain('dsc 自己的配置')
+    expect(policy.protectedWriteReason('/ws/config.yaml', home, true)).toBeNull()
     // 家目录前缀只按完整段匹配：`.dsc-backup` 不算。
-    expect(policy.protectedWriteReason('C:\\Users\\me\\.dsc-backup\\config.yaml', home, true)).toBeNull()
+    expect(policy.protectedWriteReason('/home/me/.dsc-backup/config.yaml', home, true)).toBeNull()
   })
 
   test('非 win32 口径（大小写敏感比较）也能判', () => {
@@ -566,7 +586,7 @@ describe('protectedWriteReason', () => {
 
   test('.env.example / .env.sample / .env.template 不在 .env 家族里', () => {
     for (const name of ['.env.example', '.env.sample', '.env.template']) {
-      expect(policy.protectedWriteReason(`C:\\ws\\${name}`, home, true), name).toBeNull()
+      expect(policy.protectedWriteReason(`/ws/${name}`, home, true), name).toBeNull()
     }
   })
 })
@@ -601,7 +621,8 @@ describe('createPolicy 与 checkWrite', () => {
     expect(base.length).toBeGreaterThan(0)
   })
 
-  test('附加根 / 只读子路径解析不了：丢掉并进 problems；tmp 解析不了时回退 resolve', () => {
+  // Windows 专属：靠「不存在的盘符」制造 unresolvable，POSIX 上同一串会被解析到 cwd 下（永远解得开）。
+  test.skipIf(!WIN32)('附加根 / 只读子路径解析不了：丢掉并进 problems；tmp 解析不了时回退 resolve', () => {
     if (ABSENT_DRIVE === null) {
       expect(true).toBe(true)
       return
@@ -626,7 +647,8 @@ describe('createPolicy 与 checkWrite', () => {
     expect(one.tmpDir).toBe(bad)
   })
 
-  test('工作目录解析不了：problems 里说明，cwd 退回 resolve，roots 照常', () => {
+  // Windows 专属：同上，盘符路径在 POSIX 上不是绝对路径，解析失败那条分支走不到。
+  test.skipIf(!WIN32)('工作目录解析不了：problems 里说明，cwd 退回 resolve，roots 照常', () => {
     if (ABSENT_DRIVE === null) {
       expect(true).toBe(true)
       return
@@ -647,14 +669,18 @@ describe('createPolicy 与 checkWrite', () => {
     expect(one.roots).toContain(bad)
   })
 
-  test('insideRoot：同路径 / 子路径 / 越界 / `..foo` 不误判 / 跨盘 / 非 win32', () => {
+  test('insideRoot：非 win32 口径的同路径 / 子路径 / 越界', () => {
+    expect(policy.insideRoot('/ws/a', '/ws', false)).toBe(true)
+    expect(policy.insideRoot('/other/a', '/ws', false)).toBe(false)
+  })
+
+  // Windows 专属：这些样本靠 win32 的 node:path 语义算相对关系，Linux 上 relative() 是 posix 语义，判不出来。
+  test.skipIf(!WIN32)('insideRoot：同路径 / 子路径 / 越界 / `..foo` 不误判 / 跨盘', () => {
     expect(policy.insideRoot('C:\\ws', 'C:\\ws', true)).toBe(true)
     expect(policy.insideRoot('C:\\ws\\a\\b.txt', 'C:\\ws', true)).toBe(true)
     expect(policy.insideRoot('C:\\ws2\\a', 'C:\\ws', true)).toBe(false)
     expect(policy.insideRoot('C:\\ws\\..foo', 'C:\\ws', true)).toBe(true)
     expect(policy.insideRoot('D:\\a', 'C:\\ws', true)).toBe(false)
-    expect(policy.insideRoot('/ws/a', '/ws', false)).toBe(true)
-    expect(policy.insideRoot('/other/a', '/ws', false)).toBe(false)
   })
 
   test('三种档位与只读子路径、受保护名、形状守卫的判定结果', () => {
@@ -693,13 +719,14 @@ describe('createPolicy 与 checkWrite', () => {
   })
 
   test('describePolicy：danger 关闭围栏、只读子路径有无两种写法', () => {
-    const { input } = makeBase()
+    const { base, input } = makeBase()
     const danger = policy.createPolicy({ ...input, mode: 'danger-full-access' })
     expect(policy.describePolicy(danger)).toContain('围栏关闭（不限制）')
 
-    const ws = policy.createPolicy({ ...input, readOnlySubpaths: ['C:\\ro'] })
+    // 样本用临时目录下的真实路径：C:\ro 这类盘符串在 Linux 上会被解析到 cwd 下，拼法变掉。
+    const ws = policy.createPolicy({ ...input, readOnlySubpaths: [join(base, 'ro')] })
     const text = policy.describePolicy(ws)
-    expect(text).toContain('只读子路径：C:\\ro')
+    expect(text).toContain(`只读子路径：${ws.readOnlySubpaths[0]!}`)
     expect(text).toContain('网络：关')
     expect(policy.describePolicy({ ...ws, readOnlySubpaths: [] })).toContain('只读子路径：（无）')
   })
@@ -723,22 +750,29 @@ describe('createPolicy 与 checkWrite', () => {
 // ── setup：命名互斥体 ─────────────────────────────────────────────────────
 
 describe('acquireSetupMutex', () => {
+  /**
+   * 互斥体是 Windows 专属的（`setup.ts:321` 非 win32 直接给空实现），所以这些分支临时把 platform 当 win32
+   * 才走得到；FFI 与 node:child_process 已整体换成假的，Linux 上跑也不会碰系统。
+   */
+  const acquire = (): ReturnType<typeof setup.acquireSetupMutex> =>
+    withPlatform('win32', () => setup.acquireSetupMutex())
+
   test('非 win32 / FFI 不可用 / bindAll 抛错：都退回空实现', () => {
     expect(withPlatform('linux', () => setup.acquireSetupMutex())).toEqual({ ok: true, mutex: { release: expect.any(Function) } })
 
     ffiState.mode = 'ffi-off'
-    const off = setup.acquireSetupMutex()
+    const off = acquire()
     expect(off.ok).toBe(true)
     off.ok && off.mutex.release()
 
     ffiState.mode = 'bind-throws'
-    const thrown = setup.acquireSetupMutex()
+    const thrown = acquire()
     expect(thrown.ok).toBe(true)
   })
 
   test('CreateMutexW 抛错：ok=false 且带上错误文本', () => {
     ffiState.mode = 'create-throws'
-    const result = setup.acquireSetupMutex()
+    const result = acquire()
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.why).toContain('CreateMutexW 调用失败')
   })
@@ -746,26 +780,26 @@ describe('acquireSetupMutex', () => {
   test('空句柄：报 Win32 错误码；读不到 LastError 时退回纯文案', () => {
     ffiState.mode = 'no-handle'
     ffiState.lastError = 5
-    const withCode = setup.acquireSetupMutex()
+    const withCode = acquire()
     expect(withCode.ok).toBe(false)
     if (!withCode.ok) expect(withCode.why).toContain('5')
 
     ffiState.lastErrorThrows = true
-    const noCode = setup.acquireSetupMutex()
+    const noCode = acquire()
     expect(noCode.ok).toBe(false)
     if (!noCode.ok) expect(noCode.why).toBe('CreateMutexW 返回空句柄')
   })
 
   test('重名（183）：关掉自己那份句柄并报「另一个安装正在运行」', () => {
     ffiState.lastError = 183
-    const result = setup.acquireSetupMutex()
+    const result = acquire()
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.why).toBe(setup.SETUP_BUSY_DETAIL)
     expect(ffiState.closeCalls).toBe(1)
   })
 
   test('拿到锁：release 只放一次、两个系统调用都走，单个失败被吞掉', () => {
-    const ok = setup.acquireSetupMutex()
+    const ok = acquire()
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     ok.mutex.release()
@@ -777,14 +811,14 @@ describe('acquireSetupMutex', () => {
     ffiState.closeCalls = 0
     ffiState.releaseThrows = true
     ffiState.closeThrows = true
-    const second = setup.acquireSetupMutex()
+    const second = acquire()
     expect(second.ok).toBe(true)
     if (second.ok) expect(() => second.mutex.release()).not.toThrow()
   })
 
   test('读 LastError 抛错：按「没人持有」继续拿锁', () => {
     ffiState.lastErrorThrows = true
-    const result = setup.acquireSetupMutex()
+    const result = acquire()
     expect(result.ok).toBe(true)
     if (result.ok) result.mutex.release()
   })
@@ -812,10 +846,17 @@ function writeValidState(home: string, over: Record<string, unknown> = {}): void
 }
 
 describe('runSetupElevated', () => {
+  /**
+   * 互斥体只在 Windows 上真的拿（`setup.ts:321` 非 win32 直接返回空实现），这段判定是 async 函数开头
+   * 同步执行的，所以同步的 withPlatform 包一层就够把 Linux 也带到「抢不到锁」那条分支；FFI/子进程已整体 mock。
+   */
+  const runSetup = (home: string, options: { proxyPort?: number; timeoutMs?: number } = {}) =>
+    withPlatform('win32', () => setup.runSetupElevated(home, options))
+
   test('互斥体被拒：不落脚本、不弹 UAC，直接返回原因', async () => {
     ffiState.mode = 'no-handle'
     ffiState.lastError = 1
-    const result = await setup.runSetupElevated(tempHome())
+    const result = await runSetup(tempHome())
     expect(result.ok).toBe(false)
     expect(result.detail).toContain('空句柄')
     expect(spawnState.calls).toHaveLength(0)
@@ -902,7 +943,9 @@ describe('runSetupElevated', () => {
     try {
       const result = await setup.runSetupElevated(home, { timeoutMs: 1_000 })
       expect(result.ok).toBe(true)
-      expect(spawnState.calls[0]!.file.toLowerCase()).toContain('c:\\windows\\system32\\windowspowershell')
+      // 只验「回落到 C:\Windows」：分隔符由 node:path 按当前平台拼（Windows 反斜杠、Linux 正斜杠），先归一。
+      const spawned = spawnState.calls[0]!.file.toLowerCase().replace(/[\\/]+/g, '\\')
+      expect(spawned).toContain('c:\\windows\\system32\\windowspowershell')
     } finally {
       if (saved !== undefined) process.env.SystemRoot = saved
     }
@@ -912,10 +955,14 @@ describe('runSetupElevated', () => {
 // ── setup：runUninstallElevated 的三路结论 ─────────────────────────────────
 
 describe('runUninstallElevated', () => {
+  /** 与 runSetupElevated 同一个理由：互斥体是 Windows 专属，临时当 win32 才验得到「抢不到锁」那条。 */
+  const runUninstall = (home: string, options: { timeoutMs?: number } = {}) =>
+    withPlatform('win32', () => setup.runUninstallElevated(home, options))
+
   test('互斥体被拒：直接返回原因', async () => {
     ffiState.mode = 'no-handle'
     ffiState.lastError = 1
-    const result = await setup.runUninstallElevated(tempHome())
+    const result = await runUninstall(tempHome())
     expect(result.ok).toBe(false)
     expect(result.detail).toContain('空句柄')
     expect(spawnState.calls).toHaveLength(0)
@@ -988,13 +1035,23 @@ const shellRun = (cwd = 'C:\\ws'): { command: string; cwd: string; timeoutMs: nu
   signal: new AbortController().signal,
 })
 
+/**
+ * 计划里的 PowerShell 路径：Windows 上给生产形态的完整路径；其它平台给裸文件名。
+ *
+ * `unwrapShellCommand` 用 node:path 的 `basename` 认 shell，Linux 的 posix 语义认不出反斜杠路径，
+ * 所以非 Windows 上用裸名（照样验「认得出 PowerShell」这条分支，只是不验路径形态）。
+ */
+const POWERSHELL_FILE = process.platform === 'win32'
+  ? 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+  : 'powershell.exe'
+
 const shellPlan = (over: Record<string, unknown> = {}): {
   file: string
   args: string[]
   env: Record<string, string | undefined>
   cwd: string
 } => ({
-  file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  file: POWERSHELL_FILE,
   args: ['-NoProfile', '-Command', 'pnpm test'],
   env: { PATH: 'C:\\bin', LANG: 'C.UTF-8', HTTP_PROXY: '', NPM_CONFIG_REGISTRY: 'https://r', SECRET: 'no' },
   cwd: 'C:\\ws',

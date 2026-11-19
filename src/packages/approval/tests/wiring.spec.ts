@@ -348,9 +348,18 @@ describe('自动裁决：地板、模式与授权', () => {
     expect(auditLines().some((line) => line.kind === 'auto-deny' && line.sessionId === 'ghost')).toBe(true)
   })
 
-  test('灾难命令与关键系统路径：完全访问也直接拒', async () => {
+  test('灾难命令：完全访问也直接拒', async () => {
     const h = harness({ policy: 'full-access' })
     expect(await h.service.decide(request({ args: { command: 'rm -rf /' } }), signalOf())).toBe('reject')
+    expect(h.service.pendingView()).toBeNull()
+    const denials = auditLines().filter((line) => line.kind === 'auto-deny')
+    expect(denials.some((line) => String(line.reason).includes('删掉文件系统根目录'))).toBe(true)
+  })
+
+  // NT 设备命名空间（`\\?\` / `\\.\`）是 Windows 专属路径形态：硬地板先把路径 resolve()，
+  // POSIX 上它会被当成 cwd 下的普通文件名，按实现语义不该判拒——所以只在 win32 上断言。
+  test.skipIf(process.platform !== 'win32')('关键系统路径：Windows 设备命名空间写也直接拒', async () => {
+    const h = harness({ policy: 'full-access' })
     const hardPath = await h.service.decide(
       request({ toolName: 'write', args: { path: '\\\\?\\C:\\temp\\x.txt', content: 'x' } }),
       signalOf(),
@@ -358,7 +367,6 @@ describe('自动裁决：地板、模式与授权', () => {
     expect(hardPath).toBe('reject')
     expect(h.service.pendingView()).toBeNull()
     const denials = auditLines().filter((line) => line.kind === 'auto-deny')
-    expect(denials.some((line) => String(line.reason).includes('删掉文件系统根目录'))).toBe(true)
     expect(denials.some((line) => String(line.reason).includes('设备命名空间'))).toBe(true)
   })
 

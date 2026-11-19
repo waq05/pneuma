@@ -422,7 +422,9 @@ describe('expectGolden', () => {
 
   test('name 不能是绝对路径，也不能带 ".."：否则能写到仓库外', () => {
     expect(() => expectGolden('x', '../escape')).toThrow(/不能包含|逃出/)
-    expect(() => expectGolden('x', 'C:\\Windows\\evil')).toThrow(/绝对路径|不能包含/)
+    // 用当前平台的绝对路径：`isAbsolute()` 是平台判定，Windows 盘符形态在 POSIX 上
+    // 只是带反斜杠的普通文件名，按实现语义不该在这里判拒。
+    expect(() => expectGolden('x', join(work, 'evil'))).toThrow(/绝对路径|不能包含/)
     expect(() => expectGolden('x', '')).toThrow(/非空字符串/)
   })
 })

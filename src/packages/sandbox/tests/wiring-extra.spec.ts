@@ -163,6 +163,22 @@ const flush = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 5))
 }
 
+/**
+ * 临时把 `process.platform` 换成指定值（用完恢复原属性描述符）。
+ *
+ * 「默认档在 Windows 上自动启用受限令牌」这条分支（`index.ts` 按 process.platform 判定）只在 win32 上走得到；
+ * 这里换成 win32 就能在 Linux 上验它拿到结论后怎么上报。后端探测与执行器已整体换假实现，不涉及真实路径语义。
+ */
+async function withPlatform<T>(value: NodeJS.Platform, run: () => T | Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { ...descriptor, value })
+  try {
+    return await run()
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor)
+  }
+}
+
 /** 一个够用的假会话：权限状态可读可写，meta 带 cwd/id。 */
 function fakeSession(cwd: string) {
   const state: Record<string, unknown> = {}
@@ -496,41 +512,47 @@ describe('后端选择与降级', () => {
     expect(notices[0]).toContain('（当前正处在这个状态：写与执行类一律拒）')
   })
 
-  test('windows-token 可用（自动档）：注册执行器、说明自动启用、dispose 回收', () => {
-    mockState.probeToken = { available: true, detail: '受限令牌后端可用' }
-    const booted = boot()
-    expect(booted.service.enforcement).toBe('partial')
-    expect(fieldText(booted, '后端现状')).toContain('已自动启用系统级隔离（可在设置里改回策略围栏）')
-    expect(fieldText(booted, '后端现状')).toContain('受限令牌 + ACL 已就位')
-    expect(commandRunner.commandRunnerIds()).toContain('sandbox-token-fake')
+  test('windows-token 可用（自动档）：注册执行器、说明自动启用、dispose 回收', async () => {
+    // 自动启用只在 win32 上判定（index.ts 的 needsTokenProbe）：临时当 win32 才验得到这条分支。
+    await withPlatform('win32', () => {
+      mockState.probeToken = { available: true, detail: '受限令牌后端可用' }
+      const booted = boot()
+      expect(booted.service.enforcement).toBe('partial')
+      expect(fieldText(booted, '后端现状')).toContain('已自动启用系统级隔离（可在设置里改回策略围栏）')
+      expect(fieldText(booted, '后端现状')).toContain('受限令牌 + ACL 已就位')
+      expect(commandRunner.commandRunnerIds()).toContain('sandbox-token-fake')
 
-    // 执行器入参：档位与网络都按现读配置给。
-    expect(mockState.tokenOptions).toMatchObject({ mode: 'workspace-write' })
-    expect((mockState.tokenOptions!['networkAccess'] as () => boolean)()).toBe(false)
-    const onDetail = mockState.tokenOptions!['onDetail'] as (message: string) => void
-    onDetail('测试明细')
-    expect(booted.notices).toContain('沙箱：测试明细')
+      // 执行器入参：档位与网络都按现读配置给。
+      expect(mockState.tokenOptions).toMatchObject({ mode: 'workspace-write' })
+      expect((mockState.tokenOptions!['networkAccess'] as () => boolean)()).toBe(false)
+      const onDetail = mockState.tokenOptions!['onDetail'] as (message: string) => void
+      onDetail('测试明细')
+      expect(booted.notices).toContain('沙箱：测试明细')
 
-    const prompt = booted.facts.find((item) => item.id === 'sandbox')!.fn(booted.session)
-    expect(prompt).toContain('当前后端是自动启用的 Windows 受限令牌')
+      const prompt = booted.facts.find((item) => item.id === 'sandbox')!.fn(booted.session)
+      expect(prompt).toContain('当前后端是自动启用的 Windows 受限令牌')
 
-    booted.dispose()
-    expect(mockState.tokenDispose).toBe(1)
-    expect(commandRunner.commandRunnerIds()).not.toContain('sandbox-token-fake')
+      booted.dispose()
+      expect(mockState.tokenDispose).toBe(1)
+      expect(commandRunner.commandRunnerIds()).not.toContain('sandbox-token-fake')
+    })
   })
 
-  test('windows-token 可用 + 账本在位：走专用账号分支并报 full', () => {
-    writeSetupState()
-    mockState.probeToken = { available: true, detail: '受限令牌后端可用' }
-    mockState.networkEnforced = true
-    const booted = boot()
-    expect(booted.service.enforcement).toBe('full')
-    expect(fieldText(booted, '后端现状')).toContain('Windows 受限令牌 + 专用账号（dsc-sandbox-offline）')
-    expect(mockState.tokenOptions?.['account']).toMatchObject({
-      name: 'dsc-sandbox-offline',
-      sid: 'S-1-5-21-100-200-300-400',
-      dscHome: HOME,
-      proxyPort: 3128,
+  test('windows-token 可用 + 账本在位：走专用账号分支并报 full', async () => {
+    // 同上：自动启用是 Windows 专属分支；账本与 runner 都是假的，Linux 上验得到同样的结论文案。
+    await withPlatform('win32', () => {
+      writeSetupState()
+      mockState.probeToken = { available: true, detail: '受限令牌后端可用' }
+      mockState.networkEnforced = true
+      const booted = boot()
+      expect(booted.service.enforcement).toBe('full')
+      expect(fieldText(booted, '后端现状')).toContain('Windows 受限令牌 + 专用账号（dsc-sandbox-offline）')
+      expect(mockState.tokenOptions?.['account']).toMatchObject({
+        name: 'dsc-sandbox-offline',
+        sid: 'S-1-5-21-100-200-300-400',
+        dscHome: HOME,
+        proxyPort: 3128,
+      })
     })
   })
 
@@ -587,11 +609,14 @@ describe('后端选择与降级', () => {
   })
 
   test('后端探测自身抛错：会话流给一句兜底说明', async () => {
-    mockState.throwProbe = true
-    const booted = boot()
-    await flush()
-    expect(booted.notices.some((text) => text.startsWith('沙箱后端探测失败（照常执行 + 审批卡兜底）：'))).toBe(true)
-    expect(booted.notices.join('\n')).toContain('探测自身崩了')
+    // 探测只在「默认档 + win32」这条路上发生（index.ts 的 needsTokenProbe），临时当 win32 才验得到 catch 分支。
+    await withPlatform('win32', async () => {
+      mockState.throwProbe = true
+      const booted = boot()
+      await flush()
+      expect(booted.notices.some((text) => text.startsWith('沙箱后端探测失败（照常执行 + 审批卡兜底）：'))).toBe(true)
+      expect(booted.notices.join('\n')).toContain('探测自身崩了')
+    })
   })
 })
 

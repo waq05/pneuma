@@ -17,6 +17,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 const HOME = mkdtempSync(join(tmpdir(), 'dsc-hooks-wiring-'))
 process.env['DSC_HOME'] = HOME
 
+/**
+ * 假会话目录：钩子脚本以它当 `cwd` 被 spawn，所以必须真实存在。
+ *
+ * 原来写死的 `C:/repo` 在 Linux 上不存在，`/bin/sh` 直接 ENOENT（表现为「钩子脚本没能启动」）；
+ * 在 Windows CI 上 `C:\repo` 也不存在，同样会红。用临时目录才是两边都成立的前提。
+ */
+const REPO = join(HOME, 'repo')
+mkdirSync(REPO, { recursive: true })
+
 let hooksPlugin: typeof import('../index.js').hooksPlugin
 let readHooks: typeof import('../../session-core/hooks.js').readHooks
 
@@ -51,13 +60,13 @@ function input(overrides: Record<string, unknown> = {}): never {
   return {
     toolName: 'bash',
     risk: 'exec',
-    cwd: 'C:/repo',
+    cwd: REPO,
     args: { command: 'rm -rf build' },
     command: 'rm -rf build',
     target: '',
     signal: new AbortController().signal,
     sessionId: 'sess-1',
-    sessionPath: 'C:/repo/.dsc/sessions/a.jsonl',
+    sessionPath: join(REPO, '.dsc', 'sessions', 'a.jsonl'),
     ...overrides,
   } as never
 }
@@ -99,8 +108,8 @@ function fakeCtx(options: { decision?: 'allow-once' | 'allow-session' | 'allow-a
     },
     session: {
       current: () => ({
-        meta: { id: 'sess-1', cwd: 'C:/repo' },
-        filePath: 'C:/repo/.dsc/sessions/a.jsonl',
+        meta: { id: 'sess-1', cwd: REPO },
+        filePath: join(REPO, '.dsc', 'sessions', 'a.jsonl'),
       }),
     },
     llm: { model: 'dsc-model' },

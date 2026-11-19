@@ -415,12 +415,15 @@ describe('工具参数闸：不碰 worker 的拒绝路径', () => {
 
   test('copy/move 的 gateAs 按目标路径报身份，源参数原样带过去', () => {
     const copy = byName('ops_copy')
-    expect(copy.gateAs?.({ path: 'src.txt', to: 'dst/out.txt' }, 'D:\\work')).toEqual({
+    // cwd 用真实临时绝对路径，别拿 Windows 盘符字面量：`to` 若是相对路径，
+    // gateAs 会按 cwd 展开，在 POSIX 上盘符形状只会被当成普通相对目录名。
+    const cwd = join(home, 'work')
+    expect(copy.gateAs?.({ path: 'src.txt', to: 'dst/out.txt' }, cwd)).toEqual({
       name: 'ops_copy',
       risk: 'write',
-      args: { path: 'D:\\work\\dst\\out.txt', to: 'dst/out.txt' },
+      args: { path: join(cwd, 'dst', 'out.txt'), to: 'dst/out.txt' },
     })
-    expect(copy.gateAs?.({ path: 'src.txt' }, 'D:\\work')).toBeUndefined()
+    expect(copy.gateAs?.({ path: 'src.txt' }, cwd)).toBeUndefined()
   })
 })
 

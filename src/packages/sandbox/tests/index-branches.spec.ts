@@ -406,19 +406,22 @@ describe('守卫与提示段的残部分支', () => {
   })
 
   test('自动启用的受限令牌 + partial：挂载行与 /sandbox 报告都说「已自动启用」', async () => {
-    mockState.probeToken = { available: true, detail: 'runner 入口在位' }
-    mockState.networkEnforced = false
-    const booted = boot()
-    await flush()
+    // 「默认档 + win32」才会自动启用受限令牌（index.ts 的 needsTokenProbe）：临时当 win32 验上报文案。
+    await withPlatform('win32', async () => {
+      mockState.probeToken = { available: true, detail: 'runner 入口在位' }
+      mockState.networkEnforced = false
+      const booted = boot()
+      await flush()
 
-    // 630：mountLine 里 backendAuto 为 true 的那一支
-    expect(booted.notices.some((line) => line.includes('已自动启用系统级隔离（可在设置里改回策略围栏），越界写被系统层拦截'))).toBe(true)
+      // 630：mountLine 里 backendAuto 为 true 的那一支
+      expect(booted.notices.some((line) => line.includes('已自动启用系统级隔离（可在设置里改回策略围栏），越界写被系统层拦截'))).toBe(true)
 
-    // 676：report 把实际生效后端写在配置值前面（实际是 windows-token，配置里仍是 policy）
-    const report = runCommand(booted, 'sandbox')
-    expect(report).toContain(
-      'windows-token（已自动启用系统级隔离，可在设置里改回策略围栏；配置里的 backend 仍是 policy）',
-    )
+      // 676：report 把实际生效后端写在配置值前面（实际是 windows-token，配置里仍是 policy）
+      const report = runCommand(booted, 'sandbox')
+      expect(report).toContain(
+        'windows-token（已自动启用系统级隔离，可在设置里改回策略围栏；配置里的 backend 仍是 policy）',
+      )
+    })
   })
 })
 
@@ -474,12 +477,16 @@ describe('/sandbox 报告与设置分区的残部分支', () => {
   })
 
   test('体检抛的是字符串（非 Error）：明细里用 String(error) 兜底', async () => {
-    mockState.doctorThrows = 'string'
-    const booted = boot()
-    await flush()
+    // 网络第二级体检只在 win32 上真的跑（index.ts 的 refreshNetworkTier 非 win32 直接给「不适用」），
+    // 临时当 win32 验得到 catch 里 String(error) 那条兜底。
+    await withPlatform('win32', async () => {
+      mockState.doctorThrows = 'string'
+      const booted = boot()
+      await flush()
 
-    const text = fieldText(booted, (field) => field.label === '网络第二级（提权布防）')
-    expect(text).toContain('体检失败：doctor 抛了个字符串')
+      const text = fieldText(booted, (field) => field.label === '网络第二级（提权布防）')
+      expect(text).toContain('体检失败：doctor 抛了个字符串')
+    })
   })
 
   test('save 收到非字符串值：String(value) 分支照样落盘', async () => {
