@@ -8,7 +8,7 @@
  * @module dsc-ui-preview/ui/w11-branches.spec
  */
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { RuntimeProvider, type HostChannel } from '@dsc/ui-runtime'
 import { dockSurface, dockTabMeta, setDockFileView, setDockPreview } from '@dsc/ui-dockkit'
 import type { ChangedFileView, DockTabBodyProps, HostSnapshot, UiPluginApi } from '@dsc/ui'
@@ -178,7 +178,12 @@ describe('预览分流：文本各档', () => {
     })
     await flush()
     expect(withExt.container.querySelector('.file-preview-wrap')).toBeNull()
-    expect(textOf(query(withExt.container, '.file-preview-body'))).toContain('解析中')
+    // papaparse 走动态 import：'解析中' 只是中间占位，可能还没出现也可能已经解析完
+    // （同进程里前面的用例加载过 papaparse 时，flush 期间就解析完了）。等最终表格落地再断言，
+    // 否则这条用例的绿红取决于执行顺序——2026-11-19 Linux CI 上就是它红。
+    await waitFor(() => {
+      expect(withExt.container.querySelector('table.file-table')).not.toBeNull()
+    })
     cleanup()
 
     const noExt: ReadResult = { path: 'C:/repo/LICENSE', kind: 'text', text: 'hello', tooLarge: false }
@@ -274,7 +279,7 @@ describe('预览分流：二进制与 bytes', () => {
     expect(textOf(query(fallback.container, '.file-preview-empty'))).toContain('未知')
   })
 
-  test('bytes 非 PDF 且有 base64：走表格视图（解析中占位）', async () => {
+  test('bytes 非 PDF 且有 base64：走表格视图（占位最终消失）', async () => {
     const xlsx: ReadResult = {
       path: 'C:/repo/book.xlsx',
       kind: 'bytes',
@@ -288,7 +293,11 @@ describe('预览分流：二进制与 bytes', () => {
       path: 'C:/repo/book.xlsx',
     })
     await flush()
-    expect(textOf(query(container, '.file-preview-body'))).toContain('解析中')
+    // 同 csv：'解析中' 是动态 import 期间的中间态，不能断言它一定在场；
+    // 稳定判据是占位最终消失（落到表格或「解析失败」，两者都说明走了表格视图）。
+    await waitFor(() => {
+      expect(textOf(query(container, '.file-preview-body'))).not.toContain('解析中')
+    })
   })
 })
 

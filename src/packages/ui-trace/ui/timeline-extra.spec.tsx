@@ -16,6 +16,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentProps, ComponentType } from 'react'
 import { RuntimeProvider, clearTraceFocus, openTrace, traceFocusStep, type HostChannel } from '@dsc/ui-runtime'
 import type { HostSnapshot, TranscriptEntry, UiPluginApi } from '@dsc/ui'
+import { formatClockSeconds } from '@dsc/ui-primitives'
 import { TraceTimeline } from './timeline.js'
 import type { TraceMark } from './trace-format.js'
 import plugin from './ui.js'
@@ -191,7 +192,9 @@ describe('悬停提示', () => {
     })
     const tip = container.querySelector('[data-trace-tip]') as HTMLElement
     // ts 缺席时时刻退回起点（start），耗时缺席才写「耗时未记录」——不编 0 秒。
-    expect(textOf(tip)).toContain('08:00:04')
+    // 时刻按本机时区格式化：写死 08:00:04 只对 UTC+8 成立，CI（UTC）会读到 00:00:04。
+    // 期望值用与实现同一份格式化函数算，时区无关。
+    expect(textOf(tip)).toContain(formatClockSeconds(4000) ?? '')
     expect(textOf(tip)).toContain('耗时未记录')
     expect(textOf(tip)).not.toContain('0.0s')
   })
