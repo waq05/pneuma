@@ -23,8 +23,9 @@
  *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
  *   前后折成折叠桶，hover 出预览卡）。
  * - **智能体区是「子智能体列表」**（2026-11-06 与标题旁对调：标题旁那颗现在是「智能体团队」
- *   入口）：一行一个队友（名字 / 角色 / 状态），点一行在**正文区**只读打开它的完整运行记录
- *   （经 team 插件的 `teammateReader` 服务；在跑的队友也能打开，边跑边看）。
+ *   入口）：一行一个队友（名字 / 角色 / 状态），点一行在**正文区打开它那条真会话**
+ *   （2026-11-19 起走宿主的 `openTeammate`：收工的可续接队友先被复活，打开后输入框能直接
+ *   接着说话；行尾在跑的给停止、收工的给移除）。
  *   空列表给一句人话，不留一张空表。
  *
  * ## 为什么挂在 `shell.main` 槽里却画到顶栏页签行
@@ -50,7 +51,7 @@
  * - **工作流**：快照的 `surfaces.scheduled`。dsc 没有工作流引擎，这一区绑的是最接近的
  *   「按规则自动跑一轮」——定点任务；schedule 插件默认关着，关着时整区不渲染。
  * - **智能体**：`listTeammates`（team 插件开着时经共享席位读，缺席才回落到 5 秒轮询）；
- *   点一行由 `teammateReader` 服务在正文区打开它的只读运行记录。
+ *   点一行打开它那条真会话（收工的可续接队友由宿主先复活），与主会话同一套界面。
  *
  * 纯派生规则（聚焦窗口 / 折叠桶 / 胶囊优先级链 / 时长与倒计时）在 `./status-model.ts`，
  * 由 `scripts/ui-status-panel-test.mjs` 逐条钉住。
@@ -67,7 +68,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
-  IconChevronUp,
+  IconChevronRight,
   IconCircle,
   IconClose,
   IconDiff,
@@ -77,14 +78,15 @@ import {
   IconStop,
   IconTarget,
   IconTerminal,
+  IconTrash,
   IconTree,
   SLOT,
+  confirmAction,
   createT,
   defineUiPlugin,
   openDockTab,
   registerDockTab,
   setDockPreview,
-  setDockSubagent,
   setDockWorkOutput,
   toastErr,
   toastOk,
@@ -115,7 +117,9 @@ import {
   formatAgo,
   formatCountdown,
   formatDuration,
+  formatTokens,
   longestWorkElapsedMs,
+  mateElapsedMs,
   todoFocusWindow,
   type CapsuleSummary,
   type FoldBucketKind,
@@ -341,18 +345,6 @@ type MateSeatHandle = StoreHandle<MateSeatState, ActionsDecl<MateSeatState>>
 
 /** 服务名（provider 是 team 插件；缺席时回落到本地轮询）。 */
 const TEAMMATES_SERVICE = 'teammates'
-/** 服务名（provider 是 team 插件：在正文区只读打开一位队友的运行记录）。 */
-const TEAMMATE_READER_SERVICE = 'teammateReader'
-
-/**
- * team 插件经服务表给出去的「看运行记录」口子。
- *
- * 在跑的队友也直接打开（2026-11-09 拆掉了「等它收工」那道门：读的是 `peekTranscript`
- * 的 `lease: false` 只读重放，收工之后跟读自己停），所以状态面板这边只管点一下就叫它。
- */
-interface TeammateReaderService {
-  open(mate: TeammateView): void
-}
 
 export default defineUiPlugin({
   name: t('status.plugin.name'),
@@ -443,6 +435,15 @@ function sameMateList(left: readonly TeammateView[], right: readonly TeammateVie
 function sameBoard(left: TeamBoardView | null, right: TeamBoardView): boolean {
   if (left === null) return false
   if (left.revision !== right.revision) return false
+  // 进展 / 活动变了也要重画：队友写一条 note 不改 revision 之外的判据时，行内显示会停在旧值。
+  const leftActivity = left.activity ?? []
+  const rightActivity = right.activity ?? []
+  if (leftActivity.length !== rightActivity.length) return false
+  const latestActivity = (list: TeamBoardView['activity']): string => {
+    const first = list?.[0]
+    return first === undefined ? '' : `${String(first.at)}|${first.by}|${first.text}|${first.kind}`
+  }
+  if (latestActivity(leftActivity) !== latestActivity(rightActivity)) return false
   if (left.tasks.length !== right.tasks.length) return false
   return left.tasks.every((task, index) => {
     const other = right.tasks[index]
@@ -452,7 +453,12 @@ function sameBoard(left: TeamBoardView | null, right: TeamBoardView): boolean {
       task.subject === other.subject &&
       task.status === other.status &&
       task.owner === other.owner &&
-      task.ready === other.ready
+      task.ready === other.ready &&
+      task.blockedReason === other.blockedReason &&
+      task.assignee === other.assignee &&
+      task.noteCount === other.noteCount &&
+      task.latestNote?.text === other.latestNote?.text &&
+      task.latestNote?.at === other.latestNote?.at
     )
   })
 }
@@ -609,9 +615,6 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
   // `useService` 订阅服务表的出现/消失，所以 team 启停后自动切源，不需要刷新页面。
   const seat = useService<MateSeatHandle>(TEAMMATES_SERVICE)
-  // 正文区只读运行记录的口子（team 插件提供）：点一行队友就打开它；服务缺席时退回右栏
-  // 页签（老路，仍是只读面）——绝不出现「点了没反应」。
-  const mateReader = useService<TeammateReaderService>(TEAMMATE_READER_SERVICE)
   const instance = useMemo(
     () => (seat === undefined ? undefined : slots.seat(seat)),
     [slots, seat],
@@ -795,6 +798,9 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
 
   // 名册本地轮询（回落到「没有共享席位」时才跑）：页面不可见时不问（后台省心跳），
   // 切回可见立刻补一拍。共享席位出现时这条 effect 被拆掉，轮询随之停止。
+  //
+  // 5 秒轮询只当兜底：宿主每次重推快照（写名册 / 写任务板 / 队友收工）都会走
+  // `channel.subscribe`，那条订阅让面板在**推帧的下一拍**就拉一次，不必等满 5 秒。
   useEffect(() => {
     if (usingShared) return undefined
     let alive = true
@@ -814,6 +820,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     }
     poll()
     const timer = window.setInterval(poll, POLL_MS)
+    // 宿主推帧（快照重算）就立刻拉一次：订阅回调只做「催一拍」，可见性仍由 poll 自己判。
+    const off = channel.subscribe(poll)
     const onVisible = (): void => {
       if (document.visibilityState === 'visible') poll()
     }
@@ -821,6 +829,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     return () => {
       alive = false
       window.clearInterval(timer)
+      off()
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [channel, usingShared])
@@ -850,6 +859,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     }
     poll()
     const timer = window.setInterval(poll, POLL_MS)
+    // 宿主一推帧（完成任务 / 认领 / 写进展）就立刻拉一次；5 秒轮询留作兜底。
+    const off = channel.subscribe(poll)
     const onVisible = (): void => {
       if (document.visibilityState === 'visible') poll()
     }
@@ -857,6 +868,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     return () => {
       alive = false
       window.clearInterval(timer)
+      off()
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [channel])
@@ -1062,6 +1074,38 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       .invoke('stopTeammate', [mate.name])
       .then(() => toastOk(t('status.toast.mateStopped', { name: mate.name })))
       .catch((reason: unknown) => toastErr(t('status.toast.mateStopFailed', { message: reason instanceof Error ? reason.message : String(reason) })))
+  }
+
+  /**
+   * 点一行队友：打开它那条真会话（2026-11-19）。
+   *
+   * 走宿主的 `openTeammate` 而不是「打开文件」：收工的可续接队友要在这一步先被复活一份
+   * 循环，打开后才能直接在输入框里接着说话（见 packages/subagent 的 reviveTeammate）。
+   * 这个口子缺席（team 插件没装/旧宿主）时退回 `openSession`——至少记录看得到，不静默。
+   */
+  const openMate = (mate: TeammateView): void => {
+    void channel
+      .invoke('openTeammate', [mate.name])
+      .catch(() => channel.invoke('openSession', [mate.file]).catch(() => undefined))
+  }
+
+  /** 把一个收工的队友从名册移除（运行记录文件一并删除）。 */
+  const removeMate = (mate: TeammateView): void => {
+    void (async () => {
+      const ok = await confirmAction({
+        title: t('status.agent.removeTitle', { name: mate.name }),
+        detail: t('status.agent.removeDetail'),
+        confirmLabel: t('status.agent.remove'),
+        danger: true,
+      })
+      if (!ok) return
+      try {
+        await channel.invoke('removeTeammate', [mate.name])
+        toastOk(t('status.agent.removed', { name: mate.name }))
+      } catch (reason) {
+        toastErr(t('status.agent.removeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+      }
+    })()
   }
 
   /** 收掉一个正在跑的后台作业 / 终端会话（「终端」区行尾的停止钮）。 */
@@ -1319,18 +1363,15 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                 <AgentSection
                   mates={mine}
                   runningCount={running.length}
+                  now={now}
                   open={sectionOpen.agent}
                   separated={sepAgent}
                   onToggle={() => {
                     toggleSection('agent')
                   }}
                   onStop={stopMate}
-                  onOpen={(mate) => {
-                    // 主路：正文区只读打开（team 插件的 `teammateReader`）。服务缺席（team 没装 /
-                    // 被停用）时退回右栏页签——那条也是只读面，比点了没反应强。
-                    if (mateReader === undefined) setDockSubagent({ path: mate.file, label: mate.name })
-                    else mateReader.open(mate)
-                  }}
+                  onRemove={removeMate}
+                  onOpen={openMate}
                 />
               ) : null}
               {showTeam && board !== null ? (
@@ -1468,11 +1509,8 @@ function StatusSectionBlock({
         onClick={onToggle}
       >
         <span className="sp-section-title">{title}</span>
-        {open ? (
-          <IconChevronUp size={12} className="sp-section-caret" />
-        ) : (
-          <IconChevronDown size={12} className="sp-section-caret" />
-        )}
+        {/* 单颗向下箭头，展开时由 CSS 转 180°：换图标是突变，转起来才有「开合」的感觉。 */}
+        <IconChevronDown size={12} className="sp-section-caret" />
         <span className="sp-section-trail">{trail}</span>
       </button>
       <div className="sp-section-body">
@@ -1748,10 +1786,15 @@ function FoldPreviewCard({
 }
 
 /**
- * 子智能体节：一行一个队友——状态点 + 名字 + 角色 + 状态词，整行可点。
+ * 子智能体节：一行一个队友——名字 / 角色 / token / 耗时 / 状态词 / 右箭头，整行可点。
  *
- * 点一行在**正文区**只读打开它的完整运行记录（`teammateReader` 服务；在跑的也能打开，
- * 边跑边看，收工后跟读自己停）。行尾仍留一颗停止钮（在跑的才有），各自 stopPropagation。
+ * 行形态照 dsh 团队面板（2026-11-18 需求「对齐整个面板形态」）：token 与耗时是只读读数，
+ * 名字仍是最宽的一格；一次性的在角色后多一个「一次性」小标。耗时在跑时按秒走
+ * （`now` 由面板的快档时钟推），收工的按 `finishedAt` 冻结。
+ *
+ * 点一行在**正文区**打开它那条真会话（2026-11-19 起走 `openTeammate`：收工的可续接队友
+ * 由宿主先复活，打开后输入框能直接接着说话）。行尾一颗钮：在跑的给停止，收工的给移除，
+ * 各自 stopPropagation。
  *
  * 一条队友都没有时**整区不画**（判在 StatusPanel 那一层）：没有空态文案，也不留空表——
  * 2026-11-08 需求「没派就隐藏，等用到再展示」。与「共享任务」区是两件事：这里说
@@ -1760,18 +1803,22 @@ function FoldPreviewCard({
 function AgentSection({
   mates,
   runningCount,
+  now,
   open,
   separated,
   onToggle,
   onStop,
+  onRemove,
   onOpen,
 }: {
   mates: readonly TeammateView[]
   runningCount: number
+  now: number
   open: boolean
   separated: boolean
   onToggle(): void
   onStop(mate: TeammateView): void
+  onRemove(mate: TeammateView): void
   onOpen(mate: TeammateView): void
 }): ReactNode {
   // 在跑的排前面（点开要给提示的那几条不该被收工的一堆压到下面），同档按派活先后。
@@ -1779,54 +1826,93 @@ function AgentSection({
     const rank = (mate: TeammateView): number => (mate.state === 'working' ? 0 : 1)
     return rank(left) - rank(right) || left.startedAt - right.startedAt
   })
+  // 分区头读数照 dsh：「X 已完成 · Y 在跑」；一条都没在跑时只报「N 已完成」。
+  const doneCount = mates.length - runningCount
   const trail =
     runningCount > 0
-      ? t('status.agent.trailRunning', { n: runningCount, total: mates.length })
+      ? t('status.agent.trailRunning', { done: doneCount, running: runningCount })
       : t('status.agent.trailCount', { n: mates.length })
   return (
     <StatusSectionBlock id="agent" title={t('status.section.agent')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
-        {ordered.map((mate) => (
-          <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} data-sp-agent-mode={mate.mode ?? 'continuable'} key={mate.file}>
-            {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
-            <button
-              type="button"
-              className="sp-row-open"
-              aria-label={t('status.agent.openAria', { name: mate.name })}
-              data-sp-agent={mate.name}
-              data-tip={t('status.agent.rowTip', { role: mate.role, task: mate.task })}
-              onClick={() => {
-                onOpen(mate)
-              }}
-            >
-              <span className={`tm-dot ${mate.state}`} aria-hidden="true" />
-              <span className="sp-row-text" title={mate.task}>
-                {mate.name}
-              </span>
-              <span className="sp-row-note">{mate.role}</span>
-              {mate.mode === 'one-shot' ? (
-                <span className="sp-row-mode">{t('status.agent.modeOneShot')}</span>
-              ) : null}
-              <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
-                {MATE_STATE_LABEL[mate.state]}
-              </span>
-            </button>
-            {mate.state === 'working' ? (
+        {ordered.map((mate) => {
+          const tokens = formatTokens(mate.tokens)
+          // startedAt → finishedAt；在跑的没有 finishedAt，用 now 让读数实时走。
+          const elapsed = formatDuration(mateElapsedMs(mate, now), true)
+          return (
+            <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} data-sp-agent-mode={mate.mode ?? 'continuable'} key={mate.file}>
+              {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
               <button
                 type="button"
-                className="sp-row-stop"
-                aria-label={t('status.agent.stopAria', { name: mate.name })}
-                data-tip={t('status.agent.stopTip')}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onStop(mate)
+                className="sp-row-open"
+                aria-label={t('status.agent.openAria', { name: mate.name })}
+                data-sp-agent={mate.name}
+                data-tip={t('status.agent.rowTip', { role: mate.role, task: mate.task })}
+                onClick={() => {
+                  onOpen(mate)
                 }}
               >
-                <IconStop size={12} />
+                <span className="sp-row-text" title={mate.task}>
+                  {mate.name}
+                </span>
+                <span className="sp-row-note">{mate.role}</span>
+                {mate.taskId === undefined ? null : (
+                  <span className="sp-row-note" data-sp-agent-task={mate.taskId} title={t('status.agent.taskRefTip', { id: mate.taskId })}>
+                    {t('status.agent.taskRef', { id: mate.taskId })}
+                  </span>
+                )}
+                {mate.mode === 'one-shot' ? (
+                  <span className="sp-row-mode">{t('status.agent.modeOneShot')}</span>
+                ) : null}
+                {/* token 是可选面：老名册没有这一项（undefined），有值才画，不画假的 0。 */}
+                {tokens === null ? null : (
+                  <span className="sp-row-tokens" data-sp-agent-tokens={String(mate.tokens)}>
+                    {tokens}
+                  </span>
+                )}
+                {elapsed === null ? null : (
+                  <span className="sp-row-elapsed" data-sp-agent-elapsed="1">
+                    {elapsed}
+                  </span>
+                )}
+                <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
+                  {MATE_STATE_LABEL[mate.state]}
+                </span>
+                <IconChevronRight size={12} className="sp-row-arrow" />
               </button>
-            ) : null}
-          </li>
-        ))}
+              {mate.state === 'working' ? (
+                <button
+                  type="button"
+                  className="sp-row-stop"
+                  aria-label={t('status.agent.stopAria', { name: mate.name })}
+                  data-tip={t('status.agent.stopTip')}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onStop(mate)
+                  }}
+                >
+                  <IconStop size={12} />
+                </button>
+              ) : (
+                // 收工的：名册里的「移除」入口。它以前在正文区那层只读视图的头部，
+                // 2026-11-19 那层撤掉之后回到列表行尾——一处一个动作，不重复。
+                <button
+                  type="button"
+                  className="sp-row-remove"
+                  aria-label={t('status.agent.removeAria', { name: mate.name })}
+                  data-tip={t('status.agent.removeTip')}
+                  data-sp-agent-remove=""
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onRemove(mate)
+                  }}
+                >
+                  <IconTrash size={12} />
+                </button>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </StatusSectionBlock>
   )
@@ -1842,6 +1928,28 @@ const TASK_STATE_LABEL: Readonly<Record<TeamBoardView['tasks'][number]['status']
   pending: t('status.team.statePending'),
   in_progress: t('status.team.stateInProgress'),
   completed: t('status.team.stateCompleted'),
+}
+
+/**
+ * 共享任务行的状态灯（照 dsh 的 StateDot）。
+ *
+ * 四态各有各的形，不靠颜色单通道区分（色弱也读得出来）：
+ *   - running：14px 外圈轨道 + 旋转弧，轨道同时呼吸（在跑）；
+ *   - done：实心绿点；
+ *   - pending：空心圈；
+ *   - blocked：琥珀空心圈（等依赖）。
+ * 文案仍由行尾状态词负责，这里 `aria-hidden`——灯是装饰，不是唯一信息源。
+ */
+function TaskStateLamp({ state }: { state: 'running' | 'done' | 'pending' | 'blocked' }): ReactNode {
+  if (state === 'running') {
+    return (
+      <svg className="sp-lamp sp-lamp-run" data-sp-lamp="running" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+        <circle className="sp-lamp-track" cx="12" cy="12" r="9.5" />
+        <circle className="sp-lamp-arc" cx="12" cy="12" r="9.5" />
+      </svg>
+    )
+  }
+  return <span className={`sp-lamp sp-lamp-${state}`} data-sp-lamp={state} aria-hidden="true" />
 }
 
 /**
@@ -1867,17 +1975,26 @@ function TeamBoardSection({
 }): ReactNode {
   // 一次只展开一条（展开另一条时自动收起上一条），与 dsh 的任务详情同一条规矩。
   const [expanded, setExpanded] = useState<string | null>(null)
+  // 「最近活动」默认收起：板子经常有几十条活动，全摊开会把任务列表挤出可视区。
+  const [activityOpen, setActivityOpen] = useState(false)
+  const activity = board.activity ?? []
   const openCount = board.tasks.filter((task) => task.status !== 'completed').length
+  // 分区头读数照 dsh：「N 已完成 · M 未完成」；全部完成时只报「N 已完成」。
+  const doneCount = board.tasks.length - openCount
   const trail =
     openCount === 0
       ? t('status.team.trailDone', { n: board.tasks.length })
-      : t('status.team.trail', { n: openCount, total: board.tasks.length })
+      : t('status.team.trail', { done: doneCount, open: openCount })
   return (
     <StatusSectionBlock id="team" title={t('status.section.team')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
         {board.tasks.map((task) => {
           const detailOpen = expanded === task.id
-          // 圆点：完成 = 灰；进行中 = 运行中；待开始里 ready 的是可开工（灰），被依赖挡住的是警戒（橙）。
+          // 状态灯四态：进行中 = 呼吸 + 旋转弧；完成 = 实心绿；待开始 = 空心圈；被依赖挡 = 琥珀。
+          const lamp =
+            task.status === 'completed' ? 'done' : task.status === 'in_progress' ? 'running' : task.ready ? 'pending' : 'blocked'
+          // 行上的 data-state 仍按团队面板那套词走（working / idle / stopped / failed），
+          // 供既有选择器与探针取用；灯形由 lamp 自己决定。
           const tone =
             task.status === 'completed' ? 'idle' : task.status === 'in_progress' ? 'working' : task.ready ? 'stopped' : 'failed'
           const stateText =
@@ -1896,18 +2013,38 @@ function TeamBoardSection({
                   setExpanded(detailOpen ? null : task.id)
                 }}
               >
-                <span className={`tm-dot ${tone}`} aria-hidden="true" />
+                <TaskStateLamp state={lamp} />
                 <span className="sp-row-text" title={task.subject}>
                   {task.subject}
                 </span>
                 <span className="sp-row-note">{task.owner === null ? t('status.team.unowned') : `@${task.owner}`}</span>
-                <span className="sp-row-time" data-tone={tone === 'failed' ? 'danger' : 'plain'}>
+                <span className="sp-row-time" data-tone={lamp === 'blocked' ? 'warn' : 'plain'}>
                   {stateText}
                 </span>
+                {/* 右箭头：详情展开时由 CSS 转 180°（与分区头那颗同一套「开合」语汇）。 */}
+                <IconChevronRight size={12} className="sp-row-arrow" />
               </button>
               {detailOpen ? (
                 <div className="sp-task-detail">
                   <p>{task.description === '' ? t('status.team.noDetail') : task.description}</p>
+                  {task.assignee === undefined || task.assignee === null ? null : (
+                    <p className="sp-task-meta">{t('status.team.assignee', { name: task.assignee })}</p>
+                  )}
+                  {task.blockedReason === undefined || task.blockedReason === null || task.blockedReason === '' ? null : (
+                    <p className="sp-task-meta sp-task-blocked">{t('status.team.blockedReason', { reason: task.blockedReason })}</p>
+                  )}
+                  {task.latestNote === undefined || task.latestNote === null ? null : (
+                    <p className="sp-task-note" data-sp-task-note={task.id}>
+                      {t('status.team.latestNote', {
+                        by: task.latestNote.by,
+                        ago: formatAgo(task.latestNote.at, Date.now()) ?? '',
+                        text: task.latestNote.text,
+                      })}
+                      {typeof task.noteCount === 'number' && task.noteCount > 1
+                        ? ` ${t('status.team.noteCount', { n: task.noteCount })}`
+                        : ''}
+                    </p>
+                  )}
                   {task.blockedBy.length === 0 ? null : (
                     <p className="sp-task-meta">{t('status.team.blockedBy', { ids: task.blockedBy.join('、') })}</p>
                   )}
@@ -1920,6 +2057,55 @@ function TeamBoardSection({
           )
         })}
       </ul>
+      {activity.length === 0 ? null : (
+        // 最近活动是「共享任务」里的二级子块：与任务列表之间用一条分隔线 + 8px 留白隔开，
+        // 展开体走与分区体同一套 grid 开合动画（收起时也留在 DOM 里，才能过渡而不是突现）。
+        <div
+          className="sp-task-activity"
+          data-sp-team-activity={String(activity.length)}
+          data-sp-open={activityOpen ? '1' : '0'}
+        >
+          <div className="sp-row sp-row-toggle">
+            <button
+              type="button"
+              className="sp-row-open sp-activity-head"
+              aria-expanded={activityOpen}
+              aria-label={t('status.team.activity')}
+              onClick={() => {
+                setActivityOpen((current) => !current)
+              }}
+            >
+              <span className="sp-row-text">{t('status.team.activity')}</span>
+              <span className="sp-row-note">{t('status.team.activityTrail', { n: activity.length })}</span>
+              <span className="sp-row-time" data-tone="plain">
+                {activityOpen ? t('status.team.collapse') : t('status.team.expand')}
+              </span>
+              <IconChevronDown size={12} className="sp-activity-caret" />
+            </button>
+          </div>
+          <div className="sp-activity-body">
+            <div className="sp-activity-inner">
+              <ul className="sp-list">
+                {activity.slice(0, 10).map((entry, index) => (
+                  <li
+                    className="sp-row sp-row-activity"
+                    data-sp-activity={entry.kind}
+                    key={`${String(entry.at)}-${String(index)}`}
+                  >
+                    <span className="sp-row-text" title={entry.text}>
+                      {entry.taskId === undefined ? entry.text : `[${entry.taskId}] ${entry.text}`}
+                    </span>
+                    <span className="sp-row-note">@{entry.by}</span>
+                    <span className="sp-row-time" data-tone="plain">
+                      {formatAgo(entry.at, Date.now()) ?? ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </StatusSectionBlock>
   )
 }

@@ -114,7 +114,10 @@ function useStableLiveTitle(desired: LiveProcessTitle, active: boolean): LivePro
     return () => {
       clearTimeout(timer)
     }
-  }, [active, desired.activity, desired.detail])
+    // 依赖里必须带 `preparing`：准备中与派发后可能给出**一模一样**的 activity + detail
+    // （同一段参数，前缀读法与完整解析往往得到同一句话），少了这一位 effect 不重跑，
+    // 组头就会在整个工具执行期间停在「准备运行命令」（2026-11-18 评审抓到的）。
+  }, [active, desired.activity, desired.detail, desired.preparing])
 
   return active ? shown : desired
 }

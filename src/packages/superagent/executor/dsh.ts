@@ -244,7 +244,11 @@ export class WorkerSlots {
   free(ticketId: string): void { this.starting.delete(ticketId) }
 }
 
-/** The shell command that runs a settings `prepare` command on this platform (`runAsWorker` spawns directly; Windows has no `sh`). */
+/**
+ * The shell command that runs a settings `prepare` command on this platform (`runAsWorker` spawns directly; Windows
+ * has no `sh`). Windows passes the command verbatim: node's default argument quoting escapes the quotes inside it to
+ * `\"` and cmd keeps those literally, so `git clone "C:\a b" "%DSH_SUPERAGENT_DIR%"` would fail on the quoted path.
+ */
 const prepareCommand = (command: string): string[] => process.platform === 'win32'
   ? ['cmd.exe', '/d', '/s', '/c', command] : ['sh', '-c', command]
 
@@ -301,7 +305,8 @@ export class DshExecutor implements Executor {
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
-    if (command) await runAsWorker(prepareCommand(command), dirname(directory), signal, env)
+    // Windows passes the command verbatim (see `prepareCommand`), so the quotes inside it reach the command as typed.
+    if (command) await runAsWorker(prepareCommand(command), dirname(directory), signal, env, process.platform === 'win32')
       .catch(async (error: unknown) => {
         // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
         await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })

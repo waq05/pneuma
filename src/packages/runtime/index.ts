@@ -22,7 +22,13 @@ import {
 import { buildUsageStats } from '@pneuma/runtime/core/usage-log.js'
 import { sideAskOnce } from '@pneuma/runtime/core/side-ask.js'
 import { shellCommandRejection, shellCommands } from '@pneuma/commands-core/commands-completion.js'
-import type { DscRuntime, SettingsMutation } from '@pneuma/runtime/contract.js'
+import type { DscRuntime, SettingsMutation, UiPrefsView } from '@pneuma/runtime/contract.js'
+import {
+  FONT_SIZE_PX_DEFAULT,
+  fontScaleFromTextSizePx,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '@pneuma/runtime/contract.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 
 /**
@@ -52,26 +58,6 @@ function superagentAnswerOf(input: unknown): { ticketId: string; text: string } 
   const { ticketId, text } = input as { ticketId?: unknown; text?: unknown }
   if (typeof text !== 'string' || text.trim() === '') throw new Error('回答不能为空：写一句要回它的话')
   return { ticketId: superagentTicketId(ticketId), text }
-}
-
-/**
- * 候选收件箱两个动作的入参：`{ id, title?, reason? }` 或裸 id 字符串。
- *
- * 为什么允许裸字符串：命令行与界面半的写法不必统一（与工单那几个同一个口径）。
- */
-function candidateRefOf(input: unknown): { id: string; title?: string; reason?: string } {
-  if (typeof input === 'string') return { id: input }
-  if (input !== null && typeof input === 'object') {
-    const { id, title, reason } = input as { id?: unknown; title?: unknown; reason?: unknown }
-    if (typeof id === 'string') {
-      return {
-        id,
-        ...(typeof title === 'string' ? { title } : {}),
-        ...(typeof reason === 'string' ? { reason } : {}),
-      }
-    }
-  }
-  throw new Error('要给一个候选 id（`{ id }` 或裸字符串）')
 }
 
 export const runtimePlugin: Plugin.Object = {
@@ -315,6 +301,14 @@ export const runtimePlugin: Plugin.Object = {
         return team.board(ctx.session.current().meta.id)
       },
 
+      openTeammate(name) {
+        // 与 stopTeammate 同一条理由：team 是可选服务，只能 ctx.get。
+        // 点开一位队友 = 打开它那条真会话；收工的可续接队友由 subagent 插件先复活再打开。
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('子智能体插件没开，没有队友可以打开'))
+        return team.open(name)
+      },
+
       stopTeammate(name) {
         // 与 listTeammates 同一条理由：team 是可选服务，只能 ctx.get
         const team = ctx.get('team')
@@ -393,21 +387,6 @@ export const runtimePlugin: Plugin.Object = {
         const superagent = ctx.get('superagent')
         if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，看不到执行会话'))
         return superagent.peekSession(superagentTicketId(input))
-      },
-
-      // 候选收件箱（backlog G1）：两个写动作，与 publish 同一档。
-      superagentAcceptCandidate(input) {
-        const superagent = ctx.get('superagent')
-        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有候选可接'))
-        const { id, title } = candidateRefOf(input)
-        return superagent.acceptCandidate(id, title)
-      },
-
-      superagentIgnoreCandidate(input) {
-        const superagent = ctx.get('superagent')
-        if (superagent === undefined) return Promise.reject(new Error('Super Agent 插件没开，没有候选可忽略'))
-        const { id, reason } = candidateRefOf(input)
-        return superagent.ignoreCandidate(id, reason)
       },
 
       setPolicy(policy) {
@@ -538,8 +517,12 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.skills.setEnabled(name, enabled)
       },
 
-      browseMarket(source, query) {
-        return ctx.skills.browseMarket(source ?? '', false, query)
+      // 第三参 refresh 由界面「刷新」按钮传入（ui-methods 的 browseMarket 规格已放行
+      // 一个可选 boolean）：true = 跳过缓存强制联网；省略/false = 先用新鲜缓存。
+      // 显式标注类型：契约里这条只声明了两个可选参数，第三个由这里补成可选，
+      // 让实现在类型上仍能赋给 DscRuntime（多一个可选参数不算加宽调用面）。
+      browseMarket(source: string | undefined, query: string | undefined, refresh?: boolean) {
+        return ctx.skills.browseMarket(source ?? '', refresh === true, query)
       },
 
       installMarketSkill(source, name) {
@@ -686,7 +669,22 @@ export const runtimePlugin: Plugin.Object = {
 
       setUiPrefs(patch) {
         const current = ctx.settings.prefs().ui
-        ctx.settings.setPrefs({ ui: { ...current, ...patch } })
+        // 字号的真源是 px；倍率是派生值。写盘前先把两者对齐，别等下一次读档——
+        // 同一次会话里旧消费方（手机远程、没升级的插件）读 `getUiPrefs().fontSize`
+        // 会读到旧数，表现就是「设置里显示 16px、远程那边还是 14px」。
+        const next: Partial<UiPrefsView> = { ...patch }
+        if (next.textSizePx !== undefined) {
+          // 先归一再派生：插件可能发 30 或 16.6，落盘的 px 与派生的倍率必须同源，
+          // 否则会出现「设置页显示 30px、正文按 22px 画」这种要等下次读档才对齐的偏差。
+          next.textSizePx = normalizeTextSizePx(next.textSizePx)
+          next.fontSize = fontScaleFromTextSizePx(next.textSizePx)
+        } else if (next.fontSize !== undefined) {
+          // 旧插件还在发倍率：顺手换算成 px 一起写，免得下一次读档把它的改动吃掉
+          // （读档以 textSizePx 为准，只发倍率的话下一次启动就退回原值）。
+          next.textSizePx = textSizePxFromLegacy(next.fontSize) ?? FONT_SIZE_PX_DEFAULT
+          next.fontSize = fontScaleFromTextSizePx(next.textSizePx)
+        }
+        ctx.settings.setPrefs({ ui: { ...current, ...next } })
         // 分组展开态与会话拖拽顺序是点一下/拖一下就写一次的高频静默写入，
         // 弹回执反而吵：这两类补丁直接返回，不进下面的文案链。
         // 面板几何同理（拖完松手一次），而且它只可能是壳发的——用户看不见任何回执才好。
@@ -711,6 +709,11 @@ export const runtimePlugin: Plugin.Object = {
                   ? '已保存工作区顺序'
                   : patch.themeMode !== undefined ||
                       patch.fontSize !== undefined ||
+                      // 字号（px 真源）与两套字体也属于外观：改完要给一句「已保存外观设置」，
+                      // 否则会掉到最后的「已保存工作区名字」，用户以为改错了地方。
+                      patch.textSizePx !== undefined ||
+                      patch.textFontFamily !== undefined ||
+                      patch.codeFontFamily !== undefined ||
                       patch.density !== undefined ||
                       patch.buttonScale !== undefined
                     ? '已保存外观设置'

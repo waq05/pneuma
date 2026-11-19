@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "file": "src/core/ui-events.ts",
+      "line": 444,
+      "reason": "宿主事件桥把线上来的方法名原样转给宿主：方法名来自协议消息，运行期才定，编译期无法收窄",
+      "owner": "内核"
+    },
+    {
+      "file": "src/packages/remote/index.ts",
+      "line": 338,
+      "reason": "远程插件把浏览端发来的方法名转发给宿主：方法名由远端传入，这一层只做转发",
+      "owner": "插件-remote"
+    },
+    {
+      "file": "src/packages/remote/tests/wiring.spec.ts",
+      "line": 292,
+      "reason": "测试桩透传：用例覆盖「宿主拒绝 / 覆盖实现」两条路，转发本身不带方法名",
+      "owner": "插件-remote"
+    },
+    {
+      "file": "src/packages/tool-search/index.ts",
+      "line": 361,
+      "reason": "工具代理按真名转发：方法名来自工具调用参数，安全钩子已在循环里先判过",
+      "owner": "插件"
+    },
+    {
+      "file": "src/packages/ui-boot/ui/cordis-host.ts",
+      "line": 174,
+      "reason": "cordis 宿主门面的 invoke 门面：与宿主 runtime 同签名，方法名由调用方决定",
+      "owner": "界面"
+    },
+    {
+      "file": "src/packages/ui-sessions/ui/ui.tsx",
+      "line": 303,
+      "reason": "会话页通用 run() 包装：统一处理 ok/error 回执，方法名与参数由调用点传入",
+      "owner": "界面"
+    },
+    {
+      "file": "src/packages/ui-settings/ui/models.tsx",
+      "line": 418,
+      "reason": "设置写入封装：模型配置页多个按钮共用一条 native.invoke 通道，op 由调用点传入",
+      "owner": "界面"
+    },
+    {
+      "file": "src/packages/ui-settings/ui/presets.tsx",
+      "line": 78,
+      "reason": "模式预设操作封装：保存/删除/设默认共用一个通道，方法名由调用点传入",
+      "owner": "界面"
+    },
+    {
+      "file": "desktop/electron/main/index.ts",
+      "line": 861,
+      "reason": "ipcMain.handle('dsc:invoke') 的转发：目标方法名来自渲染器，主进程只把白名单判断交给宿主",
+      "owner": "桌面"
+    },
+    {
+      "file": "remote-web/src/pages/ChatPage.tsx",
+      "line": 68,
+      "reason": "远程网页的卡片动作转发：方法名与参数由工单卡片传入，与桌面宿主同一条协议",
+      "owner": "远程界面"
+    }
+  ]
+}

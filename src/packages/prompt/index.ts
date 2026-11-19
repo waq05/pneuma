@@ -23,10 +23,10 @@ import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
-import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
+import { IMAGE_DIET_BATCH_MIN_IMAGES, pruneImagesBatch, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
 import { buildSystemPromptParts, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
 import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
-import { pruneToolResults } from './tool-result-prune.js'
+import { DEFAULT_TOOL_RESULT_PRUNE, pruneToolResultsBatch, TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
@@ -85,6 +85,51 @@ function readEnvRefreshMs(passed: unknown): number {
   const num = Number(raw.envRefreshMs)
   if (!Number.isFinite(num) || num < 0) return DEFAULT_ENV_FACTS_REFRESH_MS
   return Math.round(num)
+}
+
+/**
+ * 批量落点状态：key 列表 + 做决定时的消息条数；hash 用于「没变就不写」（照 env-facts 的 noteEnvFacts）。
+ *
+ * 为什么还要存 `length`（2026-11-18 复核补）：只认「该 hash 本轮只出现一次」的兜底，
+ * 无法区分「压缩把旧消息挪了位」与「压缩把旧消息整条删了、用户又贴回同一张图」。
+ * 后者若还拿旧决定认，就会把本轮最新、本该按预算保留的那张图误卸。记下做决定时的
+ * 消息条数后，投影一看到 `messages.length < length`（历史被压缩/回退变短）就把整个
+ * 粘性集合作废、按空集合重新攒批——压缩本身已经断过一次前缀，这里只多一次恢复。
+ */
+type StickyBatchState = { hash: string; length: number; keys: string[] }
+
+declare module '@pneuma/runtime/core/session.js' {
+  interface SessionStateMap {
+    /** 已经切过的工具结果 key（key 口径见 packages/prompt/tool-result-prune.ts 的文件头）。 */
+    'tool-result-prune-batch': StickyBatchState
+    /** 已经卸掉的图片位置 key（口径见 core/image-diet.ts 的文件头）。 */
+    'image-diet-batch': StickyBatchState
+  }
+}
+
+/**
+ * 把「已经切/卸过的 key 集合」落成会话状态：集合变了才追加一条，重放会话时最后一条生效。
+ *
+ * 为什么落会话状态而不是放进程内存（P2a 返工，2026-11-18）：投影结果必须能由
+ * 「日志原文 + 命名投影」复算——换个进程、拿同一份日志重放，输出要逐字节相同。
+ * 存的是排序后的 key 列表（位置 key 只增不减），hash 去重避免每轮往日志里写一条。
+ *
+ * 「可复算」的精确含义：复算的是**当前请求的最新一份**。审计更早的历史请求时，
+ * 拿到的状态是那之后各批的并集（只增不减），不是当时那一份；要逐帧复算得按日志
+ * 重放一遍请求序列。
+ *
+ * @param length 做决定时的消息条数；历史之后变短（压缩/回退）就据此作废旧集合。
+ */
+function noteStickyBatch(
+  owner: Session,
+  id: 'tool-result-prune-batch' | 'image-diet-batch',
+  keys: ReadonlySet<string>,
+  length: number,
+): void {
+  const list = [...keys].sort()
+  const hash = createHash('sha256').update(`${String(length)}\n${list.join('\n')}`).digest('hex').slice(0, 16)
+  if (owner.state(id)?.hash === hash) return
+  owner.appendState(id, { hash, length, keys: list })
 }
 
 export const promptPlugin: Plugin.Object = {
@@ -237,6 +282,25 @@ export const promptPlugin: Plugin.Object = {
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
+    /**
+     * 批量落点状态（P2a）：已切过的工具结果 key / 已卸掉的图片位置 key，都落成**会话状态**
+     * 而不是进程内 Map——换进程重放同一份日志时先读回来，投影输出才能逐字节复算
+     * （「日志原文 + 命名投影可复算」）。条目名见本文件顶部的 SessionStateMap 声明合并。
+     *
+     * 连 `length` 一起读回来交给批量函数：`messages.length` 比做决定时短 = 历史被压缩/
+     * 回退过，旧集合作废（见 tool-result-prune / image-diet 的 `decidedAtLength` 参数），
+     * 否则旧 hash 兜底会把压缩后重发的同一张图误卸。
+     */
+    const readSticky = (
+      owner: Session,
+      id: 'tool-result-prune-batch' | 'image-diet-batch',
+    ): { keys: ReadonlySet<string>; length: number | undefined } => {
+      const stored = owner.state(id)
+      const keys = new Set<string>()
+      if (Array.isArray(stored?.keys)) for (const key of stored.keys) if (typeof key === 'string' && key !== '') keys.add(key)
+      return { keys, length: typeof stored?.length === 'number' ? stored.length : undefined }
+    }
+
     // 内置投影：历史里超长的工具结果只留头尾（2026-10-30，对标 dsh 的
     // compaction-tool-result-pruner）。PTC 模式下 run_code 常把整份文件原文返回，
     // 那些字留在历史里每轮重发——实测一个会话里工具结果合计 43K token。
@@ -244,9 +308,29 @@ export const promptPlugin: Plugin.Object = {
     // 为什么是「确定性修剪」而不是每轮按当时情况重算：前缀缓存要求逐字节一致。
     // 同一条结果只要越过「最近 4 条」这道线，就永远切成同一段文本；前缀只在它第一次
     // 越线的那一轮失效一次，之后完全稳定。切掉的部分明说省了多少、原文去哪儿找。
+    //
+    // P2a（2026-11-18）批量化：逐条越线就切 = 每条一次前缀断点。改成按会话攒一批
+    // （「粘性已切集合」，key 见 tool-result-prune.ts 的文件头），新增候选合计可省
+    // 字符 ≥ TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS 才一起切；已切条目继续切。
+    // 集合落会话状态，每次推进后 hash 去重写回；重放时先读回来再算增量。
+    // loop.ts 的 invariant 会把这条链再跑一遍（checkRequestInvariant），同一份历史
+    // 第二次进来时候选已在集合里，输出与第一次逐字节相同。
     projections.set('tool-result-prune', {
       order: 560,
-      fn: (messages) => pruneToolResults(messages),
+      fn: (messages, session) => {
+        const owner = session ?? requestSession
+        const sticky = readSticky(owner, 'tool-result-prune-batch')
+        const batch = pruneToolResultsBatch(
+          messages,
+          DEFAULT_TOOL_RESULT_PRUNE,
+          sticky.keys,
+          TOOL_RESULT_PRUNE_BATCH_SAVED_CHARS,
+          sticky.length,
+        )
+        // 推进了要写回；历史变短（集合作废）也要写回，否则下一轮历史又变长就查不回来了。
+        if (batch.added.length > 0 || batch.reset) noteStickyBatch(owner, 'tool-result-prune-batch', batch.kept, messages.length)
+        return batch.messages
+      },
     })
     // 内置投影三：每轮按龄/按预算卸载图片（0.6.68 WS2，口径见 core/image-diet）。
     // 用户贴的图、工具结果里的图、电脑控制的历史截图在长会话里每轮重发，一张 JPEG 截图
@@ -258,12 +342,23 @@ export const promptPlugin: Plugin.Object = {
     // 排在 env-facts（600）**之前**：env-facts 会往末尾追加一条 user 环境快照，而本投影
     // 按「最近几个用户回合」决定哪些图还留着——若落在它之后，那条合成快照会白占一格，
     // keepRounds 的口径就比字面保守一格（更早的图被多卸一轮）。先卸图、再补快照，口径才对得上。
+    //
+    // P2a（2026-11-18）批量化：逐张越线就卸 = 每张一次前缀断点。改成按会话攒一批
+    // （「粘性已卸位置集合」，位置 key 见 core/image-diet 的文件头）：新增候选凑到
+    // IMAGE_DIET_BATCH_MIN_IMAGES 张才一次卸一批；已卸的位置继续卸。
+    // 集合落会话状态，每次推进后 hash 去重写回；重放时先读回来再算增量。
     projections.set('image-diet', {
       order: 550,
-      fn: (messages) => {
+      fn: (messages, session) => {
         // 现读配置：设置分区保存后下一轮就生效，不必重启宿主（照 readBudget 的做法）。
         const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))
-        return config.enabled ? pruneImages(messages, config) : messages
+        if (!config.enabled) return messages
+        const owner = session ?? requestSession
+        const sticky = readSticky(owner, 'image-diet-batch')
+        const batch = pruneImagesBatch(messages, config, sticky.keys, IMAGE_DIET_BATCH_MIN_IMAGES, sticky.length)
+        // 推进了要写回；历史变短（集合作废）也要写回，否则下一轮历史又变长就查不回来了。
+        if (batch.added.length > 0 || batch.reset) noteStickyBatch(owner, 'image-diet-batch', batch.kept, messages.length)
+        return batch.messages
       },
     })
     // 内置投影四（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让

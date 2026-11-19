@@ -72,8 +72,25 @@ export const name = 'superagent'
  */
 export const inject = ['llm', 'surfaces', 'settings', 'commands']
 
-/** `~/.dsc/plugins.json` 里本插件那一项的 `file` 名（与设置分区、patch 行 id 同一个字符串）。 */
+/** `plugins.json` 里本插件那一项的 `file` 名（与设置分区、patch 行 id 同一个字符串）。 */
 const CONFIG_KEY = 'superagent'
+
+/** 移植前那套插件配置读的键；本版一个都不读（新配置在设置分区里，见 `host/settings-section.ts`）。 */
+const LEGACY_PLUGIN_KEYS = ['repoPath', 'ticketTimeoutSeconds', 'confirmInferred', 'githubTokenEnv'] as const
+
+/**
+ * 挑出 `raw`（`resolvePluginConfig` 返回的那份插件配置）里命中的旧键名。
+ *
+ * 为什么要报而不静默忽略：用户从旧版升级后，`plugins.json` 就躺在那里，旧实现读它、新实现不读；
+ * 不提醒的话，改了仓库路径或超时却毫无反应，看上去像设置坏了。
+ *
+ * 只挑上面四个键，别的键（包括本版读的 `stateDir` 等）原样不算；非对象输入当没配。
+ * 纯函数、无副作用，导出是为了不启动运行期就能测。
+ */
+export function legacyPluginKeys(raw: unknown): string[] {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return []
+  return LEGACY_PLUGIN_KEYS.filter(key => Object.hasOwn(raw, key))
+}
 
 /** 快照失效桥的采样间隔：与旧入口的泵同一条节奏（旧 `index.ts:177` 的 `PUMP_INTERVAL_MS`）。 */
 const SURFACE_PULSE_MS = 2000
@@ -119,6 +136,12 @@ function machineOfPlugin(passed?: unknown): Machine {
  * @param passed - 装配时传进来的行配置（`plugins.json` 现读，见 `machineOfPlugin`）
  */
 export async function apply(ctx: Context, passed?: unknown): Promise<void> {
+  // 旧键只在 apply 里报一次：行为不变（缺省值照样跑），提醒用户去新设置页改。
+  const deprecated = legacyPluginKeys(resolvePluginConfig(CONFIG_KEY, passed))
+  if (deprecated.length) {
+    ctx.logger.warn('superagent: plugins.json still sets the deprecated keys %s; this version no longer reads them. '
+      + 'Configure Super Agent in Settings → Super Agent instead.', deprecated.join(', '))
+  }
   const machine = machineOfPlugin(passed)
   // 运行期重启：与上游同一条回调，设置里换账号 / 换 CLI 后由 Setup 推到下一个 macrotask 调它。
   const restart = (): void => {

@@ -20,7 +20,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
 import {
@@ -30,6 +30,7 @@ import {
   ensureBuiltinRoles,
   findRole,
   listRoles,
+  migrateBuiltinRoleMaxTurns,
   writeRole,
   type AgentRole,
   type TeammateApproval,
@@ -38,27 +39,71 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import { MiniAgent } from '@pneuma/session-core/loop.js'
 import { subagentEnvironmentText } from '@pneuma/session-core/prompt.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
 import { modeSpec } from '@pneuma/session-core/modes.js'
-import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/session.js'
+import {
+  isTeammateSessionFile,
+  REJECTED_TOOL_TEXT,
+  Session,
+  sessionsRoot,
+  slugCwd,
+} from '@pneuma/runtime/core/session.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { toolApprovalGuard, type ToolGuard, type ToolGuardChain, type ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import {
   BOARDS_DIR,
   boardCreate,
   boardUpdate,
+  boardViewOf,
   inboxAppend,
+  inboxRead,
   isReady,
   readBoard,
+  recordBoardActivity,
   resetBoard,
   REVIEW_FINDINGS_OPEN,
   TEAMMATE_REPORT_OPEN,
   type BoardAction,
+  type BoardUpdatePayload,
 } from '@pneuma/runtime/core/team-board.js'
-import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TeamBoardView, TranscriptEntry } from '@pneuma/runtime/contract.js'
-import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
+import type {
+  EffortLevel,
+  SettingsCheckGroup,
+  SettingsCheckOption,
+  SettingsField,
+  SettingsValue,
+  TeammateView,
+  TeamBoardView,
+  TranscriptEntry,
+} from '@pneuma/runtime/contract.js'
+import { contextInjectionPreview } from '@pneuma/runtime/contract.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import {
+  activityDigestLine,
+  BOARD_SNAPSHOT_KIND,
+  boardSnapshotText,
+  boardSnapshotWatermark,
+  BoardSnapshotWatermark,
+  countRounds,
+  taskDigestLine,
+  userTurnKey,
+} from './board-snapshot.js'
+import type {
+  ContextInjectionReporter,
+  ReviewService,
+  ReviewSpawnRequest,
+  ReviewSpawnResult,
+  SettingsSectionSpec,
+  TeamService,
+} from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+// 摘要行原本定义在本文件里，2026-11 挪进 board-snapshot.ts（与快照正文一起可单测）。
+// 从这里再导出：包级测试与既有调用方仍按 `@pneuma/subagent` 的入口取，不用改 import。
+export { activityDigestLine, taskDigestLine }
 
 /**
  * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
@@ -78,25 +123,87 @@ interface SubagentConfig {
   approval: TeammateApproval
   /** 后台队友干完：auto = 立刻把汇报接进 Lead 的下一轮；quiet = 只写进会话等用户下次说话。 */
   notify: 'auto' | 'quiet'
-  /** 新队友默认模型（`端点/模型`）；空 = 跟随当前模型。角色文件里的 model 优先。 */
+  /**
+   * 新队友的默认模型（`端点/模型`）；空 = 跟随当前模型。
+   *
+   * @deprecated 设置页已不再展示这一项，改成「允许 Agent 为子队友选择模型」+ 授权模型清单。
+   * 仍按旧配置读取，作为「spawn 显式 > 角色文件 model」之后、跟随会话之前的兜底，老安装
+   * 不会因为升级丢掉模型设置。
+   */
   defaultModel: string
+  /**
+   * 允许 Agent 派活时给新队友指定模型与思考强度。
+   *
+   * 关闭（默认）时 spawn 带 `model` 会被拒绝；开启后 `model` 只能从
+   * {@link SubagentConfig.allowedModels} 里挑——用户授权的清单是唯一入口。
+   */
+  allowModelSelection: boolean
+  /** 授权给 Agent 挑选的模型清单（`端点/模型`）；空数组 = 一个都没授权。 */
+  allowedModels: string[]
   /**
    * 轮次上限：0 = 不限，队友自己决定跑几轮。
    *
-   * 设了就与角色文件的 max-turns 取更严的那个（角色写 0 也当不限）。设限后最后一轮
+   * 设了就与角色自己的预算取更严的那个（角色文件显式 max-turns 优先，其次看
+   * {@link SubagentConfig.roleTurns}；角色写 0 也当不限）。设限后最后一轮
    * 留给汇报：先提醒它交结论，再把工具表收成空，逼它用正文收尾。
    */
   maxTurns: number
   /**
-   * 共享任务板：true = 注册 `team_task` 并注入板子提示段。
+   * 各角色自己的默认轮次预算：`角色名 → 轮数`，0 = 不限。
    *
-   * 关掉只是模型看不到这块板；名册、派活、汇报都不受影响——留着「只想要一块共享
+   * 角色文件里没写 `max-turns` 时用它；设置页「默认最大轮次」按角色改的就是这一份。
+   * 出厂值见 {@link DEFAULT_ROLE_TURNS}。
+   */
+  roleTurns: Record<string, number>
+  /**
+   * 共享任务板：true = 注册 `team_task` / `team_message` 并注入板子提示段。
+   *
+   * 关掉只是模型看不到这两块；名册、派活、汇报都不受影响——留着「只想要一块共享
    * 待办」的用法。板子按会话各一块，数据在 `~/.dsc/team/boards/<会话 id>.json`。
    */
   board: boolean
+  /**
+   * 团队模式：允许二层派活（PM 可以再派人），并推荐 pm/architect/developer/tester/ops 角色。
+   *
+   * 实现口径：打开时把 `maxDepth` 抬到至少 2（`maxDepth` 的语义不变，仍是「允许几层」）；
+   * 关闭只改这一项、不回退 `maxDepth`，避免替用户猜他想不想保留二层能力。
+   */
+  teamMode: boolean
 }
 
 const CONFIG_KEY = 'subagent'
+
+/**
+ * 内置角色的出厂轮次预算（设置页「默认最大轮次」的默认值；0 = 不限）。
+ *
+ * 为什么默认值不写在角色文件的 `max-turns` 里：文件里的值属于「显式声明」，会一直压过
+ * 设置页；默认值放这里，用户改设置页才真的生效。旧安装里钉着旧默认值的角色文件由
+ * `migrateBuiltinRoleMaxTurns` 迁移。
+ */
+export const DEFAULT_ROLE_TURNS: Readonly<Record<string, number>> = {
+  pm: 48,
+  architect: 32,
+  developer: 128,
+  tester: 64,
+  ops: 32,
+  critic: 16,
+  reviewer: 64,
+  writer: 128,
+  explorer: 0,
+}
+
+/** 设置页「默认最大轮次」列出的角色：先列团队职能角色，再列通用角色，不限的垫底。 */
+const TURN_ROLES: readonly string[] = [
+  'pm',
+  'architect',
+  'developer',
+  'tester',
+  'ops',
+  'critic',
+  'reviewer',
+  'writer',
+  'explorer',
+]
 
 const DEFAULTS: SubagentConfig = {
   allowDelegation: true,
@@ -105,8 +212,12 @@ const DEFAULTS: SubagentConfig = {
   approval: 'forbid',
   notify: 'auto',
   defaultModel: '',
+  allowModelSelection: false,
+  allowedModels: [],
   maxTurns: 0,
+  roleTurns: { ...DEFAULT_ROLE_TURNS },
   board: true,
+  teamMode: false,
 }
 
 const APPROVAL_RANK: Record<TeammateApproval, number> = { forbid: 0, foreground: 1, ask: 2 }
@@ -122,6 +233,172 @@ function effectiveMaxTurns(roleTurns: number, pluginTurns: number): number {
   if (roleTurns <= 0) return Math.max(pluginTurns, 0)
   if (pluginTurns <= 0) return roleTurns
   return Math.min(roleTurns, pluginTurns)
+}
+
+/**
+ * 一个角色此刻的轮次预算，三档优先级：
+ *   1. 角色文件里**显式**写了 `max-turns`（写 0 也算显式，表示不限）→ 用文件里的；
+ *   2. 没写 → 用设置页「默认最大轮次」里这个角色的值（{@link SubagentConfig.roleTurns}）；
+ *   3. 全局 {@link SubagentConfig.maxTurns} 大于 0 时，再取更严的那个。
+ *
+ * 名册提示与队友冻结的工牌都走这一个函数，保证「展示的轮次」就是「实际给的轮次」。
+ * @param role - 角色（只用到名字、max-turns 与是否显式声明）
+ * @param roleTurns - 设置页按角色配的轮次表
+ * @param globalTurns - 全局轮次上限（0 = 不设限）
+ * @returns 0 = 这个角色不额外设限
+ */
+export function resolveMaxTurns(
+  role: Pick<AgentRole, 'name' | 'maxTurns' | 'maxTurnsDeclared'>,
+  roleTurns: Readonly<Record<string, number>>,
+  globalTurns: number,
+): number {
+  const budget = role.maxTurnsDeclared ? role.maxTurns : (roleTurns[role.name] ?? 0)
+  return effectiveMaxTurns(budget, globalTurns)
+}
+
+/**
+ * 读配置里的 `roleTurns`：出厂默认打底，只认数字（夹进 0..200），坏值退回该角色的默认值。
+ * 配置里没有的角色（包括用户自建角色）不写进表，解析时按 0（不限）处理。
+ */
+function readRoleTurns(raw: unknown): Record<string, number> {
+  const source = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const out: Record<string, number> = { ...DEFAULT_ROLE_TURNS }
+  for (const [name, value] of Object.entries(source)) {
+    if (name === '') continue
+    out[name] = clamp(value, 0, 200, DEFAULT_ROLE_TURNS[name] ?? 0)
+  }
+  return out
+}
+
+/** 思考强度档位（与角色文件 frontmatter、主会话 /model 的档位同一套）。 */
+const EFFORT_LEVELS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
+
+/**
+ * 读配置里的 `allowedModels`：只收非空字符串、去重、保持原顺序。
+ *
+ * 这里不拿 `ctx.llm.listModels()` 过滤：模型清单跟着端点配置变，用户临时删掉一个端点
+ * 不该把他勾过的授权静默清空；真到派活时那个模型解析不出来，会被校验拦下。
+ */
+export function readAllowedModels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const value = item.trim()
+    if (value !== '' && !out.includes(value)) out.push(value)
+  }
+  return out
+}
+
+/**
+ * 队友用哪个模型：spawn 显式指定 > 角色文件 model > 旧配置 defaultModel > 跟随当前会话。
+ * @param spawnModel - spawn 参数里归一好的 `端点/模型`；null = 没指定
+ * @param role - 角色（读它的 model）
+ * @param fallbackModel - 旧配置 defaultModel；空串 = 没配
+ * @returns null = 跟随当前会话的模型
+ */
+export function resolveTeammateModel(
+  spawnModel: string | null,
+  role: Pick<AgentRole, 'model'>,
+  fallbackModel: string,
+): string | null {
+  if (spawnModel !== null) return spawnModel
+  if (role.model !== null) return role.model
+  return fallbackModel === '' ? null : fallbackModel
+}
+
+/**
+ * 队友用哪个思考强度：spawn 显式指定 > 角色文件 effort > 跟随模型默认。
+ * @returns null = 不覆盖，按模型默认档位
+ */
+export function resolveTeammateEffort(
+  spawnEffort: EffortLevel | null,
+  role: Pick<AgentRole, 'effort'>,
+): EffortLevel | null {
+  return spawnEffort ?? role.effort
+}
+
+/**
+ * 队友系统提示里的「模型 / 思考强度」事实句。
+ *
+ * 只写它自己冻结的那一份与「仅影响新队友」的语义，**不列授权清单**：清单是派活方做
+ * 合法选择要用的信息（写在名册提示里），对已经开工的队友来说既用不上，也不该被它拿去
+ * 推断用户还有哪些模型没授权。
+ * @param model - 冻结的模型（`端点/模型`，或跟随会话时的模型名）
+ * @param effort - 冻结的思考强度；null = 跟随默认
+ * @param selectionAllowed - 本会话是否放开了「允许 Agent 为子队友选择模型」
+ */
+export function teammateModelNote(model: string, effort: EffortLevel | null, selectionAllowed: boolean): string {
+  const frozen = effort === null ? '，思考强度跟随默认' : `，思考强度 ${effort}`
+  const future = selectionAllowed
+    ? '如果你还能往下派（层级允许），派新队友时可以用 model / effort 指定模型与思考强度，但只能从用户授权的模型清单里挑——不在清单里会被直接拒绝，别反复试。'
+    : '这个会话里派活的人不能指定模型。'
+  return `模型：你开工时冻结为「${model}」${frozen}。这是派你的人在你开工那一刻定的：中途改角色文件或设置只影响之后新建的队友，改不了你这一份。${future}`
+}
+
+/** spawn 的 model / effort 校验结果：通过时给出要冻结进工牌的覆盖值。 */
+export type SpawnOverrides =
+  | { ok: true; model: string | null; effort: EffortLevel | null }
+  | { ok: false; reason: string }
+
+/**
+ * 校验并归一 spawn 的 `model` / `effort`。
+ *
+ * 规则（与设置页的开关、授权清单同一条口径）：
+ *   - `model` 在开关关闭时一律拒绝（明确告诉模型去设置里打开）；
+ *   - 开关打开时，用 `parseModelRef` 归一成 `端点/模型`，必须落在授权清单里；
+ *     清单为空 = 一个都没授权，同样拒绝并提示去勾选；
+ *   - `effort` 只认 {@link EFFORT_LEVELS} 里的值，与开关无关（它不涉及选端点/模型）。
+ *
+ * @param rawModel - spawn 参数 `model` 原值
+ * @param rawEffort - spawn 参数 `effort` 原值
+ * @param selection - 开关与授权清单
+ * @param parseModelRef - 归一模型引用（`ctx.llm.parseModelRef`）
+ */
+export function resolveSpawnOverrides(
+  rawModel: unknown,
+  rawEffort: unknown,
+  selection: { allow: boolean; allowed: readonly string[] },
+  parseModelRef: (ref: string) => { provider: string; model: string },
+): SpawnOverrides {
+  let model: string | null = null
+  const modelText = typeof rawModel === 'string' ? rawModel.trim() : ''
+  if (modelText !== '') {
+    if (!selection.allow) {
+      return {
+        ok: false,
+        reason:
+          '不能指定模型：用户还没打开「允许 Agent 为子队友选择模型」' +
+          '（设置 → 子智能体 → 队友模型）。不带 model 再派一次，它会跟随角色文件或当前会话的模型。',
+      }
+    }
+    const parsed = parseModelRef(modelText)
+    // 归一成清单里的形状：`端点/模型`（parseModelRef 对裸模型名会补上当前会话的端点）
+    const value = parsed.model === '' ? parsed.provider : `${parsed.provider}/${parsed.model}`
+    if (!selection.allowed.includes(value)) {
+      const allowed = selection.allowed.join('、')
+      return {
+        ok: false,
+        reason:
+          `模型「${value}」不在用户授权的清单里。` +
+          (allowed === '' ? '现在一个都没授权：去设置 → 子智能体 → 队友模型 里勾选。' : `可选的：${allowed}`),
+      }
+    }
+    model = value
+  }
+
+  let effort: EffortLevel | null = null
+  const effortText = typeof rawEffort === 'string' ? rawEffort.trim() : ''
+  if (effortText !== '') {
+    if (!EFFORT_LEVELS.includes(effortText as EffortLevel)) {
+      return {
+        ok: false,
+        reason: `不认识的 effort「${effortText}」。要用的值：${EFFORT_LEVELS.join(' / ')}`,
+      }
+    }
+    effort = effortText as EffortLevel
+  }
+  return { ok: true, model, effort }
 }
 
 /** 主会话这一方在任务板上的名字。 */
@@ -144,7 +421,17 @@ type TeammateMode = 'continuable' | 'one-shot'
 interface Teammate {
   name: string
   role: string
+  /**
+   * 角色的说明书原文（派活时从角色文件读来的那一份）。
+   *
+   * 为什么要带在身上：名册要冻一份（{@link RosterRecord.prompt}），收工的队友被用户点开时
+   * 才能按原样复活（{@link reviveTeammate}）——只记角色名的话，角色文件改过或删掉之后
+   * 复活出来的队友就不是原来那个了。
+   */
+  prompt: string
   task: string
+  /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；undefined = 没绑定。 */
+  taskId?: string
   /** 冻结的工牌。 */
   badge: {
     tools: string[] | null
@@ -230,7 +517,88 @@ interface Caller {
  * 2026-11-08 报障：explorer 队友回「本次会话给我的可用工具只有 read、glob、grep」，
  * 领不到任务——根因就在 `toolsFor` 拿白名单把 team_task 一起筛掉了。
  */
-export const COLLAB_TOOL_NAMES: readonly string[] = ['team_task']
+export const COLLAB_TOOL_NAMES: readonly string[] = ['team_task', 'team_message']
+
+/**
+ * 每个队友每轮最多发几条 `team_message`。
+ *
+ * 为什么要有：队友互发消息后彼此会被叫醒，两个队友完全可以「你一句我一句」把轮次预算
+ * 烧光。额度按「轮次」清零（`emit` 里 rounds +1 就是一轮），超了让它们改用任务板 note。
+ */
+const TEAM_MESSAGES_PER_ROUND = 3
+
+/** 一条 team_message 的正文长度上限（与信箱单条上限一致）。 */
+const MAX_TEAM_MESSAGE_CHARS = 8000
+
+/**
+ * 系统提示里 `team` 段的固定正文：只讲「板子是什么 + 五条规矩」，**不放任何看板数据**。
+ *
+ * 2026-11 用户报障：这段原先由 `boardPromptText()` 每轮现拼（板上任务、队友状态、最近
+ * 活动都在里面），于是系统提示 hash 每轮都变——转录里连着三张「系统提示」卡，服务端
+ * 前缀缓存（`core/llm.ts:777` 的头部断点）每轮失效、实测命中率掉到约 50%。现在这段是
+ * 逐字常量；看板数据改由投影 `team-board` 在看板变化后附到消息尾部（见
+ * `board-snapshot.ts` 的文件头）。
+ *
+ * 改这段文字没关系（一次 hash 变化 = 一次缓存落空，随后又稳定）；**别把看板数据、
+ * 队友名单、时间戳加回来**——那正是这次修的 bug。
+ *
+ * 在队队友的名单与状态同理（开工/收工/状态切换都会变），所以也不写进来；{@link teamBoardGuide}
+ * 按「本会话开没开派活」补一句指向 `subagent list` 的提示。
+ */
+export const TEAM_BOARD_GUIDE = `# 共享任务板
+本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项、写进展、标阻塞；队友和你看到的是同一块板。
+
+看板数据不进这段提示：它每轮都在变，写在这里会让整份系统提示（进而整个请求前缀）每轮失效、缓存全部作废。最新看板由程序在看板变化后附到消息末尾（以「# 共享任务板快照」开头）；想看最新任务、负责人、进展与活动，随时用 team_task list / get / activity 查。
+
+任务板的规矩：
+1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径）与依赖，别人 claim 时才抢不过你；改状态要带 expected_revision。
+2. 认领前先 list / activity：依赖没完成的任务开不了工；完成一条，等它的人就能开工。
+3. 派活时优先用 subagent 的 task_id 把队友绑定到它负责的任务：认领会一起做掉，队友成功收工自动结项。
+4. 队友之间可以直接用 team_message 交流（点对点或广播），不必都经你转述；重要结论以任务板 note 为准。
+5. 进展用 note 写、卡住用 block 标，别只写在汇报里——汇报只给你看，板子是全队看的。`
+
+/**
+ * 系统提示 `team` 段的完整正文：{@link TEAM_BOARD_GUIDE} +（开了派活时）一句队友通道提示。
+ *
+ * 为什么单独一个函数而不是直接常量：队友名单/状态只有开了派活（`allowDelegation`）才有意义，
+ * 而 `subagent list` 这个工具也跟着那个开关走。开关值只在用户改设置时变，不是每轮变，
+ * 所以这一段仍然满足「同一会话内逐字稳定」。
+ *
+ * @param delegationEnabled - 本会话是否开了派活（`config.allowDelegation`）
+ */
+export function teamBoardGuide(delegationEnabled: boolean): string {
+  if (!delegationEnabled) return TEAM_BOARD_GUIDE
+  return `${TEAM_BOARD_GUIDE}
+
+在队队友与它们的绑定任务同样不进提示（名单与状态随开工/收工变）：要看谁在干什么，用 subagent list。`
+}
+
+/**
+ * 队友系统提示里「团队协作」段的固定正文（2026-11 改成只放规矩）。
+ *
+ * 为什么不放队伍与看板数据：那是**每轮都会变**的内容，写进队友的系统提示会让它每次
+ * 请求的提示 hash 都变、缓存每轮作废（Lead 侧同类症状见 {@link TEAM_BOARD_GUIDE} 的注释）。
+ * 队友的 MiniAgent 没有投影链，易变段挪不到请求尾部，所以改成「动手前用工具查最新」。
+ *
+ * @param boardEnabled - 本会话是否开了任务板（`config.board`）；只在用户改设置时变，不是每轮变
+ */
+export function teammateCollabGuide(boardEnabled: boolean): string {
+  if (!boardEnabled) {
+    return `# 团队协作
+队伍与任务板数据不进这段提示（它们每轮都会变，写进来会让请求前缀每轮失效）。本会话任务板未开启：需要找人时用可用的消息工具，重要结论写进你的最终回复。`
+  }
+  return `# 团队协作
+队伍名单、任务、进展与最近活动都不写进这段提示：它们每轮都在变，写在这里会让整份系统提示（进而请求前缀）每轮失效、白烧缓存。要看最新情况，动手前自己查：
+- team_task list：板上任务、状态、负责人、绑定与最新进展；team_task action=activity 看最近动态。
+- team_message action=inbox：发给你的消息（含发件人名字）；要找人用 send / broadcast。
+
+协作规则：
+1. 动手前先 team_task list 与 action=activity，看板上已有什么、别人做到哪一步，别重复别人正在做的事。
+2. 进展写进任务：team_task action=note（做了什么、验证结果、下一步）；卡住用 action=block 写原因，解除用 unblock。
+3. 要问人、要协调用 team_message：send 点对点（队友名或 lead）、broadcast 广播；同一轮最多发 ${String(TEAM_MESSAGES_PER_ROUND)} 条。
+4. 写作用域和别人的任务重叠时先 team_message 协商，不要同时改同一批文件。
+5. 你绑定的任务在成功收工时会自动结项并写入你的最终结论；有遗留问题就写进结论里。`
+}
 
 /** 记录在案的一个队友（`~/.dsc/team/roster.json`，重启后侧栏仍能看到收工的队友）。 */
 interface RosterRecord {
@@ -255,16 +623,36 @@ interface RosterRecord {
    * 「它是从哪个会话派出去的」。老记录没有这一项，读档时按 undefined 处理。
    */
   sessionId?: string
+  /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；老记录没有这一项。 */
+  taskId?: string
+  /**
+   * 收工时累计消耗的 token（输入+输出，端点真值）。状态面板的队友行照它画「58.1M tok」，
+   * 与内联卡同一口径（{@link Teammate.tokens}）。老记录没有这一项，读档时按 undefined
+   * 处理——界面不画，也不显示一个假的 0。
+   */
+  tokens?: number
+  /**
+   * 冻结的工牌（2026-11-19）：收工的队友被用户点开时要按它原样复活。
+   *
+   * 为什么记在这里而不是每次去读角色文件：工牌的语义就是「派活这一刻定死，此后改角色
+   * 文件不影响它」；只记角色名的名册在角色文件被改过之后，复活出来的队友会拿着另一份
+   * 工具表与审批档，与它当年跑的那条对话对不上。老记录没有这一项，读档时退回现读角色。
+   */
+  badge?: Teammate['badge']
+  /** 角色说明书原文的冻结副本；理由同 {@link badge}。 */
+  prompt?: string
 }
 
 /** 名字合法字符，跟角色名同一套。 */
 const NAME_OK = /^[a-z0-9][a-z0-9-]{0,31}$/
 
-/** 工作目录名 → 可当目录名的短名（队友日志按它分堆）。 */
-function cwdSlug(cwd: string): string {
-  const cleaned = cwd.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')
-  return cleaned.slice(-40) === '' ? 'cwd' : cleaned.slice(-40)
-}
+/**
+ * 名册里冻结的角色说明书最多存多少字（2026-11-19）。
+ *
+ * 目的是「收工的队友还能按原样复活」，不是存一份角色库：角色文件正常只有一两 KB，
+ * 截到 16K 是给写歪了的大文件兜底——名册最多 200 条，不封顶就会撑成几十兆的 json。
+ */
+const PROMPT_FREEZE_MAX = 16_000
 
 /**
  * 把父会话切到「上一个完整回合」为止的记录行（不含 meta）。
@@ -302,6 +690,10 @@ export const subagentPlugin: Plugin.Object = {
   inject: ['session', 'tools', 'llm', 'approval', 'guards', 'transcript', 'prompt', 'settings', 'agent'],
   apply(ctx, passed) {
     ensureBuiltinRoles()
+    // 旧安装的角色文件里钉着旧出厂轮次（critic 4 / reviewer 16 / writer 20）：删掉这几行，
+    // 让设置页的按角色默认值生效。只补缺、不覆盖的 ensureBuiltinRoles 管不到这一步。
+    // 幂等，且函数内部吞掉所有异常——迁移失败最多沿用旧轮次，不能影响启动。
+    migrateBuiltinRoleMaxTurns()
 
     // ── 配置 ────────────────────────────────────────────────────────────────
     const readConfig = (): SubagentConfig => {
@@ -316,14 +708,38 @@ export const subagentPlugin: Plugin.Object = {
         approval,
         notify: raw.notify === 'quiet' ? 'quiet' : 'auto',
         defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : '',
+        allowModelSelection: raw.allowModelSelection === true || raw.allowModelSelection === 'true',
+        allowedModels: readAllowedModels(raw.allowedModels),
         maxTurns: clamp(raw.maxTurns, 0, 200, DEFAULTS.maxTurns),
+        roleTurns: readRoleTurns(raw.roleTurns),
         board: raw.board !== false && raw.board !== 'false',
+        teamMode: raw.teamMode === true || raw.teamMode === 'true',
       }
     }
     let config = readConfig()
     const applyConfig = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
       config = readConfig()
+    }
+
+    /** 角色此刻的轮次预算：名册提示与开工冻结的工牌共用这一个（见 {@link resolveMaxTurns}）。 */
+    const roleMaxTurns = (role: AgentRole): number => resolveMaxTurns(role, config.roleTurns, config.maxTurns)
+
+    /**
+     * 派活方（Lead 或还能往下派的队友）看到的模型授权说明。
+     *
+     * 授权清单本身就是它做合法 spawn 调用要用的信息，所以这里完整列出；开关关闭时明确说
+     * 不能指定，免得模型反复试错。清单外的端点/模型细节（还有哪些模型没授权）不提。
+     */
+    const modelRuleText = (): string => {
+      if (!config.allowModelSelection) {
+        return '模型：派活时不能指定模型或思考强度；队友用角色文件里的 model / effort，没写就跟随当前会话。'
+      }
+      const list =
+        config.allowedModels.length === 0
+          ? '（还没有授权任何模型，先去设置 → 子智能体 → 队友模型 里勾选）'
+          : config.allowedModels.join('、')
+      return `模型：spawn 时可以用 model 指定模型、用 effort 指定思考强度（${EFFORT_LEVELS.join('/')}）。模型只能从用户授权的清单里挑：${list}。只影响之后新建的队友，正在跑的改不了。`
     }
 
     // ── 名册持久化 ──────────────────────────────────────────────────────────
@@ -365,6 +781,19 @@ export const subagentPlugin: Plugin.Object = {
       rosterStamp = stamp
       return rosterCache
     }
+    /**
+     * 任务板或名册变了：让界面立刻重建快照。
+     *
+     * 为什么要有：面板快照原先只跟着 5 秒轮询走，队友收工、任务完成最多要晚 5 秒才看见。
+     * 写动作落点统一调这一个（写名册、写任务板），只读动作（list/get/activity/inbox 读）
+     * 一个都不调——查询一次就白推一帧，等于把轮询换成忙推。
+     *
+     * 允许同一拍多发：每次 `dsc/changed` 只是让宿主重算一次快照，比漏掉「完成任务」那一拍
+     * 便宜得多，所以这里不做节流。
+     */
+    const touchUi = (): void => {
+      ctx.emit('dsc/changed')
+    }
     const writeRoster = (records: RosterRecord[]): void => {
       try {
         mkdirSync(join(ctx.settings.about().home, 'team'), { recursive: true })
@@ -375,6 +804,10 @@ export const subagentPlugin: Plugin.Object = {
       // 写失败也照此记缓存：下次读 mtime 对不上会强制回读
       rosterCache = [...records]
       rosterStamp = rosterMtime()
+      // 名册是界面快照的数据源之一（队友行、收工时间）：写完必须让宿主重算。
+      // 写文件失败时进程内的 list() 也已经看得到这份 records，同样要推，否则界面与
+      // 内存里的视图会分叉到下一次别的插件碰巧发事件。
+      touchUi()
     }
     const remember = (teammate: Teammate): void => {
       const record: RosterRecord = {
@@ -388,9 +821,18 @@ export const subagentPlugin: Plugin.Object = {
         depth: teammate.depth,
         rounds: teammate.rounds,
         startedAt: teammate.startedAt,
+        // 累计 token 落进名册：收工后进程里可能已经没有这个队友了（一次性/移出），
+        // 面板的队友行只能从这份记录读。老名册缺这一项 → 读出来是 undefined。
+        tokens: teammate.tokens,
         mode: teammate.mode,
         // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
         sessionId: teammate.parentSession.meta.id,
+        ...(teammate.taskId === undefined ? {} : { taskId: teammate.taskId }),
+        // 冻结工牌与角色说明书：收工的队友被点开时要按原样复活（见 reviveTeammate）
+        badge: { ...teammate.badge },
+        // 说明书可能很长（几 KB）：16K 封顶，免得 200 条名册撑成几十兆的 json。真被截断的
+        // 那种复活出来会少尾巴——角色文件本来就不该写这么长，这里只兜底不让名册爆掉
+        prompt: teammate.prompt.slice(0, PROMPT_FREEZE_MAX),
         ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
       }
       const rest = readRoster().filter((entry) => entry.name !== teammate.name)
@@ -410,7 +852,37 @@ export const subagentPlugin: Plugin.Object = {
         ? Promise.resolve()
         : new Promise<void>((resolve) => teammate.waiters.push(resolve))
 
+    /**
+     * 绑定任务在队友**成功收工**时自动结项。
+     *
+     * 只认「任务仍是 in_progress 且负责人就是它」：中途被重新指派、被别人改过、或队友是
+     * 被打断/失败收工的，都留给 Lead 在板上处理。CAS 失败只吞掉——板子被并发改过时，
+     * 不能因为自动结项把队友的收工流程打断。
+     */
+    const finishBoundTask = (teammate: Teammate): void => {
+      if (teammate.taskId === undefined || teammate.state !== 'idle') return
+      const sessionId = teammate.parentSession.meta.id
+      try {
+        const board = readBoard(sessionId)
+        const task = board.tasks.find((entry) => entry.id === teammate.taskId)
+        if (task === undefined || task.status !== 'in_progress' || task.owner !== teammate.name) return
+        const summary =
+          teammate.lastText.trim() === ''
+            ? '（队友没有留下文字结论，按收工自动结项）'
+            : teammate.lastText.trim().slice(0, 800)
+        boardUpdate(sessionId, task.id, board.revision, 'complete', { by: teammate.name, text: summary })
+        // 队友收工时自动结项也是写板：面板「共享任务」区要立刻看到 completed，
+        // 不能等 5 秒轮询（这条路径不经 runTeamTask，得单独推一帧）。
+        touchUi()
+      } catch {
+        // 板子被并发改过 / 写不进去：不阻断收工，Lead 还能在板上手动 complete
+      }
+    }
+
     const settle = (teammate: Teammate, reason: 'completed' | 'aborted' | 'error', error?: string): void => {
+      // 已经不在队里（被移除、或被挤出名单）：这一拍是上一轮迟到的收尾，不能再往名册写回一行
+      // （2026-11-19 探针抓到：移除之后紧接着的 turn/end 会把刚删掉的那位重新写进 roster.json）
+      if (teammates.get(teammate.name) !== teammate) return
       // 预算最后一轮还欠着（提醒已排队、那一轮还没跑）：这一拍是自然收口，不算收工
       if (teammate.finalRoundPending === true && reason === 'completed' && teammate.rounds < teammate.badge.maxTurns) return
       teammate.finalRoundPending = false
@@ -428,6 +900,8 @@ export const subagentPlugin: Plugin.Object = {
         teammate.error = error
       }
       remember(teammate)
+      // 绑定任务自动结项：成功收工时把终稿摘要写进任务 note，Lead 不用再猜它做完没有
+      finishBoundTask(teammate)
       // T21：队友状态进了快照的跨会话状态面，动一下要跟着失效
       ctx.transcript.touch()
       const waiters = teammate.waiters.splice(0)
@@ -445,7 +919,11 @@ export const subagentPlugin: Plugin.Object = {
       // 一次性的（spawn 时 keep=false）干完就出队：名册里那条记录留着供查看，但不再
       // 占内存、也不再接传话。对照 dsh 的 one-shot：子代理一结束就从 resident 表删掉，
       // 父会话只剩 catalog 里一行；能续接的那种恰恰相反，收工后还能 send_message 叫醒。
-      if (teammate.mode === 'one-shot') teammates.delete(teammate.name)
+      if (teammate.mode === 'one-shot') {
+        teammates.delete(teammate.name)
+        // 它不再接话了：注销「外部驱动」的登记，之后打开它的会话就只为看记录。
+        ctx.agent.detach(teammate.session.meta.id)
+      }
     }
 
     /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（本包注册的
@@ -469,7 +947,8 @@ export const subagentPlugin: Plugin.Object = {
           // 嵌套派活：子队友的父会话是这个队友自己的会话，不是用户正看着的那条。
           return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => runSubagent(args, runCtx, self(), teammate.session) }
         }
-        if (entry.name === 'team_task') {
+        if (entry.name === 'team_task' || entry.name === 'team_message') {
+          // 协作工具：署自己的名字、归属派它的那个会话（板子/消息都不落「当前查看的会话」）
           return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => entry.run(args, { ...runCtx, caller: self() }) }
         }
         return entry
@@ -666,58 +1145,67 @@ export const subagentPlugin: Plugin.Object = {
     }
     ctx.effect(() => ctx.guards.register(teammateApprovalGuard), 'subagent: guards.register (teammate-approval)')
 
-    function startTeammate(input: {
-      name: string
-      role: AgentRole
-      task: string
-      caller: Caller
-      background: boolean
-      seed: string[] | null
-      parentSession: Session
-      /** 不填 = 寻常队友（收工后还能传话接着干）。 */
-      mode?: TeammateMode
-    }): Teammate {
-      const cwd = input.parentSession.meta.cwd
-      const file = join(teammateRoot(), cwdSlug(cwd), `${randomUUID()}.jsonl`)
-      mkdirSync(join(teammateRoot(), cwdSlug(cwd)), { recursive: true })
-      const id = randomUUID()
-      let session: Session
-      if (input.seed === null) {
-        session = Session.create(cwd, file)
-      } else {
-        const meta = JSON.stringify({ type: 'meta', id, cwd, createdAt: Date.now() })
-        writeFileSync(file, [meta, ...input.seed].join('\n') + '\n', 'utf8')
-        session = Session.load(file, true)
-      }
+    /**
+     * 队友系统提示里的「团队协作」段：**只放规矩，不放队伍/看板数据**（2026-11 改）。
+     *
+     * 原先这里每轮现读磁盘与内存，把「当前队伍 + 任务板摘要」拼进队友的系统提示。它是队友
+     * 会话的缓存杀手：队友每发一次请求，系统提示 hash 就变一次，转录里反复出「系统提示」卡、
+     * 服务端前缀缓存每轮作废。队友的 MiniAgent 没有投影链，没法像 Lead 那样把易变段挪到请求
+     * 尾部，所以这里选择「移出」：数据一律现查工具。
+     *
+     * 信息没有丢：`team_task list` / `action=activity` 看板子，`team_message action=inbox`
+     * 看消息。规矩第一条本来就要求「动手前先 list」，现在从「提示里塞一份可能过期的快照」
+     * 变成「开工前查一份最新的」。
+     */
+    const teamCollabText = (): string => teammateCollabGuide(config.board)
 
-      const model = input.role.model ?? (config.defaultModel === '' ? null : config.defaultModel)
-      const effort = input.role.effort
+    /**
+     * 造一个队友：会话在手，其余（工牌、循环、登记、名册）都在这儿接上。
+     *
+     * 派活（{@link startTeammate}）与复活（{@link reviveTeammate}）共走这一条：两边只差
+     * 「会话是新开还是从盘上读回」以及要不要把任务送进信箱，其余一个字都不该分叉——
+     * 分叉就会让复活的队友少挂一条守卫、少记一本账。
+     */
+    function makeTeammate(input: {
+      name: string
+      role: string
+      prompt: string
+      task: string
+      badge: Teammate['badge']
+      /** spawn 带 `task_id` 时绑定的任务板任务 id（复活时从名册原样带回来）。 */
+      taskId?: string
+      session: Session
+      parentSession: Session
+      parent: string
+      depth: number
+      mode: TeammateMode
+      background: boolean
+      startedAt: number
+      rounds: number
+      state: TeammateState
+      /** 派活那一刻要把任务送进它自己的信箱；复活不送（接着上一段对话往下走）。 */
+      announce: boolean
+    }): Teammate {
       const teammate: Teammate = {
         name: input.name,
-        role: input.role.name,
+        role: input.role,
+        prompt: input.prompt,
         task: input.task,
-        // 工牌在此刻冻结：此后改角色文件不影响它
-        badge: {
-          tools: input.role.tools,
-          // 角色文件与插件设置都设了上限时取更严的；两边都 0 才是真的不设限
-          maxTurns: effectiveMaxTurns(input.role.maxTurns, config.maxTurns),
-          approval: input.role.approval,
-          model,
-          effort,
-        },
-        session,
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+        badge: input.badge,
+        session: input.session,
         parentSession: input.parentSession,
         // 归谁管：派活时算一次并固化，父队友后来出队也不影响（见 ownerOfSession）
         ownerSession: ownerOfSession(input.parentSession),
-        state: 'working',
-        rounds: 0,
+        state: input.state,
+        rounds: input.rounds,
         toolCalls: 0,
-        lastReportedRound: 0,
-        depth: input.caller.depth + 1,
-        parent: input.caller.name,
-        mode: input.mode ?? 'continuable',
+        lastReportedRound: input.rounds,
+        depth: input.depth,
+        parent: input.parent,
+        mode: input.mode,
         background: input.background,
-        startedAt: Date.now(),
+        startedAt: input.startedAt,
         lastText: '',
         waiters: [],
         outputLines: [],
@@ -730,17 +1218,29 @@ export const subagentPlugin: Plugin.Object = {
       teammate.agent = new MiniAgent(
         {
           route: () => {
-            if (teammate.badge.model === null) return ctx.llm.routeForSession(teammate.parentSession)
-            const at = teammate.badge.model.indexOf('/')
-            const provider = at > 0 ? teammate.badge.model.slice(0, at) : teammate.badge.model
-            const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''
-            return ctx.llm.routeTo(provider, modelId, teammate.badge.effort ?? 'default')
+            // 模型：显式指定优先；否则跟着父会话的端点/模型走。
+            // 思考强度要单独覆盖：即使模型跟随会话，spawn/角色文件给的 effort 也得生效，
+            // 所以这里用 routeTo（不改当前选择）而不是直接 routeForSession。
+            if (teammate.badge.model !== null) {
+              const at = teammate.badge.model.indexOf('/')
+              const provider = at > 0 ? teammate.badge.model.slice(0, at) : teammate.badge.model
+              const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''
+              return ctx.llm.routeTo(provider, modelId, teammate.badge.effort ?? 'default')
+            }
+            if (teammate.badge.effort !== null) {
+              return ctx.llm.routeTo(
+                ctx.llm.providerOf(teammate.parentSession),
+                ctx.llm.modelOf(teammate.parentSession),
+                teammate.badge.effort,
+              )
+            }
+            return ctx.llm.routeForSession(teammate.parentSession)
           },
           // 子代理的 deps 没有 rewrite（主会话的 env-facts 投影对子代理不生效），
           // 又没有尾部快照那条路，所以环境/模型事实直接写进它自己的系统提示词。
           // cwd 取派它的那个会话（子代理在父会话的 cwd 下干活），模型取冻结的工牌。
           systemPrompt: () => {
-            const text = `${input.role.prompt}
+            const text = `${input.prompt}
 
 ${subagentEnvironmentText(input.parentSession.meta.cwd, teammate.badge.model ?? ctx.llm.model)}
 
@@ -751,8 +1251,10 @@ ${
               ? `你最多能发 ${teammate.badge.maxTurns} 次模型请求，用完会被自动收手，请把力气花在关键处；最后一轮不再给你工具，那轮直接交结论。`
               : '轮次不设上限，但每轮都要往结论推进，别在同一个问题上打转。'
           }
+${teammateModelNote(teammate.badge.model ?? ctx.llm.model, teammate.badge.effort, config.allowModelSelection)}
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
+${teamCollabText()}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`
             // 队友的提示词不在段注册表里（它是几块直接拼的），给「系统提示」卡一条合成段：
             // 卡片至少能显示体量与来源，不至于空着一张段清单（队友的日志只在只读浮层里看）。
@@ -825,19 +1327,38 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
             } else if (event.type === 'error') {
               lastError.set(teammate.name, event.message)
             }
-            forwardSubagent()
+            // 这条会话正被用户打开（2026-11-18）：事件按主会话同款形状直接进转录——
+            // 此刻用户看的就是它的完整对话，折成父会话里的一张内联卡反而是串台。
+            // 其余时候照旧转发给父会话（内联卡 + 进队状态）。
+            if (ctx.session.current() === teammate.session) {
+              ctx.transcript.emit(event, teammate.session.meta.id)
+            } else {
+              forwardSubagent()
+            }
           },
         },
-        session,
+        input.session,
       )
 
       teammates.set(teammate.name, teammate)
+      // 交给 agent 服务登记成「外部驱动的一等会话」（2026-11-18）：`openSession` 打开它时
+      // 复用这个 Session 而不重建、不再另造一个常驻 agent，输入框里的字投进它的收件箱。
+      ctx.agent.attach(input.session, {
+        followup: (text, images, origin, files) => teammate.agent.followup(text, images, origin, files),
+        interrupt: () => teammate.agent.cancel(),
+        isRunning: () => teammate.agent.isRunning,
+        editQueued: (index, text) => teammate.agent.editQueued(index, text),
+        removeQueued: (index) => teammate.agent.removeQueued(index),
+        steerQueued: (index) => teammate.agent.steerQueued(index),
+      })
       remember(teammate)
-      // T21：新队友一上场就是 working，快照的状态面跟着失效
+      // T21：新队友一上场（或复活）就是快照里的状态面，动一下要跟着失效
       ctx.transcript.touch()
-      teammate.agent.followup(input.task)
-      // 开卡先落一张头行（事件流到达前的 0 空窗），之后每次事件原位刷新
-      forwardSubagent()
+      if (input.announce) {
+        teammate.agent.followup(input.task)
+        // 开卡先落一张头行（事件流到达前的 0 空窗），之后每次事件原位刷新
+        forwardSubagent()
+      }
       return teammate
 
       /** 正文行进瀑布：只留最后 8 行，瀑布永远显示「最新发生的事」。 */
@@ -876,6 +1397,136 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
           },
         })
       }
+    }
+
+    /**
+     * 派一个队友：新开一条会话（与主会话同形），工牌在此刻冻结，然后把任务送进它的信箱。
+     */
+    function startTeammate(input: {
+      name: string
+      role: AgentRole
+      task: string
+      caller: Caller
+      background: boolean
+      seed: string[] | null
+      parentSession: Session
+      /** 不填 = 寻常队友（收工后还能传话接着干）。 */
+      mode?: TeammateMode
+      /** spawn 显式指定的模型（已归一成 `端点/模型`）；不填看角色文件与旧配置兜底。 */
+      model?: string | null
+      /** spawn 显式指定的思考强度；不填看角色文件。 */
+      effort?: EffortLevel | null
+      /** spawn 带 `task_id` 时绑定的任务板任务 id（认领与绑定已在 runSubagent 里做完）。 */
+      taskId?: string
+    }): Teammate {
+      const cwd = input.parentSession.meta.cwd
+      /**
+       * 队友会话的落盘位置与主会话同形（2026-11-18）：`<会话根>/<工作目录名>/<id>.jsonl`。
+       *
+       * 为什么改到这里来（原来在 `sessions/.teammates/`，id 还与文件名是两个 uuid）：
+       * `Session.load` 按 meta.id 重算路径，两个 uuid 对不上时算出来的是一个磁盘上不存在
+       * 的位置，于是界面只能 `peek` 只读预览、点开就把「当前会话」换成假路径。
+       * 现在 id = 文件名，meta 里还写着 `origin: 'subagent'` 与 `parentSession`：
+       * 它是一条真会话（能开、能说话、能重放），但侧栏不列它（`scanSessions` 按 origin 跳过），
+       * 归档/分叉/删除也不许对它下手（`assertSessionFile` 同一条判断）。
+       */
+      const id = randomUUID()
+      const file = join(sessionsRoot(), slugCwd(cwd), `${id}.jsonl`)
+      const origin = { id, origin: 'subagent' as const, parentSession: input.parentSession.meta.id }
+      let session: Session
+      if (input.seed === null) {
+        session = Session.create(cwd, file, origin)
+      } else {
+        mkdirSync(dirname(file), { recursive: true })
+        const meta = JSON.stringify({ type: 'meta', ...origin, cwd, createdAt: Date.now() })
+        writeFileSync(file, [meta, ...input.seed].join('\n') + '\n', 'utf8')
+        session = Session.load(file, true)
+      }
+      // 优先级：spawn 显式 > 角色文件 > 旧配置 defaultModel（兼容兜底）> 跟随当前会话
+      const model = resolveTeammateModel(input.model ?? null, input.role, config.defaultModel)
+      const effort = resolveTeammateEffort(input.effort ?? null, input.role)
+      return makeTeammate({
+        name: input.name,
+        role: input.role.name,
+        prompt: input.role.prompt,
+        task: input.task,
+        // 工牌在此刻冻结：此后改角色文件不影响它
+        badge: {
+          tools: input.role.tools,
+          // 角色文件显式 max-turns > 设置页按角色默认值 > 全局上限（取更严），见 resolveMaxTurns
+          maxTurns: roleMaxTurns(input.role),
+          approval: input.role.approval,
+          model,
+          effort,
+        },
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+        session,
+        parentSession: input.parentSession,
+        parent: input.caller.name,
+        depth: input.caller.depth + 1,
+        mode: input.mode ?? 'continuable',
+        background: input.background,
+        startedAt: Date.now(),
+        rounds: 0,
+        state: 'working',
+        announce: true,
+      })
+    }
+
+    /**
+     * 复活一位收工的队友（2026-11-19）：用户在名册里点它那一行时走这条。
+     *
+     * 为什么要有：会话本身已经能打开（2026-11-18 的改动），但**没有驱动的会话打开以后，
+     * 输入框里的字没处投递**——用户看到的是一条「只能看」的记录。收工的可续接队友其实只是
+     * 本进程里没了循环，按冻结的工牌照原样重建一份、重新 attach，它就接着那条对话往下走。
+     *
+     * 工牌与角色提示词从名册的冻结点读（{@link RosterRecord.badge} / `prompt`）：老名册没有
+     * 这两项时退回按角色名现读一份；角色文件也没了就不复活，调用方按只读记录打开并说一声。
+     * 一次性的（`keep: false`）不复活：它的语义就是干完即止（对照 dsh 的 one-shot）。
+     */
+    function reviveTeammate(record: RosterRecord, parentSession: Session): Teammate | null {
+      const live = teammates.get(record.name)
+      if (live !== undefined) return live
+      if ((record.mode ?? 'continuable') === 'one-shot') return null
+      const role = findRole(record.role)
+      const prompt = record.prompt ?? role?.prompt
+      const badge =
+        record.badge ??
+        (role === null
+          ? null
+          : {
+              tools: role.tools,
+              maxTurns: roleMaxTurns(role),
+              approval: role.approval,
+              model: resolveTeammateModel(null, role, config.defaultModel),
+              effort: resolveTeammateEffort(null, role),
+            })
+      if (prompt === undefined || badge === null) return null
+      const file = resolve(record.file)
+      if (!isTeammateSessionFile(file) || !existsSync(file)) return null
+      // 写租约与主会话同一条路：同进程重入；别的窗口正开着时会抛，调用方按只读处理
+      const session = Session.load(file)
+      return makeTeammate({
+        name: record.name,
+        role: record.role,
+        prompt,
+        task: record.task,
+        badge,
+        ...(record.taskId === undefined ? {} : { taskId: record.taskId }),
+        session,
+        parentSession,
+        parent: record.parent,
+        depth: record.depth,
+        mode: record.mode ?? 'continuable',
+        // 用户正对着它说话：按前台算（原来派活时是不是后台已经无从得知，但「能不能问授权」
+        // 按前台放宽才不会让复活出来的队友比原来更束手）。
+        background: false,
+        startedAt: record.startedAt,
+        rounds: record.rounds,
+        // 复活后先是空闲：等用户在输入框里说话才起回合
+        state: 'idle',
+        announce: false,
+      })
     }
 
     /** 队友报错文本暂存（emit 的 error 事件比 turn/end 早一步）。 */
@@ -968,6 +1619,10 @@ ${body}
           const finishedAt = live?.finishedAt ?? record.finishedAt
           // 出生会话同理：在队的问内存里那个会话对象，收工的问名册（老记录没有这一项）
           const sessionId = live?.parentSession.meta.id ?? record.sessionId
+          const taskId = live?.taskId ?? record.taskId
+          // token：在队的以内存为准（还在涨），收工的以名册为准。老名册没有这一项就是
+          // undefined——只在有值时填，界面据此不画 0（0 本身是合法值，照实填）。
+          const tokens = live === undefined ? record.tokens : live.tokens
           views.push({
             name: record.name,
             role: record.role,
@@ -985,30 +1640,25 @@ ${body}
             startedAt: record.startedAt,
             ...(finishedAt === undefined ? {} : { finishedAt }),
             ...(sessionId === undefined ? {} : { sessionId }),
+            ...(taskId === undefined ? {} : { taskId }),
+            ...(tokens === undefined ? {} : { tokens }),
+            // 本进程里还活着吗（2026-11-18）。2026-11-19 起界面不再据此分叉（点开一律走
+            // 真会话），但它仍是「这一位有没有循环」的读数，右栏页签与探针都读它。
+            attached: live !== undefined,
           })
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
       },
       board: (sessionId: string): TeamBoardView => {
-        // 只读投影：界面只画「有哪些事、谁负责、可不可以开工」，改任务仍旧只走模型的 team_task。
-        const board = readBoard(sessionId)
-        return {
-          revision: board.revision,
-          tasks: board.tasks.map((task) => ({
-            id: task.id,
-            subject: task.subject,
-            description: task.description,
-            status: task.status,
-            owner: task.owner,
-            blockedBy: task.blockedBy,
-            writeScopes: task.writeScopes,
-            ready: isReady(board, task),
-          })),
-        }
+        // 只读投影：界面只画「有哪些事、谁负责、可不可以开工」与最新进展/活动，
+        // 改任务仍旧只走模型的 team_task。投影与提示词共用 boardViewOf，口径只有一份。
+        return boardViewOf(readBoard(sessionId))
       },
       peek: async (file: string): Promise<TranscriptEntry[]> => {
         const resolved = resolve(file)
-        if (!resolved.startsWith(resolve(teammateRoot()))) {
+        // 两代队友记录都认（2026-11-18）：新记录在会话目录里、meta 标 `origin: 'subagent'`；
+        // 老记录还在 `.teammates` 下。别的会话一律不许从这里读。
+        if (!isTeammateSessionFile(resolved)) {
           throw new Error('这里只能看队友的运行记录（其它会话请在左侧打开）')
         }
         // 只读：载入内存重放，不往那个文件写任何东西（也不拿写租约——队友可能正活着写它）
@@ -1016,6 +1666,42 @@ ${body}
         const replay = new Transcript()
         replay.replayHistory(session.messages, session.toolErrors, session.fileChanges, session.presentations)
         return [...replay.entries, ...replay.liveEntries()]
+      },
+      // 用户从界面上点开一位队友（2026-11-19）：正文区打开它那条真会话；收工的可续接队友
+      // 先按冻结工牌复活（这样输入框能直接说话），一次性的与复活不了的只按记录打开。
+      // 父会话取「派它的那条」：名册只在它自己的面板里列，正常情况下就是用户当前这条。
+      open: async (name: string): Promise<void> => {
+        const live = teammates.get(name)
+        if (live !== undefined) {
+          await ctx.session.open(live.session.filePath)
+          return
+        }
+        const record = readRoster().find((entry) => entry.name === name)
+        if (record === undefined) {
+          ctx.emit('dsc/notice', `名册里没有叫「${name}」的队友。`)
+          return
+        }
+        const file = resolve(record.file)
+        if (!isTeammateSessionFile(file)) {
+          ctx.emit('dsc/notice', '这不是队友的运行记录：请在左侧会话列表里打开。')
+          return
+        }
+        if ((record.mode ?? 'continuable') !== 'one-shot') {
+          const parent =
+            (record.sessionId === undefined ? undefined : ctx.agent.sessionById(record.sessionId)) ??
+            (record.sessionId === ctx.session.current().meta.id ? ctx.session.current() : undefined)
+          if (parent === undefined) {
+            ctx.emit('dsc/notice', `派「${name}」的那个会话不在本窗口：先按运行记录打开（只读）。`)
+          } else {
+            try {
+              reviveTeammate(record, parent)
+            } catch (error) {
+              // 文件被别的窗口占着、盘上文件没了……都退回只读，不要把这一下变成打不开
+              ctx.emit('dsc/notice', `没把「${name}」叫回来（${errText(error)}）：先按运行记录打开，只读。`)
+            }
+          }
+        }
+        await ctx.session.open(file)
       },
       // 用户从界面上管理队友的两条通道：与模型用的 subagent 工具走同一段逻辑，
       // 只是署名换成 user（队友信箱里看得出这句话是人说的）；
@@ -1049,15 +1735,17 @@ ${body}
         if (live === undefined && record === undefined) return `名册里没有叫「${name}」的队友。`
         // 真正收掉这一位：会话文件要关（释放写租约），再从名单里摘
         live?.agent.dispose()
+        if (live !== undefined) ctx.agent.detach(live.session.meta.id)
         teammates.delete(name)
         writeRoster(readRoster().filter((entry) => entry.name !== name))
-        // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认 teammateRoot 下的路径，
+        // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认同一个口径的队友记录
+        // （`.teammates` 下的老文件，或 meta 标了 origin 的新文件），别的一律不碰；
         // 删不动（被占用等）不算失败——名册已经摘掉，孤儿文件不影响任何列表。
         const file = live?.session.filePath ?? record?.file
         let removedFile = false
         if (typeof file === 'string' && file !== '') {
           const resolvedFile = resolve(file)
-          if (resolvedFile.startsWith(resolve(teammateRoot()))) {
+          if (isTeammateSessionFile(resolvedFile)) {
             try {
               // rmSync 的 force 对不存在的文件也算成功：如实报告文件本来就在不在
               const existed = existsSync(resolvedFile)
@@ -1243,7 +1931,7 @@ ${body}
       if (action === 'list') {
         const lines = mine.map(
           (entry) =>
-            `- ${entry.name}（角色 ${entry.role}，${entry.state}${entry.mode === 'one-shot' ? '，一次性' : ''}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用）派给它的任务：${entry.task.slice(0, 60)}`,
+            `- ${entry.name}（角色 ${entry.role}，${entry.state}${entry.mode === 'one-shot' ? '，一次性' : ''}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用${entry.taskId === undefined ? '' : `，绑定任务 ${entry.taskId}`}）派给它的任务：${entry.task.slice(0, 60)}`,
         )
         const roles = roster.map((role) => `- ${role.name}${role.enabled ? '' : '（已停用）'}：${role.description || '（没写 description）'}`).join('\n')
         return lines.length === 0
@@ -1271,6 +1959,15 @@ ${body}
       }
       const task = String(args.task ?? '').trim()
       if (task.length < 8) return '任务描述太短：队友看不到你和用户的对话，请把背景、目标、交付格式写清楚'
+      // 模型/思考强度覆盖：开关关闭时带 model 直接拒；开启时只能在用户授权的清单里挑。
+      // 归一结果在工牌冻结那一刻生效（见 startTeammate），只影响这个新队友。
+      const overrides = resolveSpawnOverrides(
+        args.model,
+        args.effort,
+        { allow: config.allowModelSelection, allowed: config.allowedModels },
+        (ref) => ctx.llm.parseModelRef(ref),
+      )
+      if (!overrides.ok) return overrides.reason
       const working = busyFor(currentId)
       if (working.length >= config.maxTeammates) {
         return `本会话正在干活的队友已到上限 ${config.maxTeammates} 个（${working.map((entry) => entry.name).join('、')}）。等一个收工，或去设置「子智能体」里提高上限`
@@ -1294,6 +1991,37 @@ ${body}
       }
       const name = requested === '' ? uniqueName(role.name) : requested
       if (teammates.has(name)) return `队友名 ${name} 已经在用，换一个`
+
+      // 任务绑定：带 task_id 就顺手认领并绑定（一次 CAS 里做完 owner + assignee）。
+      // 认领前必须满足「没完成、没被别人认领、依赖都完成」——不满足就给明确原因，
+      // 不要悄悄派出去（队友干到一半才发现板子上不归它）。
+      const taskId = String(args.task_id ?? '').trim()
+      if (taskId !== '') {
+        const board = readBoard(currentId)
+        const target = board.tasks.find((entry) => entry.id === taskId)
+        if (target === undefined) {
+          return `任务板上没有 ${taskId}。先 team_task action=list 确认 id，或去掉 task_id 直接派`
+        }
+        if (target.status === 'completed') return `${taskId} 已经完成了，不用再派队友去做`
+        if (target.owner !== null && target.owner !== name) {
+          return `${taskId} 已经被 ${target.owner} 认领了，换一条任务或先让它 release`
+        }
+        if (!isReady(board, target)) {
+          const pending = target.blockedBy.filter(
+            (dep) => board.tasks.find((entry) => entry.id === dep)?.status !== 'completed',
+          )
+          return pending.length > 0
+            ? `${taskId} 还在等依赖完成：${pending.join('、')}，现在派出去它也只能干等`
+            : `${taskId} 现在不能开工（状态 ${target.status}${target.owner === null ? '' : `，负责人 ${target.owner}`}）`
+        }
+        try {
+          boardUpdate(currentId, taskId, board.revision, 'claim', { owner: name, assignee: name, by: caller.name })
+          // 派活时顺手认领也是写板：面板上的负责人与绑定要立刻变。
+          touchUi()
+        } catch (error) {
+          return `认领 ${taskId} 失败：${error instanceof Error ? error.message : String(error)}`
+        }
+      }
 
       const context = String(args.context ?? 'fresh')
       let seed: string[] | null = null
@@ -1319,6 +2047,9 @@ ${body}
         seed,
         parentSession: parent,
         mode,
+        model: overrides.model,
+        effort: overrides.effort,
+        ...(taskId === '' ? {} : { taskId }),
       })
 
       if (!background) {
@@ -1337,12 +2068,19 @@ ${body}
         return `${head}\n${reason}`
       }
 
-      void waitForIdle(teammate).then(() => reportHome(teammate))
+      void waitForIdle(teammate)
+        .then(() => reportHome(teammate))
+        .catch(() => {
+          // 尽力而为的汇报：宿主先于队友收尾（关机、测试拆内核）时，等待环的下一拍会摸到
+          // 已停用的 context（"cannot get required service"）。拆都拆了，汇报没有意义，
+          // 吞掉——不能让一条后台汇报变成 unhandled rejection 打断收尾。
+        })
+      const bound = taskId === '' ? '' : `已认领并绑定任务 ${taskId}（它成功收工后会自动结项并写入最终结论）。`
       const tail =
         teammate.mode === 'one-shot'
           ? '它是一次性的：干完这次就结束，之后不能再传话，只在名册里留一条运行记录。'
           : '它在后台干，不用等也不用问：干完我会把汇报接进来。你现在可以继续做别的，或者再派一个。'
-      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。${tail}`
+      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。${bound}${tail}`
     }
 
     const subagentTool = (): ToolEntry => ({
@@ -1351,7 +2089,9 @@ ${body}
         '把一件可以独立完成的活派给一个有明确授权的队友（角色见 ~/.dsc/agents），或者给在队队友传话、打断它。' +
         'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。' +
         'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。' +
-        'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。',
+        'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。' +
+        'spawn 时可以带 model / effort 给新队友指定模型与思考强度，但只有用户打开「允许 Agent 为子队友选择模型」后才可用，且模型只能挑授权清单里的；这些只影响新队友。' +
+        '带 task_id 会把新队友绑定到共享任务板上的某条任务（顺手认领），它成功收工后自动结项。',
       parameters: {
         type: 'object',
         properties: {
@@ -1362,6 +2102,9 @@ ${body}
           context: { type: 'string', enum: ['fresh', 'fork'], description: 'fresh = 只知道这条任务；fork = 额外带上父会话到上一个完整回合为止的内容' },
           background: { type: 'boolean', description: 'true = 后台干（推荐，可并行多个）；false = 这一轮等它结果' },
           keep: { type: 'boolean', description: 'spawn 可选：false = 一次性的，干完就结束、不再接传话（只留一条运行记录）；不填 = 寻常队友，收工后传话还能接着干' },
+          model: { type: 'string', description: 'spawn 可选：队友模型，写「端点/模型」（或模型名）。只能在设置 → 子智能体 → 队友模型 授权的清单里挑；开关没开时不许带。只影响这个新队友' },
+          effort: { type: 'string', enum: [...EFFORT_LEVELS], description: 'spawn 可选：思考强度；不填用角色文件的 effort，再否则跟随默认' },
+          task_id: { type: 'string', description: 'spawn 可选：绑定到共享任务板上的某条任务（先 team_task list 看 id）。会顺手认领并绑定负责人，队友成功收工后自动结项' },
           text: { type: 'string', description: 'message 必填：要传的话' },
         },
         required: ['action'],
@@ -1408,7 +2151,18 @@ ${body}
       const revision = Number(args.expected_revision)
       // 改状态必须带版本号：不传就默认「当前版本」等于把并发冲突检测关掉，
       // 两个队友同时认领同一条时后到的会悄悄覆盖先到的。
-      const MUTATING_ACTIONS = new Set(['claim', 'release', 'complete', 'reopen', 'delete', 'set_dependencies'])
+      const MUTATING_ACTIONS = new Set([
+        'claim',
+        'release',
+        'complete',
+        'reopen',
+        'delete',
+        'set_dependencies',
+        'note',
+        'block',
+        'unblock',
+        'assign',
+      ])
       if (MUTATING_ACTIONS.has(action) && !Number.isInteger(revision)) {
         return `改任务板状态要带 expected_revision（你上次 list/create 看到的版本号，当前第 ${board.revision} 版）。`
       }
@@ -1423,74 +2177,269 @@ ${body}
               description: String(args.description ?? ''),
               blockedBy: blocked,
               writeScopes: scopes,
+              actor: ownerDefault,
             })
-            const warnings = created.warnings.length === 0 ? '' : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
-            if (args.claim_now !== true) return `已建 ${created.task.id}：${created.task.subject}${warnings}`
+            const warnings =
+              created.warnings.length === 0
+                ? ''
+                : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
+            if (args.claim_now !== true) {
+              // 板子变了：面板的任务区立刻重画（原先要等 5 秒轮询）。
+              touchUi()
+              return `已建 ${created.task.id}：${created.task.subject}${warnings}`
+            }
             // 认领走正常的 claim：依赖没做完一样会被拦下，正好复用同一套校验
             try {
-              boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', { owner: ownerDefault })
+              boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', {
+                owner: ownerDefault,
+                by: ownerDefault,
+              })
             } catch (error) {
+              // 认领失败但任务建成了：板子也确实变了，照样推一帧再报错
+              touchUi()
               return `已建 ${created.task.id}：${created.task.subject}，但没能认领：${error instanceof Error ? error.message : String(error)}${warnings}`
             }
+            touchUi()
             return `已建 ${created.task.id}：${created.task.subject}，状态直接进 in_progress（认领人 ${ownerDefault}）${warnings}`
           }
           case 'list': {
             if (board.tasks.length === 0) return '本会话的任务板是空的（team_task action=create 建第一条）'
-            const lines = board.tasks.map((task) => {
-              const ready = isReady(board, task)
-              return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${task.blockedBy.length === 0 ? '' : ` 依赖 ${task.blockedBy.join('、')}`}${task.writeScopes.length === 0 ? '' : ` 作用域 ${task.writeScopes.join(', ')}`}`
-            })
-            return `本会话任务板第 ${board.revision} 版：\n${lines.join('\n')}\n（改状态要带 expected_revision=${board.revision}）`
+            // 摘要行里带负责人、绑定、卡住原因与最新进展：队友看这一行就知道该不该插手
+            const lines = board.tasks.map((task) => taskDigestLine(board, task, 60))
+            const recent = board.activity.slice(0, 5).map(activityDigestLine)
+            return `本会话任务板第 ${board.revision} 版：\n${lines.join('\n')}\n\n最近活动：\n${recent.join('\n') || '- （暂无）'}\n（改状态要带 expected_revision=${board.revision}）`
           }
           case 'get': {
             const task = board.tasks.find((entry) => entry.id === id)
             if (task === undefined) return `任务板上没有 ${id}`
-            return `第 ${board.revision} 版里的 ${task.id}：\n标题：${task.subject}\n说明：${task.description || '（空）'}\n状态：${task.status}，认领人 ${task.owner ?? '（无）'}\n依赖：${task.blockedBy.join('、') || '（无）'}\n作用域：${task.writeScopes.join(', ') || '（未声明）'}`
+            const notes =
+              task.notes.length === 0
+                ? '（还没有进展记录）'
+                : task.notes
+                    .map((note) => `- ${new Date(note.at).toLocaleString()} ${note.by}：${note.text}`)
+                    .join('\n')
+            const related = board.activity
+              .filter((entry) => entry.taskId === task.id)
+              .slice(0, 5)
+              .map(activityDigestLine)
+            return [
+              `第 ${board.revision} 版里的 ${task.id}：`,
+              `标题：${task.subject}`,
+              `说明：${task.description || '（空）'}`,
+              `状态：${task.status}${isReady(board, task) ? ' · 可开工' : ''}，负责人 ${task.owner ?? '（无）'}`,
+              `绑定队友：${task.assignee ?? '（未绑定）'}`,
+              `卡住：${task.blockedReason ?? '（没卡）'}`,
+              `依赖：${task.blockedBy.join('、') || '（无）'}`,
+              `作用域：${task.writeScopes.join(', ') || '（未声明）'}`,
+              `进展（${task.notes.length} 条，新的在前）：`,
+              notes,
+              `最近活动：\n${related.join('\n') || '（暂无）'}`,
+            ].join('\n')
           }
+          case 'activity': {
+            const limit = clamp(args.limit, 1, 50, 20)
+            const lines = board.activity.slice(0, limit).map(activityDigestLine)
+            return lines.length === 0
+              ? '任务板还没有活动记录（别人认领/写进展/完成任务、互发消息都会记进来）'
+              : `任务板第 ${board.revision} 版最近 ${lines.length} 条活动（新的在前）：\n${lines.join('\n')}`
+          }
+          case 'note':
+          case 'block':
+          case 'unblock':
+          case 'assign':
           case 'claim':
           case 'release':
           case 'complete':
           case 'reopen':
           case 'delete':
           case 'set_dependencies': {
-            const payload: { owner?: string; blockedBy?: string[] } = {}
+            const payload: BoardUpdatePayload = { by: caller }
             if (action === 'claim') payload.owner = String(args.owner ?? ownerDefault)
             if (action === 'set_dependencies') {
               payload.blockedBy = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
             }
+            if (action === 'note' || action === 'block' || action === 'unblock' || action === 'complete') {
+              payload.text = String(args.text ?? '')
+            }
+            if (action === 'assign') payload.assignee = args.assignee === null ? null : String(args.assignee ?? '')
             const result = boardUpdate(sessionId, id, revision, action as BoardAction, payload)
+            // 所有写动作（claim/release/complete/reopen/note/block/unblock/assign/
+            // set_dependencies/delete）都在这里成功落板：统一推一帧，界面任务区与
+            // 「刚完成」状态立刻刷新。九个动作共用这一个落点，不会漏。
+            touchUi()
             const ready = result.board.tasks.filter((task) => isReady(result.board, task)).map((task) => task.id)
-            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。现在可开工：${ready.join('、') || '（无）'}`
+            const latest = result.task.notes[0]
+            const extraParts: string[] = []
+            if (latest !== undefined && (action === 'note' || action === 'block' || action === 'complete')) {
+              extraParts.push(`最新进展（${latest.by}）：${latest.text.slice(0, 100)}`)
+            }
+            if (action === 'assign') extraParts.push(`绑定：${result.task.assignee ?? '（已解绑）'}`)
+            if (action === 'block' || action === 'unblock') {
+              extraParts.push(`卡住原因：${result.task.blockedReason ?? '（没卡）'}`)
+            }
+            const extra = extraParts.length === 0 ? '' : `\n${extraParts.join('\n')}`
+            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。${extra}\n现在可开工：${ready.join('、') || '（无）'}`
           }
           default:
-            return `不认识的 action「${action}」。要用的值：create / list / get / claim / release / complete / reopen / set_dependencies / delete`
+            return `不认识的 action「${action}」。要用的值：create / list / get / activity / claim / release / complete / reopen / note / block / unblock / assign / set_dependencies / delete`
         }
       } catch (error) {
         return `任务板操作没做成：${error instanceof Error ? error.message : String(error)}`
       }
     }
 
+    // ── 队友互通消息（P1 横向通道）─────────────────────────────────────────
+    /**
+     * 消息额度：key = 队友名，记录它在第几轮发了几条。轮次一变自动清零
+     * （`emit` 里每轮 rounds +1），所以「每轮最多 3 条」是真实的按轮计数。
+     * Lead 不在表里、也不受额度限制。
+     */
+    const messageQuota = new Map<string, { round: number; used: number }>()
+
+    /** 给 Lead（派活方会话）投一条队友消息：常驻会话走 followup，收摊会话写进文件。 */
+    const deliverToLead = (text: string, from: string, sessionId: string): string => {
+      const wrapped = `<team-message from="${from}" to="lead"> ${text} </team-message>`
+      const session = ctx.agent.sessionById(sessionId) ?? ctx.session.current()
+      if (ctx.agent.hasAgent(session.meta.id)) {
+        ctx.agent.followup(wrapped, undefined, session.meta.id, 'notice')
+        return 'lead（已并入它的下一轮）'
+      }
+      session.appendUser(wrapped)
+      return 'lead（写入会话，下次对话时模型可见）'
+    }
+
+    async function runTeamMessage(args: Record<string, unknown>, runCtx: ToolContext): Promise<string> {
+      // 归属会话与署名同 team_task：队友转发时 caller 是它自己，主会话是 lead
+      const sessionId = runCtx.caller?.sessionId ?? runCtx.sessionId
+      const from = runCtx.caller?.name ?? LEAD
+      const action = String(args.action ?? '')
+      if (action === 'inbox') {
+        const limit = clamp(args.limit, 1, 20, 10)
+        const all = inboxRead(from)
+        if (all.length === 0) return '你的信箱是空的（别人用 team_message 发给你的话会出现在这里）'
+        const tail = all.slice(-limit)
+        return `你的信箱最近 ${tail.length} 条（共 ${all.length} 条；信箱没有已读状态，按写入顺序）：\n${tail.map((line) => `- ${line}`).join('\n')}`
+      }
+      if (action !== 'send' && action !== 'broadcast') {
+        return `不认识的 action「${action}」。要用的值：send / broadcast / inbox`
+      }
+      const text = String(args.text ?? '').trim()
+      if (text === '') return '要带上 text（想说的话）'
+      if (text.length > MAX_TEAM_MESSAGE_CHARS) {
+        return `一条消息最长 ${MAX_TEAM_MESSAGE_CHARS} 字，这条有 ${text.length} 字；长内容写进任务 note 或文件里`
+      }
+
+      // 防轰炸：只对队友计额度（Lead 是派活方，不由这条闸管）
+      const me = teammates.get(from)
+      let quotaNote = ''
+      if (me !== undefined) {
+        const used = messageQuota.get(from)?.round === me.rounds ? messageQuota.get(from)!.used : 0
+        if (used >= TEAM_MESSAGES_PER_ROUND) {
+          return `本轮已经发了 ${used} 条消息（每轮上限 ${TEAM_MESSAGES_PER_ROUND} 条）；剩下的话写进任务 note，或者等下一轮再说`
+        }
+        messageQuota.set(from, { round: me.rounds, used: used + 1 })
+        quotaNote = `（本轮还剩 ${TEAM_MESSAGES_PER_ROUND - used - 1} 条额度）`
+      }
+
+      const wrap = (body: string, to: string): string => `<team-message from="${from}" to="${to}"> ${body} </team-message>`
+      // 「lead」投到最上层会话：嵌套队友（PM 派的人）的 parentSession 是 PM 的会话，
+      // 而用户真正看的是再上一层——用 ownerSession 才不会把话投进中间层没人看的文件。
+      const leadSessionId = me?.ownerSession.meta.id ?? sessionId
+      const delivered: string[] = []
+      const missed: string[] = []
+      const targets: string[] = []
+      if (action === 'send') {
+        const to = String(args.to ?? '').trim()
+        if (to === '') return 'send 要带上 to（队友名或 lead）'
+        if (to === from) return `收件人就是你自己（${from}），换个人发`
+        targets.push(to)
+      } else {
+        // 广播：同会话在队队友 + Lead（不含自己）
+        for (const mate of teammates.values()) {
+          if (mate.name === from) continue
+          if (mate.parentSession.meta.id !== sessionId) continue
+          targets.push(mate.name)
+        }
+        if (from !== LEAD) targets.push(LEAD)
+        if (targets.length === 0) return '现在没有可发的对象：本会话没有其他在队队友，也没有可投的 Lead 会话'
+      }
+
+      for (const to of targets) {
+        if (to === LEAD || to === 'lead') {
+          delivered.push(deliverToLead(text, from, leadSessionId))
+          continue
+        }
+        const mate = teammates.get(to)
+        const wrapped = wrap(text, to)
+        inboxAppend(to, wrapped)
+        if (mate !== undefined) {
+          // 叫醒目标：跑动中排在它当前回合之后，闲置的唤起一轮
+          mate.agent.followup(wrapped)
+          delivered.push(`${to}${mate.state === 'working' ? '（正在干，这一轮之后看到）' : '（已叫醒）'}`)
+        } else {
+          missed.push(`${to}（不在队：收工或一次性，话写进了信箱但没人会读）`)
+        }
+      }
+
+      // 消息也进板子活动（kind=message，不写 notes）：Lead 与队友从活动时间线看得到协作过程
+      try {
+        recordBoardActivity(sessionId, {
+          by: from,
+          kind: 'message',
+          text: `${from} → ${targets.join('、')}：${text.replace(/\s+/g, ' ').slice(0, 120)}`,
+        })
+        // 活动时间线也是面板读的快照数据：这条写进去了，界面该跟着变。
+        touchUi()
+      } catch {
+        // 板子写不进去不影响消息本身已经投递
+      }
+
+      const head =
+        action === 'broadcast' ? `已广播给 ${delivered.length} 个对象` : delivered.length > 0 ? '已送达' : '没送达'
+      const parts = [head, ...delivered.map((line) => `- ${line}`), ...missed.map((line) => `- ${line}`)]
+      return `${parts.join('\n')}${quotaNote}`
+    }
+
     const teamTaskTool = (): ToolEntry => ({
       name: 'team_task',
       description:
-        '共享任务板（本会话）：登记要做的事、看谁在做什么、认领和结项。' +
-        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。',
+        '共享任务板（本会话）：登记要做的事、看谁在做什么、认领和结项，并写进展/标阻塞/绑定队友。' +
+        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。' +
+        '动手前先 list + activity 看别人做到哪一步；进展用 note 写，卡住用 block，队友互相对话用 team_message。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['create', 'list', 'get', 'claim', 'release', 'complete', 'reopen', 'set_dependencies', 'delete'],
+            enum: [
+              'create',
+              'list',
+              'get',
+              'activity',
+              'claim',
+              'release',
+              'complete',
+              'reopen',
+              'note',
+              'block',
+              'unblock',
+              'assign',
+              'set_dependencies',
+              'delete',
+            ],
             description: '要做什么',
           },
           subject: { type: 'string', description: 'create 必填：任务标题' },
           description: { type: 'string', description: 'create：任务的详细说明（背景、验收口径）' },
-          id: { type: 'string', description: '除 create/list 外必填：任务 id，例如 t3' },
-          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies）必填：你上次 list/create 看到的版本号' },
+          id: { type: 'string', description: '除 create/list/activity 外必填：任务 id，例如 t3' },
+          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies/note/block/unblock/assign）必填：你上次 list/create 看到的版本号' },
           owner: { type: 'string', description: 'claim 时的认领人；不填就是你自己' },
           claim_now: { type: 'boolean', description: 'create：true = 建完直接算你认领（状态直接进 in_progress）' },
           write_scopes: { type: 'array', items: { type: 'string' }, description: 'create：这个任务打算改的路径前缀，用于提醒别人别撞车' },
           blocked_by: { type: 'array', items: { type: 'string' }, description: 'create/set_dependencies：依赖哪些任务 id' },
+          text: { type: 'string', description: 'note/block/unblock 必填（complete 可选）：进展内容 / 卡住原因 / 解除说明 / 终稿摘要' },
+          assignee: { type: 'string', description: 'assign：绑定哪个队友；空串表示解绑' },
+          limit: { type: 'number', description: 'activity：返回最近多少条（默认 20，上限 50）' },
         },
         required: ['action'],
       },
@@ -1498,27 +2447,93 @@ ${body}
       run: (args, runCtx) => runTeamTask(args, runCtx),
     })
 
-    /** 板子提示段：只有板上真开了才注册；关掉时模型不该看到这个工具的任何说明。 */
-    const boardPromptText = (): string => {
-      const board = readBoard(ctx.session.current().meta.id)
-      const lines = board.tasks.slice(0, 20).map((task) => {
-        const ready = isReady(board, task)
-        return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}`
-      })
-      return `# 共享任务板
-本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项；队友和你看到的是同一块板。
-${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines.join('\n')}`}
+    const teamMessageTool = (): ToolEntry => ({
+      name: 'team_message',
+      description:
+        '队友之间直接交流（本会话）：点对点 send、广播 broadcast、看自己收到的 inbox。' +
+        '消息会写进对方信箱并叫醒它，同时记进任务板活动；每个队友每轮最多发 3 条。' +
+        '重要结论仍以任务板 note 为准——消息是协调用的，不是台账。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['send', 'broadcast', 'inbox'], description: '要做什么' },
+          to: { type: 'string', description: 'send 必填：队友名或 lead' },
+          text: { type: 'string', description: 'send/broadcast 必填：要说的话（最长 8000 字）' },
+          limit: { type: 'number', description: 'inbox：读最近多少条（默认 10，上限 20）' },
+        },
+        required: ['action'],
+      },
+      risk: 'read',
+      run: (args, runCtx) => runTeamMessage(args, runCtx),
+    })
 
-任务板的规矩：
-1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径），别人 claim 时才抢不过你；改状态要带 expected_revision。
-2. 认领前先 list：依赖没完成的任务开不了工；完成一条，等它的人就能开工。`
+    /**
+     * 看板「易变段」的投影：把最新看板快照附到请求**末尾**，并且只在水位变了才附。
+     *
+     * 为什么这么绕（而不是继续写系统提示里）：系统提示一变，服务端前缀缓存从第一段就
+     * 整段作废（`core/llm.ts:777` 把头部缓存断点打在第一处 system 上）；而附在消息末尾，
+     * 前面几十 K 的历史前缀照旧命中，变化只落在尾巴。这也是环境快照（`prompt/index.ts`
+     * 的 env-facts，order 600）与待办提醒（todo-reminder，order 800）的同一套取舍。
+     *
+     * 注入判据见 {@link BoardSnapshotWatermark}：看板没变的轮次返回**原数组**（同一个引用），
+     * 不新增消息、不报注入卡——多数轮次因此既不动系统提示也不动消息前缀。
+     */
+    const boardSnapshotSeen = new BoardSnapshotWatermark()
+    /** 上报台账：同一份正文只记一张注入卡（与 todo 的 reminderReported 同一套理由）。 */
+    const boardSnapshotReported = new InjectionReportLedger()
+    /** 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。 */
+    const boardSnapshotNoted = new InjectionNoteLedger()
+    const teamBoardProjection = (
+      messages: ChatMessage[],
+      session?: Session,
+      report?: ContextInjectionReporter,
+    ): ChatMessage[] => {
+      // 归属会话：投影链由各 agent 自己的循环调用（`packages/agent/index.ts` 的 rewrite），
+      // 传进来的就是发起这次请求的会话；兜底才用「当前查看的会话」。
+      const owner = session ?? ctx.session.current()
+      const board = readBoard(owner.meta.id)
+      const round = countRounds(messages)
+      // 用户轮键取日志原文（owner.messages）：请求里那份还混着投影追加的 env-facts 等
+      // user 消息，拿它当「轮」会每步都变。新用户轮要重新把看板交给模型（理由见
+      // board-snapshot.ts 的 userTurnKey）。
+      const userKey = userTurnKey(owner.messages)
+      const mark = boardSnapshotWatermark(board)
+      if (!boardSnapshotSeen.due(owner.meta.id, mark, round, userKey)) return messages
+      // 空板不注入：这段正文只会说「板上还没有任务 / 暂无活动」，除了给每个从未用过
+      // 团队功能的会话多一张注入卡之外没有任何信息量。水位照记，等第一条任务/活动出现
+      // 时水位变了，下一跳自然注入。
+      if (board.tasks.length === 0 && board.activity.length === 0) {
+        boardSnapshotSeen.mark(owner.meta.id, mark, round, userKey)
+        return messages
+      }
+      const text = boardSnapshotText(board)
+      const out: ChatMessage[] = [...messages, { role: 'user', content: text }]
+      // 先记账再注入：同一轮的 invariant 二次派生必须拿到同一个答案（见台账类注释）。
+      boardSnapshotSeen.mark(owner.meta.id, mark, round, userKey)
+      // 注入不落会话历史：按 `session-core/loop.ts:77` 的规矩，注入方自己补一条 note，
+      // 事后回看日志能对出模型当时多看了什么。判据用「会话历史最后一条消息的对象引用」，
+      // 同一份历史重跑时引用不变 → 不重复落（与 todo 的 reminderNotes 同一套）。
+      const last = owner.messages[owner.messages.length - 1]
+      if (boardSnapshotNoted.take(owner.meta.id, last, text)) owner.appendNote('team-board', text)
+      // 过上报闸：正文与上一次上报过的逐字相同就不再记卡（同一份快照被压缩后重注时会出现）。
+      if (report !== undefined && boardSnapshotReported.take(owner.meta.id, BOARD_SNAPSHOT_KIND, text)) {
+        report({
+          kind: BOARD_SNAPSHOT_KIND,
+          source: 'team-board',
+          where: 'user-tail',
+          chars: text.length,
+          preview: contextInjectionPreview(text),
+        })
+      }
+      return out
     }
 
     /**
-     * 两个开关各管一半：
-     * - `allowDelegation` 管 `subagent` 工具与名册提示；
-     * - `board` 管 `team_task` 与板子提示段。
-     * 两边独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
+     * 三个开关各管一段：
+     * - `allowDelegation` 管 `subagent` 工具、`team_message` 与名册提示；
+     * - `board` 管 `team_task`、板子提示段与看板快照投影；
+     * - `teamMode` 只影响提示与 `maxDepth` 的默认值（见 settings 保存逻辑）。
+     * 前两个独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
      */
     let disposers: Array<() => void> = []
     const syncTools = (): void => {
@@ -1526,41 +2541,88 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
       disposers = []
       if (config.allowDelegation) {
         disposers.push(ctx.effect(() => ctx.tools.register(subagentTool()), 'subagent: tools.register'))
+        // 横向通道跟着「有没有队友」走：没有队友时它没有收件人，注册了只会白占一个工具位
+        disposers.push(ctx.effect(() => ctx.tools.register(teamMessageTool()), 'subagent: team_message.register'))
         disposers.push(
           ctx.effect(() => ctx.prompt.register('subagent', () => {
             const roles = listRoles().filter((role) => role.enabled)
             const lines = roles.map((role) => {
               const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
-              const turns = effectiveMaxTurns(role.maxTurns, config.maxTurns)
+              const turns = roleMaxTurns(role)
               return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，${turns === 0 ? '轮次不限' : `最多 ${turns} 轮`}）`
             })
             // 板子与派活是同一层的协作：分开成两个包时，子智能体提示里不提板子，
             // 模型就永远不会用 team_task（旧决策见 docs/development-log.md:848）；
             // 现在同一包里，必须提一句，否则板子等于没有。
-            const boardRule = config.board
-              ? '\n5. 多人协作还有一块共享任务板：用 team_task 登记、认领、结项，队友看到的是同一块板；改状态要带 expected_revision。'
-              : ''
+            // 规则用数组拼：板子、模型说明、团队模式各自可选，编号才不会跳号或重号。
+            const rules = [
+              '队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。',
+              `本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。`,
+              '只读角色改不了文件；要落地代码用 developer / writer 或者你自己动手。',
+              '在队队友与它们的绑定任务不在系统提示里（名单、状态随开工/收工变，写进提示会让请求前缀每轮失效）；要看谁在干什么，用 subagent list。',
+              '派完活自己接着干别的，别闲着等。',
+              '分工协议：按真实团队流程派活——需求不清先派 pm（确认需求与验收口径、拆任务上板），方案与契约派 architect，实现按 write_scopes 并行派 developer，独立验证派 tester，构建发布与环境检查派 ops，最后由你汇总向用户交付。派活时用 task_id 绑定它负责的任务。',
+              ...(config.board
+                ? [
+                    '多人协作还有一块共享任务板：用 team_task 登记、认领、结项、写进展，队友看到的是同一块板；队友之间可以直接用 team_message 交流，重要结论以任务板 note 为准。',
+                  ]
+                : []),
+              ...(config.teamMode
+                ? ['团队模式已开：maxDepth 允许到 2（pm 可以自己再派人）；放开后仍受 maxTeammates 与各角色轮次预算约束。']
+                : []),
+              modelRuleText(),
+            ]
             return `# 子智能体
 你可以用 subagent 工具把能独立完成的活派给队友。
 可用角色（文件在 ${DSC_AGENTS_DIR}，用户可以自己加）：
 ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能体」里打开或新建）'}
 
 派活的规矩：
-1. 队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。
-2. 本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
-3. 只读角色改不了文件；要落地代码用 writer 或者你自己动手。
-4. 派完活自己接着干别的，别闲着等。${boardRule}`
+${rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n')}`
           }), 'subagent: prompt.register'),
         )
       }
       if (config.board) {
         disposers.push(ctx.effect(() => ctx.tools.register(teamTaskTool()), 'subagent: team_task.register'))
-        disposers.push(ctx.effect(() => ctx.prompt.register('team', boardPromptText), 'subagent: board prompt.register'))
+        // 稳定段：只讲板子是什么与规矩，逐字常量（**别把看板数据加回来**，见 TEAM_BOARD_GUIDE）。
+        // order 220：排在内核的 instructions(200) / skills(210) 之后、模型信息(890) 之前。
+        // 易变内容放越后越好（`PromptService.register` 的约定）：万一哪天这段又被塞进动态
+        // 内容，波及的也只是它后面的「当前模型」一句，不会连带 AGENTS.md/技能目录那 ~10K 字。
+        disposers.push(
+          ctx.effect(
+            () => ctx.prompt.register('team', () => teamBoardGuide(config.allowDelegation), { order: 220 }),
+            'subagent: board prompt.register',
+          ),
+        )
+        // 易变段：看板快照走投影注入到请求尾部，只在看板变化后附一次。
+        disposers.push(
+          ctx.effect(
+            () => ctx.prompt.registerProjection('team-board', teamBoardProjection, { order: 700 }),
+            'subagent: board projection.register',
+          ),
+        )
       }
     }
     syncTools()
 
     // ── 设置分区 ────────────────────────────────────────────────────────────
+    /**
+     * 授权模型多选清单：按端点显示名分组，值用 `端点/模型`（与 `listModels()` 一致）。
+     *
+     * 只列当前配置里存在的模型；已存但端点/模型被删掉的授权仍留在配置里（见
+     * {@link readAllowedModels}），恢复端点后自动回到清单里，不用重新勾。
+     */
+    const modelCheckGroups = (): SettingsCheckGroup[] => {
+      const groups = new Map<string, SettingsCheckOption[]>()
+      for (const choice of ctx.llm.listModels()) {
+        const title = choice.providerDisplayName === '' ? choice.provider : choice.providerDisplayName
+        const options = groups.get(title) ?? []
+        options.push({ value: choice.value, label: choice.model, detail: choice.description })
+        groups.set(title, options)
+      }
+      return [...groups].map(([title, options]) => ({ title, options }))
+    }
+
     const fields = (): SettingsField[] => [
       {
         type: 'switch',
@@ -1571,6 +2633,12 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       { type: 'number', key: 'maxTeammates', label: t('field.maxTeammates.label'), min: 1, max: 8, step: 1, help: t('field.maxTeammates.help') },
       { type: 'number', key: 'maxDepth', label: t('field.maxDepth.label'), min: 0, max: 2, step: 1, help: t('field.maxDepth.help') },
       {
+        type: 'switch',
+        key: 'teamMode',
+        label: t('field.teamMode.label'),
+        help: t('field.teamMode.help'),
+      },
+      {
         type: 'number',
         key: 'maxTurns',
         label: t('field.maxTurns.label'),
@@ -1579,6 +2647,17 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
         step: 1,
         help: t('field.maxTurns.help'),
       },
+      // ── 默认最大轮次（按角色；角色文件里显式写了 max-turns 的以文件为准）────
+      ...TURN_ROLES.map((role) => ({
+        type: 'number' as const,
+        key: `roleTurns.${role}`,
+        label: t('field.roleTurns.label', { role }),
+        min: 0,
+        max: 200,
+        step: 1,
+        help: t('field.roleTurns.help'),
+        group: 'turns',
+      })),
       {
         type: 'select',
         key: 'approval',
@@ -1599,7 +2678,22 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           { value: 'quiet', label: t('option.notify.quiet') },
         ],
       },
-      { type: 'text', key: 'defaultModel', label: t('field.defaultModel.label'), placeholder: t('field.defaultModel.placeholder'), help: t('field.defaultModel.help') },
+      // ── 队友模型：允许 Agent 指定 + 授权清单 ──────────────────────────────
+      {
+        type: 'switch',
+        key: 'allowModelSelection',
+        label: t('field.allowModelSelection.label'),
+        help: t('field.allowModelSelection.help'),
+        group: 'models',
+      },
+      {
+        type: 'checks',
+        key: 'allowedModels',
+        label: t('field.allowedModels.label'),
+        groups: modelCheckGroups(),
+        help: t('field.allowedModels.help'),
+        group: 'models',
+      },
       { type: 'info', label: t('field.rolesDir.label'), text: DSC_AGENTS_DIR, mono: true, copyable: true, help: t('field.rolesDir.help', { names: builtinRoleNames().join(t('field.rolesDir.separator')) }) },
       { type: 'button', action: 'new-role', label: t('field.newRole.label'), style: 'ghost', help: t('field.newRole.help') },
       // ── 任务板（原「共享任务板」插件的设置，并进同一分区）───────────────
@@ -1619,20 +2713,44 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       title: t('section.title'),
       subtitle: t('section.subtitle'),
       order: 40,
-      groups: [{ id: 'board', title: t('group.board.title'), description: t('group.board.description') }],
+      groups: [
+        { id: 'turns', title: t('group.turns.title'), description: t('group.turns.description') },
+        { id: 'models', title: t('group.models.title'), description: t('group.models.description') },
+        { id: 'board', title: t('group.board.title'), description: t('group.board.description') },
+      ],
       fields,
-      values: (): Record<string, SettingsValue> => ({
-        allowDelegation: config.allowDelegation,
-        maxTeammates: config.maxTeammates,
-        maxDepth: config.maxDepth,
-        maxTurns: config.maxTurns,
-        approval: config.approval,
-        notify: config.notify,
-        defaultModel: config.defaultModel,
-        board: config.board,
-      }),
+      values: (): Record<string, SettingsValue> => {
+        const values: Record<string, SettingsValue> = {
+          allowDelegation: config.allowDelegation,
+          maxTeammates: config.maxTeammates,
+          maxDepth: config.maxDepth,
+          teamMode: config.teamMode,
+          maxTurns: config.maxTurns,
+          approval: config.approval,
+          notify: config.notify,
+          allowModelSelection: config.allowModelSelection,
+          allowedModels: [...config.allowedModels],
+          board: config.board,
+        }
+        for (const role of TURN_ROLES) {
+          values[`roleTurns.${role}`] = config.roleTurns[role] ?? DEFAULT_ROLE_TURNS[role] ?? 0
+        }
+        return values
+      },
       // 契约：save 返回字符串 = 失败原因；action 返回字符串 = 完成后的提示文案，失败直接抛
       save: (key, value): string | void => {
+        // 按角色轮次是一组带点号的平铺键（`roleTurns.<角色>`），整块对象写进 config.roleTurns
+        if (key.startsWith('roleTurns.')) {
+          const role = key.slice('roleTurns.'.length)
+          if (!TURN_ROLES.includes(role)) return t('save.unknownKey', { key })
+          const turns = Number(value)
+          if (!Number.isFinite(turns) || turns < 0 || turns > 200) {
+            return t('save.badTurns', { value: String(value) })
+          }
+          // writePluginConfig 是顶层键浅合并：roleTurns 按对象整块写，别的角色不会丢
+          applyConfig({ roleTurns: { ...config.roleTurns, [role]: Math.round(turns) } })
+          return
+        }
         switch (key) {
           case 'allowDelegation':
             applyConfig({ allowDelegation: value === true || value === 'true' })
@@ -1643,6 +2761,13 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           case 'maxDepth':
             applyConfig({ maxDepth: Number(value) })
             break
+          case 'teamMode': {
+            const enabled = value === true || value === 'true'
+            // 团队模式 = 允许二层派活（PM 可以再派人）：打开时顺手把 maxDepth 抬到 2。
+            // 关闭只关这一项、不回退 maxDepth（用户可能自己就是想要二层，替他降级更意外）。
+            applyConfig(enabled ? { teamMode: true, maxDepth: Math.max(config.maxDepth, 2) } : { teamMode: false })
+            break
+          }
           case 'maxTurns':
             applyConfig({ maxTurns: Number(value) })
             break
@@ -1657,12 +2782,17 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           case 'notify':
             applyConfig({ notify: String(value) === 'quiet' ? 'quiet' : 'auto' })
             break
-          case 'defaultModel': {
-            const text = String(value).trim()
-            if (text !== '' && !text.includes('/')) {
-              return t('save.badModelFormat')
-            }
-            applyConfig({ defaultModel: text })
+          case 'allowModelSelection': {
+            const enabled = value === true || value === 'true'
+            // 开关开着却一个模型都没授权：Agent 没有任何合法可选值，先拦下比让它每次派活都报错好
+            if (enabled && config.allowedModels.length === 0) return t('save.needAllowedModel')
+            applyConfig({ allowModelSelection: enabled })
+            break
+          }
+          case 'allowedModels': {
+            const list = readAllowedModels(value)
+            if (config.allowModelSelection && list.length === 0) return t('save.needAllowedModel')
+            applyConfig({ allowedModels: list })
             break
           }
           case 'board':
@@ -1683,7 +2813,10 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           return t('action.roleWritten', { file })
         }
         if (name === 'clear-board') {
-          return t('action.clearBoard', { count: resetBoard(ctx.session.current().meta.id) })
+          const count = resetBoard(ctx.session.current().meta.id)
+          // 清板也是写板：面板「共享任务」区要立刻空掉，不能等下一拍轮询。
+          touchUi()
+          return t('action.clearBoard', { count })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

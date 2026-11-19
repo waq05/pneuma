@@ -3,51 +3,47 @@
  *
  * | 在哪 | 是什么 |
  * | --- | --- |
- * | 状态面板的「子智能体」区（`ui-status`） | **成员清单**：一行一个（名字 / 角色 / 状态），点一行在正文区只读打开它的完整运行记录 |
+ * | 状态面板的「子智能体」区（`ui-status`） | **成员清单**：一行一个（名字 / 角色 / 状态），点一行打开它的会话 |
  * | 状态面板的「智能体团队」区（`ui-status`） | **共享任务板**（只读）：一行一条任务，谁负责、做到哪一步 |
- * | 正文区 | {@link TeammateReader} 的只读视图：`peekTranscript` + 消息流插件的同款行渲染，头部带停止 / 发话 / 移除 |
- * | 右侧栏 | 子智能体页签（工具卡里的子代理卡走它） |
+ * | 正文区 | 队友那条真会话（2026-11-19 起全部走这条）：顶栏、页签、消息流、输入框、状态栏与主会话同一套 |
+ * | 右侧栏 | 子智能体页签（工具卡里的子代理卡走它，只读重放） |
  *
  * **标题旁那个「智能体团队」按钮与名册模态已经撤掉**（2026-11-08）：它是同一份名册的
  * 第二处显示，和状态面板重复。现在成员只在状态面板列一次，「智能体团队」这个名字留给
  * 任务板那一区（成员 = 谁在跑，团队 = 有哪些事、谁负责，两件事）。
  *
- * 数据走界面通道的 `listTeammates`（常挂载的那条轮询每 3 秒写进共享席位；
- * 页面不可见时轮询停了不发），动作走 `stopTeammate` / `messageTeammate` /
- * `removeTeammate`——四个方法都在放行面上（白名单见 `src/core/ui-methods.ts`）。
+ * **正文区不再有「只读运行记录」那一层**（2026-11-19）。旧实现点开收工的队友会盖一层
+ * 自带头部的视图（名字 / 角色 / 状态 / 只读说明 / 停止 / 发话 / 移除 / 返回），它
+ * `inset: 0` 盖在正文区上，输入区与状态栏一并被盖掉——于是「队友会话」看起来就不是
+ * 主会话了，与 dsh 那种「子智能体开着就是一条普通会话」对不上。
  *
- * **为什么点开队友不是 `openSession(队友日志)`**（2026-11-06 核实）：
- * `Session.load` 用日志里的 `meta.id` 重算落盘路径（`src/core/session.ts:670` 的
- * `keepPath=false` 分支），而队友日志的 meta.id 与文件名是两个 uuid（`src/packages/
- * subagent/index.ts:469,471`）。那一步会把「当前会话」换成一个磁盘上不存在的路径：
- * 输入框仍在（`ui-composer` 这一侧没有只读档），一提交就往假路径里写一份没有 meta
- * 首行的半截会话，`saveLastSession` 还会把假路径记成「上次会话」。所以这里走
- * 宿主的**只读入口** `peekTranscript`（没有租约、不动文件），正文区整层由只读视图接管。
+ * 现在点谁都走 `openTeammate`（`ui-status` 那一行调它）：正文区打开的是队友那条真会话，
+ * 顶栏只剩一枚「父会话 / 队友名」的面包屑。收工的**可续接**队友由宿主先按名册里冻结的
+ * 工牌复活一份循环（`packages/subagent/index.ts` 的 `reviveTeammate`），打开后输入框能
+ * 直接接着说话；一次性的、或复活不了的（角色定义没了、文件被别的窗口占着）由输入区
+ * 自己显示成一行只读说明（`ui-composer` 读快照的 `status.acceptsInput`）。
+ *
+ * 所以这个插件现在只剩两件事：3 秒轮询把名册写进共享席位（状态面板与右栏页签读同一份），
+ * 以及给顶栏递那两段面包屑（跨包只走 `window` 事件）。
  *
  * 名册过滤一律按本会话（`mate.sessionId === 当前会话`）；别的会话派出的不列、不给入口。
  *
  * @module dsc-ui-shell/plugins/team
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   SkeletonText,
   formatDuration,
   oneLine,
-  readSessionId,
   readSessionPath,
   readSessions,
 } from '@dsc/ui-primitives'
 import {
   IconTree,
-  confirmAction,
-  createSignal,
   createT,
   defineStore,
   defineUiPlugin,
   registerDockTab,
-  toastErr,
-  toastOk,
   useHostChannel,
   useHostSelector,
   useSeat,
@@ -77,46 +73,19 @@ const STATE_LABEL: Readonly<Record<string, string>> = {
   failed: t('team.state.failed'),
 }
 
-// ── 正文区的只读运行记录（任务 3）──────────────────────────────────────────
-/**
- * 正文区正在看的那位队友的运行记录。`null` = 正文区还是普通会话。
- *
- * **不切会话**：只读层盖在正文区上（`[data-thread-area]` 自带 `position: relative`），
- * 底下的会话原样开着——所以「回到原会话」只是关掉这一层（顶栏那一段仍走
- * `openSession(父会话路径)`，当前本来就是它时宿主会短路）。
- */
-interface ReaderState {
-  mate: TeammateView
-}
-
-const reader = createSignal<ReaderState | null>(null)
-
-/** 打开 / 关闭只读运行记录（两条都是幂等的：同一份状态重复写不发通知）。 */
-function openReader(mate: TeammateView): void {
-  const current = reader.get()
-  if (current !== null && current.mate.file === mate.file) return
-  reader.set({ mate })
-}
-
-function closeReader(): void {
-  if (reader.get() === null) return
-  reader.set(null)
-}
-
+// ── 顶栏面包屑 ─────────────────────────────────────────────────────────────
 /** 顶栏面包屑要的那一点东西（跨包只走 window 事件，与 `shell.palette.open` 同一条路）。 */
 interface ReaderHint {
   /** 队友名（面包屑右段）。 */
   name: string
   /** 派它的会话标题（面包屑左段，可点回原会话）。 */
   parentTitle: string
-  /** 派它的会话 jsonl 绝对路径；查不到给当前会话路径，给不了就 null（只关层不切会话）。 */
+  /** 派它的会话 jsonl 绝对路径；查不到给当前会话路径，给不了就 null（点了哪儿也不去）。 */
   parentPath: string | null
 }
 
 /** 面包屑出现 / 消失（`ui-layout` 的顶栏听它）。 */
 const READER_HINT_EVENT = 'shell.teammate.view'
-/** 顶栏请这层关掉（父会话那一节点一下就是它）。 */
-const READER_EXIT_EVENT = 'shell.teammate.exit'
 
 // ── 名册席位（D3）──────────────────────────────────────────────────────────
 /**
@@ -152,25 +121,10 @@ export default defineUiPlugin({
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
     ui.provide('teammates', mates)
-    // 正文区只读运行记录的口子：状态面板点一行走它。**在跑的队友也直接打开**——
-    // 2026-11-05 那道「还在跑就回绝」的门 2026-11-09 拆了，因为它防的事从来不会发生：
-    // 这里的读法是 `peekTranscript`，宿主侧走 `Session.load(..., { lease: false })`
-    // （`src/packages/subagent/index.ts:862-872`）——队友正写着也读得；解析不了的行
-    // 直接跳过（`src/core/session.ts:596-602`，半截行最多丢一条，下一拍补上），没有租约
-    // 也就不做修复落盘（`src/core/session.ts:734-741`）。所以打开那一刻看到的就是当前
-    // 进度，名册翻成已完成之后跟读自己停（判在 {@link TeammateReader} 的 `working`）。
-    ui.provide('teammateReader', {
-      open: (mate: TeammateView): void => {
-        openReader(mate)
-      },
-      close: (): void => {
-        closeReader()
-      },
-    })
     // 这条目录仍常挂载，但**不再画「智能体团队」按钮**（2026-11-08 与状态面板合并：
     // 成员只在状态面板的「子智能体」区列一次，标题旁不再重复同一份名册）。
     // 留着它为两件事：3 秒轮询写共享席位（状态面板与右栏页签读同一份），
-    // 以及承载正文区那层只读运行记录（它要 portal 到正文区）。
+    // 以及给顶栏递「父会话 / 队友名」那两段面包屑。
     ui.slots.register('shell.header.lead', { id: 'team.entry', order: 20, store: mates }, TeamEntry)
     // 子智能体的运行记录仍可落**右侧栏**（一种 dock 页签，给工具卡里的子代理卡用）：
     // 正文区那条只读视图是「点状态面板一行」的主路，右栏这条是伴读面的旁路，两条共用
@@ -196,14 +150,14 @@ export default defineUiPlugin({
  *
  * 标题旁**不再有「智能体团队」按钮**：成员统一在状态面板的「子智能体」区列（一处，
  * 不重复）。这条目录留着只为两件事——3 秒轮询把名册写进共享席位（状态面板与右栏
- * 页签读同一份），以及承载 {@link TeammateReader} 那层只读视图（它要 portal 到正文区）。
+ * 页签读同一份），以及转交给 {@link TeammateCrumb} 算顶栏那两段。
  * 组件本身没有可见产物，所以队列里没队友时它也不占顶栏位置。
  */
 function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
   const channel = useHostChannel()
   const { actions } = props
-  // 名册从共享席位读（这条目录登记时就带 `store: mates`）：正文区那层只读视图要按名册
-  // 跟住当前这一位的状态，不能只看点下去那一刻的快照（见 {@link TeammateReader}）。
+  // 名册从共享席位读（这条目录登记时就带 `store: mates`）：面包屑要跟着轮询更新
+  // （父会话标题、队友改名都在这一份里）。
   const list = props.useStore((state) => state.list)
   useEffect(() => {
     let alive = true
@@ -220,36 +174,25 @@ function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never,
     }
     poll()
     const timer = window.setInterval(poll, 3000)
+    // 宿主一推帧就补一拍（写名册 / 队友收工都会触发）：名册在面板上要「当场」变，
+    // 3 秒轮询只当兜底。订阅回调只催 poll，可见性规则仍由各自的面判定。
+    const off = channel.subscribe(poll)
     return () => {
       alive = false
       window.clearInterval(timer)
+      off()
     }
   }, [channel, actions])
-  return <TeammateReader mates={list} />
+  return <TeammateCrumb mates={list} />
 }
-
-/** 订阅函数提到模块级（`useSyncExternalStore` 要求引用稳定）。 */
-function subscribeReader(listener: () => void): () => void {
-  return reader.subscribe(listener)
-}
-
-function useReader(): ReaderState | null {
-  return useSyncExternalStore(subscribeReader, () => reader.get(), () => null)
-}
-
-/**
- * 正文区那一格的定位锚：壳打在 `.thread-main` / `.thread-main-empty` 上，`styles.css` 给它
- * `position: relative`（绝对定位浮层要的定位父级，与状态面板同一个锚）。
- */
-const THREAD_AREA_SELECTOR = '[data-thread-area]'
 
 /**
  * 面包屑的左段：派它的那个会话。
  *
  * `SessionSummary.id` 就是 jsonl 的绝对路径，出生会话 id 是那条会话的 `meta.id`
- * （= 文件名去 `.jsonl`，与 `readSessionId` 同一口径），所以按文件名对一遍即可。
+ * （= 文件名去 `.jsonl`），所以按文件名对一遍即可。
  * 查不到（老名册行没有 `sessionId`、或那条会话已经归档/删除进了别的地方）退回
- * 「原会话」+ 当前会话路径——点了就是「关掉这层、哪儿也不去」，不静默无反应。
+ * 「原会话」+ 当前会话路径——点了是 no-op，不静默无反应也不跳错地方。
  */
 function parentOf(
   sessions: readonly SessionSummary[],
@@ -267,90 +210,30 @@ function parentOf(
 }
 
 /**
- * 正文区的只读运行记录（任务 3）：盖在 `[data-thread-area]` 上的一层，里面铺**完整消息流**。
+ * 顶栏那枚面包屑（`父会话 / 队友名`）：正文区正在看的是某位队友的会话时把它递上去。
  *
- * 三条边界：
- *  - **只读**：动作 context 由消息流插件那条只读出口（`transcriptFlow`）给 `NO_ACTIONS`，
- *    用户消息走只读气泡；整层还盖掉了输入区——这里根本没有可写的地方；
- *  - **不切会话**：只读视图是 `peekTranscript`（无租约、不动文件）读出来的，底下的会话
- *    原样开着，所以关掉这层就回到原会话；
- *  - **换会话自动关**：别让别人的正文上面顶着一层「上一个会话的队友」。
+ * 为什么还要它：dsh 的顶栏也是这么显示的（`nav.crumbs` 的「父会话 / 子智能体」），
+ * 它解决的是「这条会话从哪来的」——队友会话不进侧栏，没有面包屑就只剩一个 uuid 文件名。
+ * 只是显示，不再承载任何动作：开合、只读标记、停止 / 发话 / 移除都已经搬走了
+ * （开合 = 点会话本身；输入框能不能说话由 `status.acceptsInput` 决定，见 ui-composer）。
  */
-function TeammateReader({ mates }: { mates: readonly TeammateView[] }): ReactNode {
-  const state = useReader()
+function TeammateCrumb({ mates }: { mates: readonly TeammateView[] }): ReactNode {
   const sessions = useHostSelector(readSessions)
   const currentPath = useHostSelector(readSessionPath)
-  const sessionId = useHostSelector(readSessionId)
-  // 信号里存的是点下去那一刻的快照（{@link ReaderState}）：队友收工 / 被停 / 失败之后
-  // 它自己不会变，头部的状态词就会一直停在「运行中」。所以按同一个文件（`sameFile`，
-  // 名册与信号里的分隔符可能不同）从名册里找**当前这一位**——名册由 {@link TeamEntry}
-  // 那条 3 秒轮询写进共享席位；找不到（被移除、那一拍还没回来）才回落快照。
-  const snapshot = state === null ? null : state.mate
-  const mate = useMemo(
-    () => (snapshot === null ? null : (mates.find((row) => sameFile(row.file, snapshot.file)) ?? snapshot)),
-    [mates, snapshot],
+  /**
+   * 正文区此刻是不是某位队友的会话。
+   *
+   * 按**会话路径**认，不另加快照字段：名册里每行都带 `file`，当前会话路径也在手上，
+   * 对一遍就知道——少一处会漂的状态，也不用改契约。
+   */
+  const viewed = useMemo(
+    () => (currentPath === null || currentPath === '' ? null : (mates.find((row) => sameFile(row.file, currentPath)) ?? null)),
+    [mates, currentPath],
   )
-  // 在跑的才跟读（`usePeekTranscript` 里按它决定起不起定时器）；收工后名册一翻，这里
-  // 自己就停了，页面停在最后那份内容上。
-  const working = mate !== null && mate.state === 'working'
-  // 消息流插件经服务表交出来的同款行渲染（markdown / 思考 / 工具卡 / 计划卡）；缺席时
-  // 退回下面那套简版直排（`PeekView` 不许删——它就是兜底出口）。
-  const flow = useService<TranscriptFlowService>(TRANSCRIPT_FLOW_SERVICE)
-  const [host, setHost] = useState<HTMLElement | null>(null)
-  const file = mate === null ? '' : mate.file
-
-  // 落点每次打开现取：换会话 / 换视图会换掉正文区那个元素。
-  useEffect(() => {
-    if (file === '') {
-      setHost(null)
-      return
-    }
-    const el = document.querySelector(THREAD_AREA_SELECTOR)
-    setHost(el instanceof HTMLElement ? el : null)
-  }, [file])
-
-  // 换会话就关（打开时的会话短 id 记在 ref 里，第一帧只记账）。
-  const openedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (file === '') {
-      openedFor.current = null
-      return
-    }
-    if (openedFor.current === null) {
-      openedFor.current = sessionId
-      return
-    }
-    if (openedFor.current !== sessionId) closeReader()
-  }, [file, sessionId])
-
-  // 顶栏「父会话」那一节点的是「关掉这层」（父会话本来就是当前会话；顶栏那边仍会调
-  // `openSession(父会话路径)`，宿主对「已经在看这条会话」直接短路）。
-  useEffect(() => {
-    const onExit = (): void => {
-      closeReader()
-    }
-    window.addEventListener(READER_EXIT_EVENT, onExit)
-    return () => {
-      window.removeEventListener(READER_EXIT_EVENT, onExit)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (file === '') return undefined
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeReader()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [file])
-
-  // 面包屑的两段交给顶栏（跨包只走 window 事件）；关掉时发一条 null 让标题还原。
-  const parent = mate === null ? null : parentOf(sessions, mate, currentPath)
+  const parent = viewed === null ? null : parentOf(sessions, viewed, currentPath)
   const parentTitle = parent === null ? '' : parent.title
   const parentPath = parent === null ? null : parent.path
-  const readerName = mate === null ? '' : mate.name
+  const readerName = viewed === null ? '' : viewed.name
   useEffect(() => {
     if (readerName === '') return undefined
     const detail: ReaderHint = { name: readerName, parentTitle, parentPath }
@@ -359,158 +242,7 @@ function TeammateReader({ mates }: { mates: readonly TeammateView[] }): ReactNod
       window.dispatchEvent(new CustomEvent<ReaderHint | null>(READER_HINT_EVENT, { detail: null }))
     }
   }, [readerName, parentTitle, parentPath])
-
-  if (mate === null || host === null) return null
-  return createPortal(
-    <div className="team-reader" role="region" aria-label={t('team.reader.aria', { name: mate.name })}>
-      <div className="team-reader-head">
-        <IconTree size={13} />
-        <span className="team-reader-name">{mate.name}</span>
-        <span className="team-reader-role">{mate.role}</span>
-        <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
-        {/* 耗时跟着名册走：在跑时每秒跳，收工换成总耗时（`UsedTime` 自己判 `working`）。
-            同一个组件右栏的子智能体页签也在用，两处口径一致。 */}
-        <UsedTime mate={mate} />
-        {/* 头部这句只读说明按类型换：一次性的把「干完就不接后续消息」说在这里。
-            不另起一个元素——头部是单行 flex，多一块就换行，把「返回原会话」挤下去。 */}
-        <span className="team-reader-note">
-          {mate.mode === 'one-shot' ? t('team.reader.oneShotBody') : t('team.reader.note')}
-        </span>
-        {/* 行动作跟着这一位走：停止（在跑）/ 发话 / 移除（收工的）。名册面板撤掉之后，
-            这三个动作只剩这一处落点（见 {@link ReaderActions}）。 */}
-        <ReaderActions mate={mate} />
-        <button
-          type="button"
-          className="text-btn"
-          data-tip={t('team.reader.backTip')}
-          onClick={() => {
-            closeReader()
-          }}
-        >
-          {t('team.reader.back')}
-        </button>
-      </div>
-      <div className="team-reader-body">
-        {flow === undefined ? (
-          <PeekView file={mate.file} working={working} />
-        ) : (
-          <FlowHost flow={flow} file={mate.file} working={working} />
-        )}
-      </div>
-    </div>,
-    host,
-  )
-}
-
-/**
- * 只读运行记录头部的三个动作：停止（在跑的）/ 发话 / 移除（收工的）。
- *
- * 为什么搬到这里：标题旁那个名册面板 2026-11-08 撤掉了（成员统一在状态面板列一次，
- * 不重复），但这三个动作不能丢——详情层是唯一合适的落点：列表不重复，操作跟着那一位走。
- * 行内动作各自 stopPropagation 的旧约束在这里自然消失（这一层本身没有「整行可点」）。
- */
-function ReaderActions({ mate }: { mate: TeammateView }): ReactNode {
-  const channel = useHostChannel()
-  const [writing, setWriting] = useState(false)
-  const [draft, setDraft] = useState('')
-  const busy = mate.state === 'working'
-  // 一次性的（spawn 时 keep=false）：干完就结束，不接后续消息。对照 dsh 的
-  // SubagentReadOnlyComposer——那边也是把这个位置换成一句说明，不给输入框。
-  const oneShot = mate.mode === 'one-shot'
-
-  const act = async (method: string, args: unknown[], tip: string): Promise<void> => {
-    try {
-      await channel.invoke(method, args)
-      toastOk(tip)
-    } catch (reason) {
-      toastErr(t('team.toast.failed', { tip, message: reason instanceof Error ? reason.message : String(reason) }))
-    }
-  }
-
-  return (
-    <>
-      {busy ? (
-        <button
-          type="button"
-          className="text-btn danger"
-          data-tip={t('team.row.stopTip')}
-          onClick={() => {
-            void act('stopTeammate', [mate.name], t('team.row.stopped', { name: mate.name }))
-          }}
-        >
-          {t('team.row.stop')}
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="text-btn danger"
-          data-tip={t('team.row.removeTip')}
-          onClick={() => {
-            void (async () => {
-              const ok = await confirmAction({
-                title: t('team.row.removeTitle', { name: mate.name }),
-                detail: t('team.row.removeDetail'),
-                confirmLabel: t('team.row.remove'),
-                danger: true,
-              })
-              if (!ok) return
-              void act('removeTeammate', [mate.name], t('team.row.removed', { name: mate.name }))
-            })()
-          }}
-        >
-          {t('team.row.remove')}
-        </button>
-      )}
-      {oneShot ? null : (
-        <button
-          type="button"
-          className="text-btn"
-          aria-pressed={writing}
-          data-tip={t('team.row.messageTip')}
-          onClick={() => {
-            setWriting((current) => !current)
-          }}
-        >
-          {t('team.row.message')}
-        </button>
-      )}
-      {!oneShot && writing ? (
-        <span className="team-write team-reader-write">
-          <input
-            autoFocus
-            value={draft}
-            placeholder={t('team.row.writePlaceholder', { name: mate.name })}
-            aria-label={t('team.row.writeLabel', { name: mate.name })}
-            onChange={(event) => {
-              setDraft(event.target.value)
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-              const text = draft.trim()
-              if (text === '') return
-              void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
-              setDraft('')
-              setWriting(false)
-            }}
-          />
-          <button
-            type="button"
-            className="text-btn"
-            disabled={draft.trim() === ''}
-            onClick={() => {
-              const text = draft.trim()
-              if (text === '') return
-              void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
-              setDraft('')
-              setWriting(false)
-            }}
-          >
-            {t('team.row.send')}
-          </button>
-        </span>
-      ) : null}
-    </>
-  )
+  return null
 }
 
 /** 耗时格：跑动中每秒跳（已进行时长），收工的显示总耗时；拿不到起止时刻就不画。 */
@@ -728,7 +460,7 @@ function sameFile(a: string, b: string): boolean {
   return a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
 }
 
-/** 路径尾段（子智能体页签的标题用它——队友的会话文件名就是它的名字）。 */
+/** 路径尾段（子智能体页签的标题回落用——会话文件名是 uuid，只当兜底）。 */
 function basename(path: string): string {
   const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return cut === -1 ? path : path.slice(cut + 1).replace(/\.jsonl$/, '')

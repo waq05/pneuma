@@ -10,7 +10,7 @@
 2. **失败可观测**：失败要有稳定错误码或 stderr 签名，能被探针断言（先例：`win/backend.ts:40` 的 `RUNNER_FAILURE_SIGNATURE`）。
 3. **机器可判的验收**：每条能力至少一条 `node --test` 或 `scripts/*-test.mjs` 断言；跑不了真机的部分要写清为什么跑不了。
 4. **不许静默 fail-open**：安全相关（沙箱、写技能、回滚）一律 fail-closed 或显式降级 + 提示，不允许"出错就当没这回事"。
-5. **文档同批**：`docs/development.md` 写怎么改，`docs/development-log.md` 写为什么，包内 `README.md` 写用户可见变化，`docs/harness-benchmark-roadmap.md` 改差距状态。
+5. **文档同批**：`docs/development.md` 写怎么改，`docs/development-log.md` 写为什么，包内 `README.md` 写用户可见变化，`docs/archive/harness-benchmark-roadmap.md` 改差距状态。
 6. **分批提交**：一批一次提交，可独立验收，提交信息写清为什么。
 
 ## 1. 任务一：Windows 操作系统级沙箱
@@ -60,7 +60,7 @@
 
 **D. 验收与文档**
 
-- 全仓**没有任何**真建受限令牌、真验 ACL 拒绝的自动化用例。`tests/sandbox.test.mjs` 只测策略纯函数，`scripts/sandbox-write-roots-test.mjs:8` 只算清单，`scripts/sandbox-parity-test.mjs:73` 只比源码字符串。
+- 全仓**没有任何**真建受限令牌、真验 ACL 拒绝的自动化用例。`src/packages/sandbox/tests/sandbox.spec.ts` 只测策略纯函数，`scripts/sandbox-write-roots-test.mjs:8` 只算清单，`tests/integration/sandbox-parity.int.spec.ts` 只比源码字符串。
 - `win/net-abi.ts:57` 引用的 `shots/win-net-setup-check.mjs` 不存在。
 
 ### 1.4 本轮补齐路线（六个批次，可独立验收）
@@ -123,7 +123,7 @@
 - **(c) 老化只有手动动作**：`curate` 要人手点（`:881`、`:1044`）；`stale` 标记没有后果，不过滤任何东西（`skills/index.ts:108`）；归档那条台账写的是空 hash，**归档之后回滚不了**（`skill-write.ts:919`）。
 - **并发无锁**：`patch` 是读改写，两次并发会互相覆盖（`:422`）；同秒备份同名也会覆盖（`ledger.ts:294`）。
 - **来源徽章缺失**：只有"发现根"一种分组（`contract/plugin.ts:224`），`created_by: agent` 写了不读（`skill-write.ts:180`），界面逐行徽章已被删（`ui-skills/ui/ui.tsx:621`）。
-- **测试只钉装配与纯函数**：self-improve 6 条、skills 6 条、ui-skills 6 条；集成只有 `scripts/self-improve-single-approval-test.mjs`。**写盘、回滚、老化、并发四类断言一条都没有。**
+- **测试只钉装配与纯函数**：self-improve 6 条、skills 6 条、ui-skills 6 条；集成只有 `src/packages/self-improve/single-approval.int.spec.ts`。**写盘、回滚、老化、并发四类断言一条都没有。**
 
 ### 2.4 补齐方案（按三环）
 

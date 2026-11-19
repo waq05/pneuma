@@ -59,28 +59,55 @@ app.whenReady().then(async () => {
     await waitFor(win, "document.querySelector('.composer') !== null", 60000, '壳的输入框')
     // 设置窗由壳的全局事件打开（左栏那颗齿轮就是派发它）：直接派发，不依赖按钮位置。
     // 反复派发到浮层出现：插件是一条条装进来的，第一次派发可能还没人听。
-    const opened = await inPage(win, [
+    const openedResult = await inPage(win, [
       "const until = Date.now() + 30000;",
       "while (Date.now() < until) {",
       "  window.dispatchEvent(new CustomEvent('shell.settings.open'));",
       "  await new Promise((r) => setTimeout(r, 250));",
-      "  if (document.querySelector('.settings') !== null) return true;",
+      "  if (document.querySelector('.settings') !== null) return { opened: true };",
       "}",
-      "out.bodyText = String(document.body.innerText).slice(0, 400);",
-      "return false;",
+      "return { opened: false, bodyText: String(document.body.innerText).slice(0, 400) };",
     ].join('\n'))
-    if (opened !== true) throw new Error('派发 shell.settings.open 之后设置窗没出现')
+    if (openedResult.opened !== true) {
+      throw new Error('派发 shell.settings.open 之后设置窗没出现；正文=' + String(openedResult.bodyText ?? '').slice(0, 300))
+    }
     // 找一个带下拉的分区：逐页点导航，直到出现 .select-trigger。
-    out.found = await inPage(win, [
-      "const navs = Array.from(document.querySelectorAll('.settings-nav-item'));",
+    // 页面里没有 `out`（那是主进程的变量）：诊断值必须从 executeJavaScript 的返回值带出来。
+    const scanned = await inPage(win, [
+      // 设置窗先出骨架、分区列表晚一拍才由宿主 IPC 送进来：等导航项真的出现再点。
+      "let navs = [];",
+      "const navUntil = Date.now() + 10000;",
+      "while (Date.now() < navUntil) {",
+      "  navs = Array.from(document.querySelectorAll('.settings-nav-item'));",
+      "  if (navs.length > 0) break;",
+      "  await new Promise((r) => setTimeout(r, 100));",
+      "}",
+      "const navLabels = navs.map((nav) => nav.textContent);",
+      // 分区内容经宿主 IPC 载入：点完马上查会撞在「还在 loading」上。每页最多等 3 秒。
+      "let found = null;",
       "for (const nav of navs) {",
       "  nav.click();",
-      "  await new Promise((r) => setTimeout(r, 220));",
-      "  if (document.querySelector('.settings .select-trigger') !== null) return nav.textContent; ",
+      "  const until = Date.now() + 3000;",
+      "  while (Date.now() < until) {",
+      "    if (document.querySelector('.settings .select-trigger') !== null) { found = nav.textContent; break; }",
+      "    await new Promise((r) => setTimeout(r, 100));",
+      "  }",
+      "  if (found !== null) break;",
       "}",
-      "return null;",
+      "const settingsText = String((document.querySelector('.settings-main') ?? document.body).innerText).slice(0, 800);",
+      "return { found, navLabels, settingsText };",
     ].join('\n'))
-    if (out.found === null) throw new Error('设置里没有找到下拉（.select-trigger）')
+    out.navLabels = scanned.navLabels
+    out.settingsText = scanned.settingsText
+    out.found = scanned.found
+    if (out.found === null) {
+      throw new Error(
+        '设置里没有找到下拉（.select-trigger）；导航=' +
+          JSON.stringify(out.navLabels ?? []) +
+          ' 正文=' +
+          String(out.settingsText ?? '').slice(0, 300),
+      )
+    }
     out.measure = await inPage(win, [
       "const trigger = Array.from(document.querySelectorAll('.settings .select-trigger')).find((el) => !el.disabled);",
       "if (trigger === undefined) return { error: '设置里没有可点的下拉' };",

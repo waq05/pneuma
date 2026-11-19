@@ -35,7 +35,9 @@ export function DiffBlock({ diff, expanded }: { diff: ApprovalDiffView; expanded
       remaining -= 1
     }
   }
-  const shown = totalLines - Math.max(0, remaining === Number.POSITIVE_INFINITY ? 0 : remaining)
+  // 折叠时实际画出的差异行数 = min(总行数, 折叠上限)。不能用「剩余额度」反推：
+  // 行数少于上限时剩余额度根本没被用完，反推会得到负数（F14：4 行 hunk 显示「还有 10 行」）。
+  const shown = expanded ? totalLines : Math.min(totalLines, FOLD_LINES)
   const hidden = totalLines - shown
   return (
     <Box flexDirection="column" marginTop={GAP.none} gap={GAP.none}>

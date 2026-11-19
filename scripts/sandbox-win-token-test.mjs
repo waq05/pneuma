@@ -29,7 +29,7 @@
  * @module dsc/scripts/sandbox-win-token-test
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -465,6 +465,8 @@ if (process.platform !== 'win32') {
     console.log(`  SKIP ${skipReason}`)
   } else {
     note(`探测结果：${probe.detail}`)
+    await runRelativeExtraRootCase(backend)
+    await runMissingTempRootCase(backend)
     await runIntegration(backend)
     await runMultiWorkspaceCase(backend)
     await runLargeOutputCase()
@@ -490,8 +492,8 @@ async function runIntegration(backend) {
     const insideFile = join(workspace, 'inside.txt')
     const outsideFile = join(outsideRoot, 'outside.txt')
 
-    // 私有临时目录在真实宿主里由插件建（`src/packages/sandbox/index.ts:213-218`）；
-    // grantWrite 要打在真实存在的目录上，不存在的话第一次 plan 就整体降级
+    // 私有临时目录现在由后端在授权前自己建（见 runMissingTempRootCase）。
+    // 这里照旧先建好，让这一段只验「里外写入的边界」，失败时能分清是谁的问题。
     const tmpRoot = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
     if (tmpRoot === undefined) {
       skipReason = 'writeRootsFor 没算出私有临时目录（后端接口变了？）'
@@ -515,8 +517,9 @@ async function runIntegration(backend) {
     const psLiteral = (value) => `'${value.replace(/'/g, "''")}'`
     const script = [
       // 让 PowerShell 用 UTF-8 写管道：系统语言是中文时拒绝理由本来是 GBK，
-      // 经 runner 的字节管道到这边按 UTF-8 解就是乱码，白丢一条现场证据
-      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      // 经 runner 的字节管道到这边按 UTF-8 解就是乱码，白丢一条现场证据。
+      // 外面套 try：宿主 stdout 不是控制台时这一句会报「无法设置」，整段就假红了（13:20 撞过一次）。
+      'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }',
       `Set-Content -Path ${psLiteral('.\\inside.txt')} -Value ${psLiteral('ok')}`,
       '$denied = $true',
       'try {',
@@ -641,7 +644,7 @@ async function runMultiWorkspaceCase(backend) {
   const handleRef = { current: null }
   try {
     const workspaces = [join(sandboxRoot, 'multi-a'), join(sandboxRoot, 'multi-b')]
-    /** 每个工作区的私有 temp 目录：真实宿主里由插件建，这里照 writeRootsFor 建 */
+    /** 每个工作区的私有 temp 目录：后端也会自己建，这里先建好只是为了让这一段只验多工作区口径 */
     const temps = []
     for (const workspace of workspaces) {
       mkdirSync(workspace, { recursive: true })
@@ -754,6 +757,258 @@ async function runMultiWorkspaceCase(backend) {
       }
     }
     if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
+  }
+}
+
+/**
+ * 回归（BUG-0004）：附加可写根写**相对路径**时，后端与策略层必须落在同一个绝对路径。
+ *
+ * 修前：策略层按会话 cwd 展开（`policy.ts` 的 `createPolicy`），后端照收原始串，
+ * `mkdir`/打 ACL 由宿主进程的 cwd 决定（打包版就是安装目录）——围栏放行、系统层仍拒。
+ *
+ * 判据三条：
+ *   1. `writeRootsFor(cwd, ['rel-out'])` 给出的路径 = 「cwd + rel-out」的绝对路径
+ *   2. 与 `createPolicy({ cwd, extraWritableRoots: ['rel-out'] })` 算出来的可写根一致
+ *   3. 不是宿主进程 cwd 旁边的那个 rel-out
+ *
+ * @param {{ createWindowsTokenRunner: Function, writeRootsFor: Function }} backend 编译产物里的后端导出。
+ */
+async function runRelativeExtraRootCase(backend) {
+  console.log('')
+  console.log('── 集成：附加根写相对路径时，后端与围栏算同一个绝对路径（BUG-0004 回归）')
+  const workspace = join(sandboxRoot, 'rel-workspace')
+  mkdirSync(workspace, { recursive: true })
+  const expected = join(realpathSync.native(workspace), 'rel-out')
+  const wrong = join(process.cwd(), 'rel-out')
+
+  const roots = backend.writeRootsFor(workspace, ['rel-out'])
+  const extra = roots.find((root) => root.side === 'root' && root.path.toLowerCase() !== workspace.toLowerCase())
+  check(
+    '相对附加根解析成「会话 cwd + rel-out」',
+    extra !== undefined && extra.path.toLowerCase() === expected.toLowerCase(),
+    `实际=${extra === undefined ? '(没有这条根)' : extra.path}；应为=${expected}`,
+  )
+  check(
+    '不是宿主进程 cwd 旁边的 rel-out（修前的落点）',
+    expected.toLowerCase() === wrong.toLowerCase() || extra === undefined || extra.path.toLowerCase() !== wrong.toLowerCase(),
+    `宿主 cwd=${process.cwd()}`,
+  )
+
+  const policyMod = await import(pathToFileURL(join(ROOT, 'lib/packages/sandbox/policy.js')).href)
+  const policy = policyMod.createPolicy({
+    mode: 'workspace-write',
+    cwd: workspace,
+    tmpDir: policyMod.sandboxTmpDir(join(sandboxRoot, '.dsc'), workspace),
+    extraWritableRoots: ['rel-out'],
+    readOnlySubpaths: [],
+    dscHome: join(sandboxRoot, '.dsc'),
+    networkAccess: false,
+  })
+  check(
+    '与策略层的可写根是同一条路径',
+    policy.roots.some((path) => path.toLowerCase() === expected.toLowerCase()),
+    `围栏可写根=${policy.roots.join('、')}`,
+  )
+
+  // 插件层（sandbox/index.ts）算的私有临时目录必须与后端授的那条是同一条，
+  // 否则策略层放行一个目录、ACL 授的是另一个，设置里显示的也是那个没人写的目录（BUG-0005）。
+  const pluginTemp = policyMod.sandboxTmpDir(join(sandboxRoot, '.dsc'), backend.canonicalWriteCwd(workspace))
+  const tokenTemp = roots.find((root) => root.side === 'temp')
+  check(
+    '插件层算的私有临时目录 = 后端授权的那条 temp 根',
+    tokenTemp !== undefined && pluginTemp.toLowerCase() === tokenTemp.path.toLowerCase(),
+    `插件层=${pluginTemp}；后端=${tokenTemp === undefined ? '(无)' : tokenTemp.path}`,
+  )
+
+  // 规范化不通过的那类（8.3 短名、盘符不存在）与策略层同口径：不加这条根。
+  // 否则策略层已经把这条记进 problems 并拒绝写，后端却还去授权，失败一次就把整条后端降级。
+  const badRoots = backend.writeRootsFor(workspace, ['PROGRA~1'])
+  check(
+    '规范化不通过的附加根不加进来（与策略层同口径）',
+    !badRoots.some((root) => root.path.toLowerCase().includes('progra~1')),
+    badRoots.map((root) => root.path).join('、'),
+  )
+
+  // 同一个目录只能有一个身份：会话是从 junction 进来的（D:\link\proj → 真实 E:\data\proj）时，
+  // cwd 按原串、附加根按真实拼法，会派生出两条 SID、打两份能力 ACE（root 侧授权不回收）。
+  const junction = join(sandboxRoot, 'rel-junction')
+  try {
+    symlinkSync(workspace, junction, 'junction')
+  } catch {
+    // 建不了 junction（权限/文件系统）就跳过这一条，别把整段判据拖红
+  }
+  if (existsSync(junction)) {
+    const viaLink = backend.writeRootsFor(junction, [workspace])
+    const rootSides = viaLink.filter((root) => root.side === 'root').map((root) => root.path.toLowerCase())
+    check(
+      '经 junction 进来的 cwd 与真实路径的附加根只算一条根',
+      rootSides.length === 1 && rootSides[0] === realpathSync.native(workspace).toLowerCase(),
+      rootSides.join('、'),
+    )
+
+    // --temp 必须等于已授权的那条 temp 根：不同源的话，子进程的 TMP/TEMP 会指到一条
+    // 既没能力 ACE、也没人建过的目录（2026-11-17 复核抓到的回归）。
+    const linkTemp = viaLink.find((root) => root.side === 'temp')
+    const linkHandle = backend.createWindowsTokenRunner({
+      mode: 'workspace-write',
+      cwd: junction,
+      networkAccess: () => false,
+    })
+    try {
+      const planned = await linkHandle.runner.plan(
+        { command: 'cmd /c echo ok', cwd: junction, timeoutMs: 30_000, signal: new AbortController().signal },
+        { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: junction },
+      )
+      const tempArg = planned === null ? undefined : planned.args[planned.args.indexOf('--temp') + 1]
+      check(
+        'junction 会话的 --temp 与已授权的 temp 根是同一条',
+        planned !== null && tempArg !== undefined && linkTemp !== undefined &&
+          tempArg.toLowerCase() === linkTemp.path.toLowerCase(),
+        `--temp=${String(tempArg)}；授权=${linkTemp === undefined ? '(无)' : linkTemp.path}`,
+      )
+    } finally {
+      linkHandle.dispose()
+    }
+  } else {
+    note('建不了 junction，跳过「同一目录只有一个身份」这条')
+  }
+
+  // 计划里的 --root 也要是这条绝对路径：runner 按 realpath 复算 SID，对不上会直接退 127。
+  // 先把目录建出来（root 侧不替用户建，见 BUG-0001 那段），否则授权会失败、执行器降级。
+  mkdirSync(expected, { recursive: true })
+  const handle = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    extraRoots: ['rel-out'],
+    networkAccess: () => false,
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle.runner.plan(run, base)
+    if (planned === null) {
+      note('执行器降级，--root 这条跳过')
+      return
+    }
+    const rootsArg = planned.args.filter((value, index) => planned.args[index - 1] === '--root')
+    check(
+      '--root 里带的是绝对路径（不是原始相对串）',
+      rootsArg.some((value) => value.toLowerCase().endsWith(expected.toLowerCase())),
+      rootsArg.join(' | '),
+    )
+
+    // 真写一次：受限令牌下往相对附加根里写文件，落盘才算「围栏与 ACL 真的同一个点」
+    const marker = join(expected, 'x.txt')
+    rmSync(marker, { force: true })
+    const plan2 = await handle.runner.plan(
+      { ...run, command: `cmd /c echo ok>${marker}` },
+      { file: 'cmd', args: ['/c', `echo ok>${marker}`], env: { ...process.env }, cwd: workspace },
+    )
+    const env2 = {}
+    if (plan2 !== null) for (const [key, value] of Object.entries(plan2.env)) if (value !== undefined) env2[key] = value
+    const spawned = plan2 === null ? { error: '已降级' } : await spawnPlan(plan2, env2)
+    check(
+      '受限令牌里往相对附加根写文件成功',
+      spawned.error === undefined && spawned.code === 0 && existsSync(marker),
+      `code=${String(spawned.code)}；stderr=${JSON.stringify(String(spawned.err ?? '').slice(0, 160))}`,
+    )
+  } finally {
+    handle.dispose()
+  }
+}
+
+/**
+ * 回归（BUG-0001）：私有临时目录还不存在时，后端**自己**把它建出来，不许整体降级。
+ *
+ * 修前：`<DSC_HOME>/sandbox/tmp/<工作区哈希>` 谁都不建（宿主建的那份带会话 id，是另一个
+ * 路径），`GetNamedSecurityInfoW` 对不存在的路径返 Win32 错误 2 → 第一次 plan 就降级，
+ * 于是全新安装后第一次跑命令就退回「只有策略围栏、没有换执行体」。
+ *
+ * 判据：新工作区第一次 plan() 返回非 null；临时目录在 plan 之后真的存在；
+ * 细节里不许出现 ACL 失败。
+ *
+ * @param {{ createWindowsTokenRunner: Function, writeRootsFor: Function }} backend 编译产物里的后端导出。
+ */
+async function runMissingTempRootCase(backend) {
+  console.log('')
+  console.log('── 集成：私有临时目录不存在时后端自己建（BUG-0001 回归）')
+  const details = []
+  const workspace = join(sandboxRoot, 'fresh-workspace')
+  mkdirSync(workspace, { recursive: true })
+  const tempRoot = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
+  if (tempRoot === undefined) {
+    skipReason = 'writeRootsFor 没算出私有临时目录（后端接口变了？）'
+    console.log(`  SKIP ${skipReason}`)
+    return
+  }
+  check('前置：这个工作区的临时目录此刻不存在', !existsSync(tempRoot.path), tempRoot.path)
+
+  const handle = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    networkAccess: () => false,
+    onDetail: (message) => details.push(String(message)),
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle.runner.plan(run, base)
+    check(
+      '临时目录缺失时 plan() 仍然给出换执行体的计划（没降级）',
+      planned !== null,
+      planned === null ? details.join(' / ') || '没有给出原因' : 'ok',
+    )
+    check('后端自己把临时目录建出来了', existsSync(tempRoot.path), tempRoot.path)
+    check('细节里没有 ACL 相关失败', !details.some((line) => /ACL/.test(line)), details.join(' / ') || '(无)')
+  } finally {
+    handle.dispose()
+  }
+
+  // 第二段：**不替用户建**工作区/附加根里不存在的路径。
+  // 这一条盯的是「顺手多干一点」的反向风险：替配错的附加根建目录，会把一个用户没打算要的目录
+  // 造出来、打成可继承的低完整性标签，而 root 侧的授权不回收。配错了应该让他看见（降级 + 说明），
+  // 不是悄悄替他圆过去。
+  console.log('')
+  console.log('── 集成：附加根不存在时不替用户建目录（只降级并说明）')
+  const missingRoot = join(sandboxRoot, 'no-such-extra-root')
+  const tempRoot2 = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
+  rmSync(tempRoot2.path, { recursive: true, force: true })
+  const details2 = []
+  const handle2 = backend.createWindowsTokenRunner({
+    mode: 'workspace-write',
+    cwd: workspace,
+    extraRoots: [missingRoot],
+    networkAccess: () => false,
+    onDetail: (message) => details2.push(String(message)),
+  })
+  try {
+    const run = {
+      command: 'cmd /c echo ok',
+      cwd: workspace,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+    const planned = await handle2.runner.plan(run, base)
+    check('附加根不存在时不替用户建目录', !existsSync(missingRoot), missingRoot)
+    check(
+      '这种情况按降级处理（plan 返回 null），并说明是哪条路径',
+      planned === null && details2.some((line) => line.includes(missingRoot)),
+      `plan=${String(planned)}；细节=${details2.join(' / ') || '(无)'}`,
+    )
+    check('降级之前临时目录该建还是建了', existsSync(tempRoot2.path), tempRoot2.path)
+  } finally {
+    handle2.dispose()
   }
 }
 

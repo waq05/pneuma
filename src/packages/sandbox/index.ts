@@ -46,7 +46,7 @@ import { permissionOf, writePermissions } from '@pneuma/permission-core/permissi
 import type { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
 import { createDockerRunner, probeDocker } from './backends.js'
-import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from './win/backend.js'
+import { canonicalWriteCwd, createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from './win/backend.js'
 import { readSetupState, sandboxDir } from './win/account.js'
 import { runSetupElevated, runUninstallElevated } from './win/setup.js'
 import { DEFAULT_SWEEP_AGE_MS, sweepSandboxTemps } from './win/sweep.js'
@@ -175,7 +175,6 @@ export const sandboxPlugin: Plugin.Object = {
     let disposed = false
 
     const currentCwd = (): string => ctx.session.current().meta.cwd
-    const currentSessionId = (): string => ctx.session.current().meta.id
     const currentSessionPath = (): string => ctx.session.current().filePath
 
     /**
@@ -221,7 +220,11 @@ export const sandboxPlugin: Plugin.Object = {
       const cwd = cwdOverride ?? currentCwd()
       const mode = modeOverride ?? modeOf(ctx.session.current())
       const granted = sessionPath === undefined ? [] : (sessionRoots.get(sessionPath) ?? [])
-      const tmpDir = sandboxTmpDir(DSC_HOME, cwd, currentSessionId())
+      // 私有临时目录必须与受限令牌后端授权的**同一条**：那边算的是
+      // `sandboxTmpDir(DSC_HOME, 规范化后的 cwd)`（backend.ts 的 canonicalWriteCwd，不带会话 id）。
+      // 这里以前按会话 id 算，于是策略层放行一个目录、ACL 授的是另一个，设置页与 /sandbox
+      // 显示的那个目录也没人写（2026-11-17 复核发现，BUG-0005）。
+      const tmpDir = sandboxTmpDir(DSC_HOME, canonicalWriteCwd(cwd))
       try {
         mkdirSync(tmpDir, { recursive: true })
       } catch {

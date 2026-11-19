@@ -13,11 +13,7 @@ export interface EngineOptions {
   executor: Executor
   outbox: Outbox
   prepareTicket?: (ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>) => Ticket
-  /**
-   * The clock, in `Date#toISOString` form. Required rather than defaulted: the core never reads the ambient clock, so
-   * tests and replays stay deterministic (upstream's `now?: () => string` fell back to `new Date()`, which this port drops).
-   */
-  now: () => string
+  now?: () => string
   emit?: (event: DomainEvent) => void
 }
 
@@ -28,7 +24,7 @@ export interface EngineOptions {
 export abstract class EnginePart {
   protected readonly repo: Repositories
   constructor(protected readonly options: EngineOptions) { this.repo = options.repo }
-  protected now(): string { return this.options.now() }
+  protected now(): string { return this.options.now?.() ?? new Date().toISOString() }
   protected policy(): Policy { return this.options.policy() }
   /** The tickets whose worker decides a person's follow-up: see `followupOwners`. */
   protected owners(trigger: Trigger): string[] { return followupOwners(trigger, this.repo) }

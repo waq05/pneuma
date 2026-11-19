@@ -82,6 +82,15 @@ if (first === 'config' || first === 'plugin') {
   }
 
   // ── 启动：node lib/boot.js ────────────────────────────────────────────────
+  //
+  // 不认识的**裸词**当子命令处理并拒绝：曾出现过 `numa bogus` 被静默透传给 boot、
+  // TUI 照常起来、用户以为「这条命令没反应」。选项（`-` 开头）仍透传——boot 会拒绝
+  // 或忽略它们，那是它自己的契约；`--resume` 的取值已在上面吃掉，不会走到这里。
+  const unknown = passthrough.find((arg) => !arg.startsWith('-'))
+  if (unknown !== undefined) {
+    fail(`不认识的子命令「${unknown}」。可用：config / plugin（--help 看全部）`)
+  }
+
   const child = spawn(process.execPath, [BOOT, ...passthrough], {
     stdio: 'inherit',
     env: process.env,
@@ -95,4 +104,17 @@ if (first === 'config' || first === 'plugin') {
     }
     process.exit(code ?? 0)
   })
+
+  // 非交互调用（管道 / 重定向）在 stdin 结束后收场：TUI 收不到键，留着只是空转。
+  // 2026-11-16 实测 `echo hi | numa` 永不退出（C6 的「不卡死」判据）。只在非 TTY 下挂，
+  // 真终端的 stdin 不会 end，行为不变。子进程先杀再退，避免留下孤儿 boot。
+  if (process.stdin.isTTY !== true) {
+    const stop = () => {
+      child.kill()
+      process.exit(0)
+    }
+    if (process.stdin.readableEnded) stop()
+    else process.stdin.once('end', stop)
+    process.stdin.resume()
+  }
 }

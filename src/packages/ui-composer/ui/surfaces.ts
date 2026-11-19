@@ -98,6 +98,21 @@ export function readSessionUnsaved(snapshot: HostSnapshot | null): boolean {
 }
 
 /**
+ * 这条会话现在有没有能接住用户输入的一方（2026-11-19）。
+ *
+ * 宿主给 `false` 的情形只有一类：正文区开着一条**没有驱动**的会话——收工的队友、
+ * 一次性的子智能体、或复活失败的那种。这种会话能看、能翻、能看轨迹，但句子没处投；
+ * 输入框要换成一行说明（对照 dsh 的 SubagentReadOnlyComposer）。
+ *
+ * 缺省（老宿主不给这一项）= 能输入：不要把「字段缺席」当成只读，那会让所有会话都不能打字。
+ */
+export function readAcceptsInput(snapshot: HostSnapshot | null): boolean {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return true
+  return (status as Record<string, unknown>)['acceptsInput'] !== false
+}
+
+/**
  * 权限预设投影（当前生效的 + 新会话默认的 + 全部可选）。清单**从快照读**，不在壳里抄一份：
  * 出厂那几个预设（只读 / 工作区可写 / 完全访问 / AI 复核）由 permission-presets 插件给定，
  * 抄一份就会漂。`current` 是预设名，三项旋钮拼不出预设时宿主给 `'custom'`（这里不特判它，

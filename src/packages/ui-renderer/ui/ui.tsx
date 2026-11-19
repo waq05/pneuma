@@ -23,7 +23,7 @@
  */
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createT, defineUiPlugin, onAppearanceRequest } from '@dsc/ui'
+import { createT, defineUiPlugin, normalizeFontList, normalizeTextSizePx, onAppearanceRequest, textSizePxFromLegacy } from '@dsc/ui'
 import type { UiPrefsView } from '@dsc/ui-core'
 import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
 // 共享运行时（平台种子）：通道工厂、RuntimeProvider、外观落地。它们由 **shell** 提供，
@@ -37,6 +37,8 @@ import {
   loadCachedAppearance,
   saveCachedAppearance,
 } from '@dsc/ui-runtime'
+// 归一函数从插件面取（`@dsc/ui`），**不要**从 `@dsc/ui-core` 引：那张表不提供给插件
+// 构造（构建期会拦 `require("@dsc/ui-core")`），而本文件是渲染器插件、产物里不能出现它。
 /// <reference path="./boot-types.d.ts" />
 // 引导的类型面按**发布包的子路径**取（本地类型桥见 boot-types.d.ts）；运行期能力全从
 // `start(api)` 的入参拿，插件 bundle 不 import 引导。
@@ -138,7 +140,23 @@ let layoutSurface: LayoutSurface | null = null
  */
 onAppearanceRequest((patch) => {
   if (layoutSurface === null) return
-  appearance = { ...(appearance ?? DEFAULT_APPEARANCE), ...patch }
+  // 逐项挑，不整块展开：`AppearancePatch` 里还留着 @deprecated 的 `fontSize`，
+  // 整块展开会把它塞进 `Appearance`（展开不受多余属性检查，编译期看不见）。
+  // 逐项挑还顺手堵住另一个坑：patch 里显式写着 `undefined` 的键不会把当前值抹掉。
+  const next = { ...(appearance ?? DEFAULT_APPEARANCE) }
+  if (patch.textSizePx !== undefined) {
+    // 先归一再落地：插件可能发 30 或 16.6，界面要按夹取后的值画，不能画出 30px 的字。
+    next.textSizePx = normalizeTextSizePx(patch.textSizePx)
+  } else if (patch.fontSize !== undefined) {
+    // 旧插件还在发倍率：折成 px 再落地，否则这一帧界面不动（宿主那边已经存成 px 了，
+    // 用户只看到「已保存外观设置」，要刷新才生效）。
+    next.textSizePx = textSizePxFromLegacy(patch.fontSize) ?? next.textSizePx
+  }
+  if (patch.textFontFamily !== undefined) next.textFontFamily = normalizeFontList(patch.textFontFamily)
+  if (patch.codeFontFamily !== undefined) next.codeFontFamily = normalizeFontList(patch.codeFontFamily)
+  if (patch.themeMode !== undefined) next.themeMode = patch.themeMode
+  if (patch.density !== undefined) next.density = patch.density
+  appearance = next
   applyAppearance(appearance)
   saveCachedAppearance(appearance)
 })

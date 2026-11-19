@@ -90,6 +90,14 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   sandbox: t('transcript.injection.kind.sandbox'),
   'todo-reminder': t('transcript.injection.kind.todoReminder'),
   'repeat-reminder': t('transcript.injection.kind.repeatReminder'),
+  // 2026-11 团队板快照：看板变化后由 subagent 投影注到请求尾部（kind 在契约常量表外，
+  // 见 packages/subagent/board-snapshot.ts 的 BOARD_SNAPSHOT_KIND 注释）。
+  'team-board': t('transcript.injection.kind.teamBoard'),
+  // 2026-11 P0 尾部注入三件（kind 同样在契约常量表外，见各插件尾部投影的 KIND 常量）：
+  // 记忆索引 / 待审候选条数 / 定时任务条数。
+  'memory-index': t('transcript.injection.kind.memoryIndex'),
+  'self-improve': t('transcript.injection.kind.selfImprove'),
+  schedule: t('transcript.injection.kind.schedule'),
 }
 
 /** 一类注入在收起行里的写法（认不出的类别退回原始 kind）。 */

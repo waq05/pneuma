@@ -9,9 +9,15 @@
 | **代码怎么分层、往哪改、怎么验证** | **本文档** |
 | **界面怎么改、控件往哪加、颜色字号怎么取值** | [ui-design.md](ui-design.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
-| 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
-| 三家对标产品的功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
+| 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [archive/harness-benchmark-roadmap.md](archive/harness-benchmark-roadmap.md) |
+| 三家对标产品的功能清单全文（差距的证据底料） | [archive/peer-feature-inventory.md](archive/peer-feature-inventory.md) |
 | 怎么写一个插件 | [plugin-development.md](plugin-development.md) |
+| **测试怎么写、为什么这么写** | [testing-101.md](testing-101.md) |
+| 测试体系的目标、对齐基线、分几层、要多久 | [testing-design.md](testing-design.md) |
+| 测试设施的落地细节（vitest 配置、harness、迁移配方） | [testing-detailed-design.md](testing-detailed-design.md) · [testing-migration-playbook.md](testing-migration-playbook.md) |
+| **哪些决定和设计不一样、测试照出了哪些源码问题** | [testing-deviations.md](testing-deviations.md) · [testing-findings.md](testing-findings.md) |
+| **接手这套东西先看什么** | [testing-handoff.md](testing-handoff.md) |
+| **还差什么没补（欠账清单）** | [testing-backlog.md](testing-backlog.md) |
 
 ## 1. 一张图看懂运行时
 
@@ -189,7 +195,7 @@ export const myPlugin: Plugin.Object = {
 `unmetDependencies` 管依赖、用 `UiBootPluginState.state` 管状态。那份与宿主内核的 cordis 语义各说
 各话——同一件事（装、等依赖、卸）在两边两套实现。
 
-现在壳里也有一个 cordis 根（`src/packages/ui-renderer/ui/cordis-host.ts`），装插件走 fiber：
+现在壳里也有一个 cordis 根（`src/packages/ui-boot/ui/cordis-host.ts`），装插件走 fiber：
 
 | 旧账本 | 现在 |
 | --- | --- |
@@ -220,7 +226,7 @@ export const myPlugin: Plugin.Object = {
 ### 两种依赖，两个字段（2.0 起）
 
 界面清单里曾经只有一个 `inject` 字段，既当「插件 id」又当「服务名」，靠「这个名字在不在清单里」
-猜。2.0 把它拆成两个字段（`src/ui/manifest.ts`），两类依赖各走各的：
+猜。2.0 把它拆成两个字段（`src/core/ui-manifest.ts`），两类依赖各走各的：
 
 - **`inject`（插件 id）**（例：`trace` 的 `inject: ['transcript']`）→ 由装载器的
   `unmetDependencies` 在装之前检查，缺了就报「插件 transcript 没装上」，重试轮再试一次；
@@ -345,7 +351,7 @@ lib/ui/plugins/
 写 `platform: "web"` 的是 dsh 自己的界面半，仍然只列不加载——理由见
 [plugin-development.md §10.6.1](plugin-development.md)。完整示例是
 `examples/plugin-two-halves/`（宿主半一个工具、界面半状态栏一段）；自检三条：
-`scripts/ui-package-plugin-test.mjs`（发现/门禁/组图/卡片/远程 38 条）、`scripts/ui-two-halves-test.mjs`
+`tests/integration/ui-package-plugin.int.spec.ts`（发现/门禁/组图/卡片/远程 38 条）、`tests/integration/two-halves.int.spec.ts`
 （装进 profile 后两半都到位 + 示例 bundle 的工厂形状，16 条）、`scripts/ui-two-halves-e2e.mjs`（真 Electron，11 条，
 截图 `desktop/shots/two-halves.png`）。
 
@@ -418,19 +424,19 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:93` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/packages/host-stdio/index.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
 | `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:71` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
-| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.9.0 | **跟产品号同版**（`release.yml` 四方对账） |
+| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.9.1 | **跟产品号同版**（版本清单见 `scripts/version-sites.json`，`release.yml` 对账） |
 
 前两个是「加载时对不上就报错」，不做静默兼容。第四个号（`apiVersion`）走 semver 区间：
-插件声明 `"api": "^0.9.0"`，宿主拿壳版本做 `satisfies(壳版本, 区间)`，不满足就不进启动图
+插件声明 `"api": "^0.9.1"`，宿主拿壳版本做 `satisfies(壳版本, 区间)`，不满足就不进启动图
 （原因写进诊断区，见 §插件开发第 10 节）。
 
 第四个号**跟产品号同版**。它写的是「插件面对的 `@dsc/ui` 契约」，
-由 `ui-shell/package.json` 的 `version` 写进清单，`release.yml` 按 tag / 根 / `desktop` / `ui-shell`
-四方对账。
+由 `ui-shell/package.json` 的 `version` 写进清单；版本口径的唯一清单是 `scripts/version-sites.json`，
+`release.yml` 按它一次性对账 tag / 根 / `desktop` / `ui-shell` 与 `src/packages/*` 包组。
 
-**代价要清楚**：22 个界面包（21 个界面单元 + 引导 `ui-boot`）的 `package.json` 都声明
-`"api": "^0.9.0"` 这样的区间，构建期（`ui-shell/build-plugins.mjs` 读 `shellVersion`）逐个校验。
-所以每次改版本号，**这批区间要一起改**——`^0.9.0` 只认到 0.10.0 以下，出 0.10.0 那天不改就会被门禁拒掉。
+**代价要清楚**：23 个界面包的 `package.json` 都声明 `"api": "^0.9.1"` 这样的区间，
+构建期（`ui-shell/build-plugins.mjs` 读 `shellVersion`）逐个校验。所以每次改版本号，
+**这批区间要一起改**——`^0.9.1` 只认到 0.10.0 以下，出 0.10.0 那天不改就会被门禁拒掉。
 
 好在漏改不会静默：`build-plugins` 会把失配的插件点名，`release.yml` 在打包前先跑一次
 `build-plugins`，19 个全挂时发版直接停在 verify 作业，不会产出一个「界面全空」的安装包。
@@ -477,7 +483,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `presets/` | 预设（模式）插件（`src/packages/config-core/presets.ts:41`） | 自定义模式，一份 `<名字>.md`（frontmatter + 提示词正文）；出厂四个模式首次启动会各写一份到这里，之后读盘，用户改过的不覆盖 |
 | `plugins/*.js` | 用户 | 自定义插件 |
 | `skills/` | 技能中心（安装） | 用户级技能目录，每个子目录一份 `SKILL.md` |
-| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时（skills.sh 这类搜索型源按关键词各存一份） |
+| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时（skills.sh 这类搜索型源按关键词各存一份）；联网失败时回退旧清单（不看这 1 小时）。界面另有进程内缓存 + 后台预取：离开技能页再回来不重抓 |
 | `cache/session-index.json` | session-search 插件（`src/packages/session-search/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
 | `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（0.9.0 起并进 hooks 插件的「外部命令（codex 事件名）」组，与安全钩子的 `hooks.json` 各读各的） |
@@ -558,10 +564,10 @@ note     { id, text }                   请求注入备忘（投影塞进请求�
 Esc 关；已发送贴图与待发贴图共用 `image-lightbox`（那边地址虽是同源
 `/api/attachments/<sha>`，但点开也是浮层，不再另开窗口）。
 
-**改附件之前先看**：`scripts/attachments-test.mjs` 覆盖了去重、上限、魔数、引用读回、
-Range、会话投影与路径洗白；界面侧的上传/规范化/抽帧在
-`src/packages/ui-composer/ui/attachments.ts`，类型定义在 `draft.ts`（那份必须零 import，
-`ui-composer-draft-test.mjs` 会红）。
+**改附件之前先看**：`tests/integration/attachments.int.spec.ts` 覆盖了去重、上限、魔数、
+引用读回、Range、会话投影与路径洗白（原 `scripts/attachments-test.mjs` 已迁入）；界面侧的
+上传/规范化/抽帧在 `src/packages/ui-composer/ui/attachments.ts`，对应 `attachments.spec.ts`；
+类型定义在 `draft.ts`（那份必须零 import，`ui-composer-draft-test.mjs` 会红）。
 
 **「模型可见 ⟺ 已记录」**（对齐 dsh 的 Model-visible ⟺ logged）：发给模型的每一份
 都要求能从日志重建——消息历史存原文，改写走 `ctx.prompt.registerProjection` 的
@@ -615,6 +621,22 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 
 ## 8. 开发流程
 
+**分支怎么走（2026-11-17 起）**：`main` 只从 `dev` 收，`dev` 是汇总线，收各条开发分支。
+
+```sh
+git switch dev                                  # 汇总线；它的上游是 main
+git switch -c fix/<话题> dev                     # 一条分支一件事，从 dev 拉
+# …改代码、跑门禁、自证（命令 + 退出码，见 §5）…
+git switch dev && git merge --no-ff fix/<话题> -m "merge: <一句话>"
+git branch -d fix/<话题>                         # 合完就删，别留分支坟场
+# dev 全绿、要发版时才动 main：
+git switch main && git merge --no-ff dev -m "merge: dev 合进 main（<版本>）"
+# tag 从 main 打（版本口径见 scripts/version-sites.json；打前跑 node scripts/version-check.mjs --tag <版本> 自证）
+```
+
+为什么多一条 `dev`：`main` 是发版口，直接往上叠开发分支的话，一半成品一半半成品说不清哪一版能发。
+汇总线把「能跑」和「能发」分开：`dev` 允许暂时红在已知项上（要写清哪条红），`main` 只收全绿的。
+
 ```sh
 # 装依赖：一个 workspace 装齐四个项目（内核 / 界面壳 / 桌面端 / 遥控 Web），
 # 子项目不用再单独 install（2026-10-28 起）
@@ -626,28 +648,61 @@ cd D:\dsc && pnpm run build        # tsc → lib/，自检脚本跑的就是 lib
 # 类型检查（桌面端）
 cd D:\dsc\desktop && pnpm run typecheck
 
-# 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
+# ── 主测试体系（Vitest，2026-11 起）：改完代码优先跑这几条 ─────────────────
+pnpm test                          # unit + ui + tui 三层（PR 门的核心，约 2 分钟）
+pnpm run test:int                  # 先 build 再跑 integration（真内核 + 临时 HOME，约 8 分钟；maxWorkers 4）
+pnpm run test:snapshot             # 帧/golden（TUI 帧 30 + 浏览器 DOM 11；夜跑，PR 门不跑。会话回放场景无录制时整段 skip 并打 warn，B45）
+pnpm run test:e2e                  # 真宿主 + 真 Electron（8 文件，161 通过 + 1 skip；B40 的 6 红已于 779498b7 修掉）
+pnpm run test:cli                  # 真入口 bin/dsc.js 八条（先 build，约 5 秒）
+pnpm run test:live                 # 真模型冒烟 5 条（无 DSC_LIVE_API_KEY 时整层跳过，不算失败）
+pnpm run test:bench                # 性能基准 4 条，7 次中位数 vs tests/bench/baseline.json（runner 不符只记录）
+pnpm run test:coverage             # 覆盖率（阈值读 coverage-baseline.json，只降不升；文件缺：本地放行、CI 报错；文件坏：一律报错；跑完自动校验「四指标都有代码被执行」，否则红）
+pnpm run typecheck:spec            # 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
+
+# ── 探针通道（Vitest 表达不了的那批；不是主入口）────────────────────────────
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 55 条纯 Node 探针，41 秒（新探针按文件名自动进门禁，条数会涨）
-pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
+pnpm run check:ui                  # 49 条纯 Node 探针（含插件产物审计 / 源码文本闸，jsdom 与渲染层够不到）
+pnpm run check:ui:e2e              # 8 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 100 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批 / 插件热更），约 12 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:core                # 16 条 Node 侧探针（ESM 缓存戳 / 源码文本 / 文档闸 + 第 0 批新增 5 条门禁自测），见 testing-backlog §三
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
-pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（77 包/77 行/0 缺口）+ 包标准八条硬项 + 89 个包用例 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 组合门禁（77 包/63 实挂/0 失败）+ 17 条换包 e2e
+pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（--strict）+ 包标准硬项 + 清单快照 + 组合门禁（77 包/63 实挂）+ 换包 e2e；原来的「89 个包用例 / 92 条加载器探针 / 15 条 list 探针」已迁进 Vitest，不再挂在这里
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
-pnpm run check:all                 # style + plugin + ui + dsh + core + remote 串起来（不含 ui:e2e）
-pnpm run check:p0                  # P0 定点门禁：16 条 <话题>-check.mjs 依次跑，任一条红就退非零（不并入 check:all）
+pnpm run check:all                 # style + plugin + ui + dsh + core + remote + probe-inventory 串起来（不含 ui:e2e）
+pnpm run check:p0                  # P0 定点门禁：19 条 <话题>-check.mjs 依次跑，任一条红就退非零（不并入 check:all）
+# ── 新增的五条台账/规格门禁（第 0 批，2026-11-18 落地；推门三步在 verify.yml 的 core job）──────
+pnpm run law                       # 三条铁律：src/core 不引界面依赖 / 界面只调 INVOKABLE_METHODS / 功能分支不许改 loop.ts
+pnpm run ci-coverage               # 门禁台账 scripts/gate.json 与 workflow 对账：check:* 都有归属、push/nightly 都真跑
+pnpm run probe-inventory           # 探针孤儿台账：scripts/*.mjs 必须落进六类之一（登记表 scripts/probe-manual.json）
+pnpm run docs-check                # 文档漂移：docs/** 与 AGENTS.md 里点名的仓库路径、相对链接必须存在（基线 scripts/docs-check-baseline.json）
+node scripts/version-check.mjs --tag 0.9.1   # 版本口径：tag / 根 / desktop / ui-shell + src/packages 包组（清单 scripts/version-sites.json）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 # 老探针已按 scripts/<话题>-test.mjs 命名统一收进门禁（check:ui / check:core / check:dsh
 # 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本
 # （desktop/shots/*.mjs，例如 readme-shot.mjs 拍 README 图、ui-seed.mjs 造临时 HOME 的会话数据），
 # 本机跑、不进 CI；截图产物被 .gitignore 忽略，脚本本身进版本库。
-node scripts/composer-test.mjs     # TUI 输入候选面板
+pnpm run test:tui                 # TUI 输入候选面板 / 帧（原 scripts/composer-test.mjs 已并入 composer.spec.ts）
 
 # 打包版实拍
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
+
+# 打包产物逐功能验收（2026-11-17 起，跑的是 dist 里那份，不是 dev）
+node desktop/shots/_verify-welcome-packaged.mjs    # 首屏：当前时段那一句 + 引导行 + 四张卡
+node desktop/shots/_verify-core-loop-packaged.mjs  # 发一句话 → 假端点回复落到会话流
+node desktop/shots/_verify-features-packaged.mjs   # 思考 Markdown / 紧凑命令卡 / 设置页
+node desktop/shots/_verify-pages-packaged.mjs      # 设置、插件、技能三页，每页新起一个进程
+node desktop/shots/_verify-sandbox-write-packaged.mjs  # 命令真在系统级沙箱里跑：写根内成、写根外 EPERM
+# 共用壳 `desktop/shots/_pkg-harness.mjs`：隔离 HOME + 本地假端点 + CDP + 截图。
+# 新场景写成它的一个 `withApp({id, fake}, ctx => …)` 函数，不要再抄一遍启动逻辑。
+# 经 withApp 起的场景，HOME 落在系统临时目录（C 盘）：受限令牌后端要给可写根设完整性标签，
+# D 盘的新建目录设不了（`icacls /setintegritylevel` 直接 Access is denied），HOME 放仓库里
+# 会让沙箱用例集体假红。少数老探针（如 `_verify-pages-packaged.mjs`）自己建 HOME 且还在仓库里，
+# 它们不碰沙箱 ACL，暂时无碍；新写的别再学。
+# 工具卡里的输出默认折着，验命令结果别读界面文本（命令原文也会被画出来，容易自己骗自己）：
+# 读会话 jsonl 里 `type:"tool"` 那条，那是真实的 stdout 与退出码。
+# 验收里发现的问题登记在 docs/bugs.md（BUG-0001 起），修完在那条下面补验收命令。
 ```
 
 **包依赖方向门禁（含相对路径，2026-11-09 起）**：`scripts/plugin-dep-graph.mjs` 现在把 `./`、`../` 也解析成真实文件（`.js` → `.ts` / `.tsx`、目录 → `index.ts`），再按「文件属于哪一层、哪个包」归类；包 → 包的相对导入与 `@pneuma/<id>` 用同一个判据（功能包只许 import 库包）。
@@ -703,7 +758,7 @@ id 存、存活集合取全部会话）、连接（`plugin-config-enable` 的插
 exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
-（`src/packages/ui-skills/ui/ui.tsx:121`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
+（`src/packages/ui-skills/ui/ui.tsx:305`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
 `diag`（同文件 `:899`）、`theme`（`src/packages/ui-runtime/ui/appearance.ts:221`）、
 `panels`（`src/packages/ui-primitives/ui/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
 `panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
@@ -728,7 +783,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 新增这类小工具前先看 `src/core/` 下有没有现成的：`err-text`（错误文案）、`clamp`（数值）、`records`（对象判定）、
 `strings`（切词与空串判定）、`json-text`（安全序列化）、`transcript-text`（从消息取文）、`shell-quote`（起 shell）、
 `snapshot-throttle`（快照推送节流）、`git-surface`（git 读数相等判断）、`clock`（时:分:秒）、
-`cdp/report` 与 `cdp/ring-buffer`（浏览器输出与事件缓冲）、`src/ui/signal.ts`（模块级信号，界面侧用）。
+`cdp/report` 与 `cdp/ring-buffer`（浏览器输出与事件缓冲）、`src/packages/ui-core/signal.ts`（模块级信号，界面侧用）。
 界面侧还要看基元包：`@dsc/ui-primitives` 已经有时间、token、文件大小、路径、吞吐、错误文案、git 读数相等判断，
 以及**从宿主快照取数**（`snapshot`：工作目录 / 会话清单 / 条目流 / 回合状态）这些口径。
 
@@ -750,7 +805,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 `pnpm run dist:dir`（试）/ `pnpm run dist`（安装包与便携版）三步：
 
 1. `electron-vite build` → `out/`（主进程 + preload + renderer）；
-2. `scripts/prepare-runtime.mjs` → `runtime-staging/dsc-core/`：拷 `D:\dsc\{bin,lib,package.json}`
+2. `desktop/scripts/prepare-runtime.mjs` → `runtime-staging/dsc-core/`：拷 `D:\dsc\{bin,lib,package.json}`
    与运行期依赖（依赖用 `realpath` 穿过 pnpm 虚拟 store 解析）；
 3. `electron-builder`：`files: [out/**, package.json]`，`extraResources` 把 `dsc-core` 与
    托盘图标放进 `resources/`，`afterPack` 再把 `dsc-core/node_modules` 落到位。
@@ -759,7 +814,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 **内核没跟着 exe 更新**时先怀疑 `prepare-runtime` 之前没跑 `pnpm run build`。
 
 **发布流水线**（`.github/workflows/release.yml`，推 `v*` tag 触发，tag 打在 `main` 上）：
-`verify` 对账 tag / 根 / `desktop` / `ui-shell` 四处版本号，并跑一次 `build:plugins` 检查 19 个内置
+`verify` 先跑 `node scripts/version-check.mjs --tag "${GITHUB_REF_NAME#v}"`，按 `scripts/version-sites.json`
+对账 tag / 根 / `desktop` / `ui-shell` 与 `src/packages/*` 包组，并跑一次 `build:plugins` 检查内置
 插件的 `@dsc/ui` peer 区间；`npm` 作业用 `NPM_TOKEN` 发 CLI，发完轮询官方源确认版本真出现
 （未配 secret 时警告并跳过，不挡安装包）；`NPM_TOKEN` 是一枚限 `@waq666/pneuma`、勾了
 Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到期前换新并重写 secret，
@@ -890,7 +946,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 应用白名单 | 空串 = 不限 | `src/packages/computer-use/index.ts:54` |
 | 看屏免审批 | 默认关 | `src/packages/computer-use/index.ts:56` |
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
-| 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/packages/config-core/market.ts:10` |
+| 技能市场清单缓存 | 新鲜期 1 小时，三层：界面进程内（键=源名+关键词，24 条上限）→ 宿主内存（键=源名+源地址，32 条上限）→ `~/.dsc/cache/`。过期先显示旧结果再后台刷新；联网失败回退旧清单（不受 1 小时限制），三层全空才报错 | `src/packages/config-core/market.ts:10`、`src/packages/skills/index.ts`（`entriesCache`） |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/packages/computer-use/index.ts:72` |
 | 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/packages/sandbox/policy.ts:87-89`、`src/packages/permission-core/permission-scope.ts` |
 | 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/packages/sandbox/policy.ts:61` |
@@ -935,7 +991,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 （对齐 dsh 的 `interrupt_agent`：之后能用 `send_message` 接着聊）；真正清掉走界面的「移除」
 （`TeamService.remove`，删记录与运行记录并 `dispose` 会话）。传话之后会重新挂一次汇报：
 把 `awaitReport.minRound` 记成「当前轮数 + 1」，`settle` 里等模型又说过一句（或直接失败）才回，
-`lastReportedRound` 防同一轮重复回（2026-10-27 修；探针 `scripts/subagent-resume-test.mjs`）。
+`lastReportedRound` 防同一轮重复回（2026-10-27 修；探针 `tests/integration/subagent-resume.int.spec.ts`）。
 
 **写/执行类不留持久授权**：一次审批只管这一次，`approval` 服务不跨回合记住「上次同意过」。
 
@@ -975,7 +1031,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
 | `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
 | `spill.ts` | 溢出落盘：建文件（目录 0700、文件 0600）、按整行截断并在文件末尾写明第几行没落盘、生成预览与续读写法、按 mtime 与目录总量扫目录 |
-| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒。`resolveBackendChoice` 是「这一次真用哪个后端」的纯函数，规则顺序：danger-full-access → 显式受限令牌 → 默认档在 Windows 自动升 → 其余策略围栏，平台与探测结果都由入参给，所以能脱离 koffi 单测；`resolveSandboxConfig` 额外带出 `explicitBackend`——原始配置里出现过 `backend` 键才算用户显式选过，只看值分不出「默认 policy」与「手动改回 policy」；`grantCacheRoots` 默认开，`cacheRootCandidates` / `existingCacheRoots` 只把**已存在**的 npm/pnpm/cargo/pip/yarn 缓存目录并进可写根）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换）；Windows 受限令牌后端的可写根按**每次调用的 cwd** 现算（工作区 + 它的私有临时目录），不再钉死挂载时那个会话。包内自检 `tests/backend-choice.test.mjs` 覆盖后端选择六条规则与缓存目录的存在性/去重 |
+| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒。`resolveBackendChoice` 是「这一次真用哪个后端」的纯函数，规则顺序：danger-full-access → 显式受限令牌 → 默认档在 Windows 自动升 → 其余策略围栏，平台与探测结果都由入参给，所以能脱离 koffi 单测；`resolveSandboxConfig` 额外带出 `explicitBackend`——原始配置里出现过 `backend` 键才算用户显式选过，只看值分不出「默认 policy」与「手动改回 policy」；`grantCacheRoots` 默认开，`cacheRootCandidates` / `existingCacheRoots` 只把**已存在**的 npm/pnpm/cargo/pip/yarn 缓存目录并进可写根）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换）；Windows 受限令牌后端的可写根按**每次调用的 cwd** 现算（工作区 + 它的私有临时目录），不再钉死挂载时那个会话。包内自检 `src/packages/sandbox/tests/backend-choice.spec.ts` 覆盖后端选择六条规则与缓存目录的存在性/去重 |
 | `schedule/` | 定时任务：`rule`（六种选择器 + 时区/DST）、`store`（tasks.json 原子替换 + runs.jsonl 台账 + pendingSlot）、`runner`（自重排 setTimeout + catch-up + pre-dispatch 校验）。**先落盘推进 nextRunAt 再投递** |
 | `lsp/` | 语言服务器客户端：`framing`（Content-Length 分帧，别照抄 mcp.ts 的换行分帧）、`uri`（先解码成路径再比内外）、`servers`（内置表 + marker 找根 + PATHEXT）、`client`（握手/串行队列/idle 回收/破键退避）。挂着的请求结算用本地 settled 闸门——先清表再 settle 会让请求永不落地 |
 | `cdp/` | 浏览器 CDP 底座：`transport`（id 配对 + **按 sessionId 路由** + 事件订阅）、`launch`（探测/参数串/DevToolsActivePort/整树 taskkill）、`snapshot`（无障碍树文本化 + ref 代际）、`actions`（Input/DOM/Runtime 动作） |
@@ -990,7 +1046,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/packages/approval/index.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
-| `market.ts` | 四类源：GitHub 目录（trees + raw）、索引 JSON、ClawHub（`/api/v1/skills` 榜单；安装先换一次 zip 下载地址，整包解开写盘）、skills.sh（**只有搜索**，`q` 少于 2 字符直接报错；安装时在仓库树里找 `<技能名>/SKILL.md` 所在目录）。GitHub 源「补描述」走一个**总预算 6 秒**的独立阶段（`ENRICH_BUDGET_MS`，单请求 4 秒）：描述只用于展示，取不到就保留占位，不让挂掉的文件域名把整次浏览拖过界面 30 秒上限。缓存 1 小时（搜索型源按「源 + 关键词」各存一份）、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
+| `market.ts` | 四类源：GitHub 目录（trees + raw）、索引 JSON、ClawHub（`/api/v1/skills` 榜单；安装先换一次 zip 下载地址，整包解开写盘）、skills.sh（**只有搜索**，`q` 少于 2 字符直接报错；安装时在仓库树里找 `<技能名>/SKILL.md` 所在目录）。GitHub 源「补描述」走一个**总预算 6 秒**的独立阶段（`ENRICH_BUDGET_MS`，单请求 4 秒）：描述只用于展示，取不到就保留占位，不让挂掉的文件域名把整次浏览拖过界面 30 秒上限。缓存 1 小时（搜索型源按「源 + 关键词」各存一份）、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN`。**2026-11-17 起**整次浏览再加一道 **15 秒总预算**（`BROWSE_BUDGET_MS`，每一跳都用 `budgetedTimeout` 扣掉已花时间，补描述与总预算取小）：超预算就交已经拿到的条目（描述留占位），不再顶到界面 invoke 的 30 秒超时；联网失败（超时 / HTTP 错 / 解析失败）回退**磁盘旧清单**——1 小时 TTL 只决定「要不要联网」，不决定「失败后还能不能用」，盘上完全没缓存才抛错（不拿空数组冒充成功）。回退原因经 `onFallback` 交给 `skills/index.ts`，写进 `MarketBrowseResult.error`（items 非空 + error 存在 = 界面「这次没取到新结果，先显示上次的」软提示）；界面「刷新」经 ui-methods 的第三参 boolean → runtime → `browseMarket(source, refresh, query)`，跳过两层新鲜缓存强制联网。`options.budgetMs` 只给自检覆盖总预算 |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |
 | `version.ts` | 版本号从包名 `pneuma`（兼容旧名 `dsc-tui`）的 `package.json` 往上找（`:12-13`、`:23`）。**改包名要同步 `PACKAGE_NAMES`**，否则「关于」分区显示 `0.0.0` |
 
@@ -1299,7 +1355,7 @@ const t = hostT(import.meta.dirname)   // 语言读 config.yaml，字典读本�
 
 加一种新状态要动四处：`turn-notify.ts` 的 `TurnNoticeKind` 与 `TITLE_KEY`、本包两份 locale、
 按需在 `ui.tsx` 加 selector；手机侧要同步就再改 `remote/index.ts` 与它的 locale。探针
-`scripts/ui-turn-notify-test.mjs` 用 Node 的类型剥离直接跑纯函数，改完先跑它。
+`src/packages/ui-transcript/ui/turn-notify.spec.ts` 用 Node 的类型剥离直接跑纯函数，改完先跑它。
 
 ### 启动这几秒：过渡页、失败页、首帧底色
 
@@ -1339,7 +1395,7 @@ const t = hostT(import.meta.dirname)   // 语言读 config.yaml，字典读本�
   别重复探」，落盘管「下次启动别重复探」。
 - 预热只在**没有缓存**时排，12 秒后跑、且不 `force`；「重新检测」按钮走 `detectShells(true)`，
   跳过两层缓存并刷新落盘。
-- `scripts/terminal-env-test.mjs` 覆盖了落盘写入、版本不符、过期、形状坏掉、已卸载复核五条边界。
+- `src/core/terminal-env.spec.ts` 覆盖了落盘写入、版本不符、过期、形状坏掉、已卸载复核五条边界。
 
 新增同步调用之前先问一句：它在启动路径上吗？在的话，代价直接算进「双击到看见界面」的秒数。
 

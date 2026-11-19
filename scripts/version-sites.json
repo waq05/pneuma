@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "tagPrefix": "v",
+  "tagSource": "git",
+  "sites": [
+    { "id": "root", "path": "package.json", "field": "version", "required": true, "note": "产品号主口径：tag 去掉 tagPrefix 后必须与它严格相等" },
+    { "id": "desktop", "path": "desktop/package.json", "field": "version", "required": true, "note": "桌面壳单独打安装器，必须跟产品号同版；release.yml 的 verify 作业按这条对账" },
+    { "id": "ui-shell", "path": "ui-shell/package.json", "field": "version", "required": true, "note": "同时是插件清单的 apiVersion：ui-shell/build-plugins.mjs:56 读它、:174 用 satisfies 判每个插件声明的 @dsc/ui 区间；改版本号要同批改插件区间并跑 pnpm -C ui-shell run build:plugins（本脚本不写第二份判据，只提示）" },
+    { "id": "packages", "glob": "src/packages/*/package.json", "field": "version", "required": true, "note": "命中数每次现读、不写死：2026-11-18 在本分支实测 93 个（设计写 93、plugin-standard-check.mjs:281 旧注释写 86，都以现读为准）；由 scripts/plugin-standard-check.mjs:283-286 强制等于根，推齐用 node scripts/sync-versions.mjs --write" }
+  ]
+}

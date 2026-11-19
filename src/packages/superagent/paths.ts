@@ -1,7 +1,7 @@
 /**
- * superagent 的落盘坐标：一个库、一把锁、每个工单一个会话目录、一块工作树根。
+ * superagent 的落盘坐标：一个库、一把锁、每个工单一个会话目录、一块提示词目录。
  *
- * 为什么单独一份：库文件、锁、会话、工作树这四样要由适配层、执行器、体检脚本分别拼路径。
+ * 为什么单独一份：库文件、锁、会话、提示词这四样要由适配层、执行器、体检脚本分别拼路径。
  * 各拼一遍就会冒出 `superagent` 与 `superagent/`、`\` 与 `/` 两种写法；Windows 上大小写
  * 不一致还会算成两个目录，于是「锁明明拿着」却能被第二个进程再拿一次。这里只留一份。
  *
@@ -41,11 +41,6 @@ export function orchestratorLockPath(): string {
 export function sessionsDir(ticketId: string): string {
   if (!TICKET_ID.test(ticketId)) throw new Error(`工单 id 不能当目录名：${JSON.stringify(ticketId)}`)
   return join(superagentRoot(), 'sessions', ticketId)
-}
-
-/** 执行器放置 git worktree 的根。 */
-export function worktreesDir(): string {
-  return join(superagentRoot(), 'worktrees')
 }
 
 /**

@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "maxEntries": 28,
+  "entries": [
+    {
+      "rule": "code-path",
+      "file": "docs/bugs.md",
+      "value": "desktop/shots/out/sidebar-group-icons-1-clicked.png",
+      "reason": "截图产物目录 desktop/shots/** 被 .gitignore 忽略，只在真机跑过时存在"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/bugs.md",
+      "value": "desktop/shots/out/sidebar-icon-before-after.png",
+      "reason": "截图产物目录 desktop/shots/** 被 .gitignore 忽略，只在真机跑过时存在"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/bugs.md",
+      "value": "scripts/plugin-locale-test.mjs:89",
+      "reason": "该探针已不在 scripts/（改版/迁入 vitest 后删除），条目是当时实测记录"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/development.md",
+      "value": "src/core/lsp/",
+      "reason": "LSP 功能已整体移除（src/core 下无 lsp 目录），该表格行待重写"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/development.md",
+      "value": "ui-shell/src/packages/",
+      "reason": "文中写明「旧 ui-shell/src/packages/ 与 plugin.json 都已删」，引用的是删除前的历史路径"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/development.md",
+      "value": "desktop/shots/two-halves.png",
+      "reason": "截图产物被 .gitignore 忽略，检出后不存在（脚本 desktop/shots/two-halves.json 仍在）"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/development.md",
+      "value": "scripts/remote-host-test.mjs",
+      "reason": "该探针已改版删除，远端行为现由 scripts/remote-e2e.mjs 覆盖；文中具体断言名待重写"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/development.md",
+      "value": "scripts/attachments-test.mjs",
+      "reason": "文中紧接写明「原 scripts/attachments-test.mjs 已迁入」，属明确的历史引用"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/hardening-plan.md",
+      "value": "scripts/sandbox-write-roots-test.mjs:8",
+      "reason": "该探针已删除（沙箱重构后并入 spec/门禁），条目是当时的实测证据"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/plugin-development.md",
+      "value": "docs/plugin-packages.json",
+      "reason": "文中写明该 JSON 镜像 2026-11-06 已删，引用的是删除前的路径"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/plugin-development.md",
+      "value": "desktop/shots/dsh-diff-card.png",
+      "reason": "截图产物被 .gitignore 忽略，只在真机走查时生成"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/plugin-development.md",
+      "value": "scripts/ui-plugin-test.mjs",
+      "reason": "该探针已不在 scripts/（界面插件测试改版后删除），断言分组编号待重写"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/plugin-development.md",
+      "value": "desktop/shots/two-halves.png",
+      "reason": "截图产物被 .gitignore 忽略，只在真机走查时生成"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/plugin-model.md",
+      "value": "ui-shell/src/packages/",
+      "reason": "文中写明「ui-shell/src/packages/ 已删空」，引用的是迁移前的旧根"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/superagent/handoff.md",
+      "value": "src/packages/superagent/adapters/executor.ts",
+      "reason": "交接页是提交记录（bf33da1b 等）里的当时落点，adapters/ 后来改目录；历史记录不改"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/superagent/handoff.md",
+      "value": "src/packages/superagent/adapters/store.ts",
+      "reason": "交接页是提交记录（6c2d975e 等）里的当时落点，adapters/ 后来改目录；历史记录不改"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-coverage-plan.md",
+      "value": "docs/testing-coverage-exclusions.md",
+      "reason": "计划中的排除清单文档，尚未创建（覆盖计划未落地）"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-detailed-design.md",
+      "value": "src/core/x.js",
+      "reason": "说明 tsconfig paths 的示例占位文件名（x），不是真实文件"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-detailed-design.md",
+      "value": "tests/snapshots/support/scenario.ts",
+      "reason": "文中写明该文件「未采用」（实做是 scenario.snapshot.ts），是记录被否方案的引用"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-detailed-design.md",
+      "value": "tests/bench/fixtures/",
+      "reason": "计划中的固定种子数据目录，bench 实现未落这个目录"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-detailed-design.md",
+      "value": "src/packages/sandbox/sandbox-win.int.spec.ts",
+      "reason": "计划落点，实际拆成 scripts/sandbox-win-token-test.mjs 与 src/packages/sandbox/tests/token.spec.ts；对照表待重写"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-detailed-design.md",
+      "value": "tests/snapshots/card/dsh-card/",
+      "reason": "计划落点，实际走 tests/integration/ui-dsh-card-replay.int.spec.ts；对照表待重写"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "src/packages/ui-status-panel/ui/model.spec.ts",
+      "reason": "D8 行记录的是设计原目标路径（实际包名是 ui-status），偏差记录本身不改"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "scripts/todo-reminder-test.mjs:32-37",
+      "reason": "旧探针已迁入 vitest，此条是当时先例的引用"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "scripts/ui-plugin-test.mjs",
+      "reason": "旧探针已不在 scripts/（迁入 vitest 后删除），引用的是迁移前的覆盖说明"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "scripts/panel-prefs-test.mjs",
+      "reason": "旧探针已删除，K1 记录的是当时的崩溃证据"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "src/packages/superagent/tests/executor.test.mjs",
+      "reason": "旧探针路径，迁入 vitest 后落在 src/packages/superagent/tests/ 下别的文件名"
+    },
+    {
+      "rule": "code-path",
+      "file": "docs/testing-deviations.md",
+      "value": "src/ui/plugins",
+      "reason": "旧产物路径（从 src 导入时的历史落点），D32 行在讲这个旧行为"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "note": "由 tests/bench/run.mjs 首跑写入；数值为本机 7 次中位数，人审后提交。",
+  "recordedAt": "2026-11-16T01:47:22.887Z",
+  "runner": "win32-x64/32c/AMD Ryzen 9 7945HX with Radeon Graphics",
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "win32-x64",
+    "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics        ",
+    "cores": 32
+  },
+  "runs": 7,
+  "regressionRatio": 1.5,
+  "benchmarks": {
+    "b1-session-start": {
+      "label": "B1 会话启动",
+      "metric": "ms",
+      "median": 1542.346
+    },
+    "b2-first-token": {
+      "label": "B2 首 token 延迟",
+      "metric": "ms",
+      "median": 23.505
+    },
+    "b3-compact": {
+      "label": "B3 压缩耗时",
+      "metric": "ms",
+      "median": 89.538
+    },
+    "b4-stream-render": {
+      "label": "B4 流式渲染",
+      "metric": "ms",
+      "median": 82.845,
+      "notifications": 2
+    }
+  }
+}

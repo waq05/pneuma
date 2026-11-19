@@ -124,6 +124,8 @@
   "placeholder.blocked": "等待审批…",
   "placeholder.working": "回合进行中：回车排队，Ctrl+Enter 插话（打断当前输出）",
   "placeholder.idle": "发消息：@ 引用文件，可粘贴或拖入图片、视频、文件；回车发送，Ctrl+Enter 插话",
+  "readonly.title": "这段记录只读",
+  "readonly.body": "这条会话现在没有接话的人（队友已经收工）。往上翻能看完整过程；要它接着干活，回父会话重新派一个。",
   "input.aria": "消息输入框",
   "slash.aria": "命令候选",
   "slash.loading": "正在读取命令清单…",

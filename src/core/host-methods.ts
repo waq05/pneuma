@@ -39,6 +39,8 @@ export const INVOKABLE_METHODS = [
   'listPlugins',
   'setPluginEnabled',
   'listTeammates',
+  // 点开一位队友（2026-11-19）：正文区打开它那条真会话；收工的可续接队友先复活再打开
+  'openTeammate',
   // 状态面板「共享任务」分区的只读数据源（任务板按会话各一块，只读不写）
   'listTeamBoard',
   // 队友的界面管理通道（等价于 subagent 工具的 stop / message；远程白名单里没有它们）
@@ -59,9 +61,6 @@ export const INVOKABLE_METHODS = [
   'superagentAnswer',
   'superagentCleanWorktree',
   'superagentPeekSession',
-  // 候选收件箱（backlog G1）：人在界面上给一条推断候选定结论。两个都是写类。
-  'superagentAcceptCandidate',
-  'superagentIgnoreCandidate',
   'runCommand',
   // 壳的 `/` 命令菜单：只读那份 `shell: true` 的元数据 + 只派发同一批（清单与挑选
   // 尺子在 packages/commands-core/commands-completion.ts；界面通道（core/ui-methods.ts）再按同一批放行）

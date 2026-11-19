@@ -15,7 +15,7 @@
 | 交付前跑什么 | **§5 验证清单** |
 | 明确不支持哪些、别绕 | **§6 边界** |
 | 这套兼容层是怎么一步步长出来的 | **§7 历史存根** |
-| dsh 的请求组装/上下文管理内部机制（源码级） | [dsh-request-assembly.md](dsh-request-assembly.md) |
+| dsh 的请求组装/上下文管理内部机制（源码级） | [archive/dsh-request-assembly.md](archive/dsh-request-assembly.md) |
 
 ## 1. 判定流程：先看结局，再决定要不要改代码
 
@@ -254,7 +254,7 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
   工具的插件（典型是 `dsh-ops` 的 file 行），整包挂上去会**静默零产出**——`ctx.inject` 等不到
   服务，回调永远不执行。这类插件别硬塞，先看它的内核能不能单独跑：`dsh-ops` 的
   `dsh-ops-worker` 是一次性进程（stdin JSON 进、stdout JSON 出），Pneuma 的 `ops` 插件就是
-  只复用这个 exe、把交互层重写成 numa 版（见 `src/core/ops/`）。判定一条：插件的能力是不是
+  只复用这个 exe、把交互层重写成 numa 版（见 `src/packages/ops/`）。判定一条：插件的能力是不是
   全在子进程里；是就搬子进程，不是就得补宿主服务。
 - **`session/event` 是合成流，不是 dsh 的会话日志**：`seq` 是我们自己从 0 起的连续计数，
   不是磁盘上的事件号；只发已知的那八种（见 §2.7），`request/header`、`compaction/summary`、

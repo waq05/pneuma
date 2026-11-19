@@ -6,7 +6,8 @@
 # 文件兜着，谁也没发现。
 #
 # 推门与夜跑分工：
-#   - 推 / PR：只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）；
+#   - 推 / PR：放「值得等」的门（装依赖 + 三处 typecheck + 排版，一分钟级；
+#     加上 2026-11-13 迁进 Vitest 的 119 条包级测试，秒级，跟着 pnpm test 一起跑）；
 #   - 夜跑 / 手动：两套探针（内核 + 界面）。内核那批每条都要 import 编译产物，所以先
 #     pnpm build；界面那批要读插件产物，所以先 pnpm -C ui-shell build。
 #
@@ -27,15 +28,116 @@ on:
     - cron: '0 18 * * *'
   workflow_dispatch:
 
-# 同一个分支连着推两次，取消上一次——门禁只关心最终状态。
+# 同一个分支连着推两次，取消上一次——门禁只关心最终状态（PR / push 行为不变）。
+#
+# B54-②：夜跑必须和推门分组，否则推一次主干就把夜跑取消。schedule 的 github.ref 就是
+# 默认分支，与 push 主干同组；凌晨（18:00 UTC = 北京 02:00）正在跑的夜跑被一次推门
+# 取消后，夜跑末尾的 all-nightly-passed 永远拿不到结论——「夜跑红了」没有任何 check
+# 变红，等于夜跑门不存在。
+#
+# 分组：schedule 与 workflow_dispatch 跑的是同一整套夜跑 job（snapshot / e2e /
+# coverage / probe），都归 verify-nightly，与 push / PR 的 verify-<ref> 天然隔离，
+# 互相取消不到；手动触发走同一组，顺带保证同一时刻只有一份夜跑。
+# push / pull_request 仍按 github.ref 分组，连推多次只留最后一次。
+#
+# 表达式说明（四个事件的推演见 B54 验收，别凭感觉改）：
+#   GitHub 表达式里 `&&` / `||` 返回的是操作数本身，不是布尔；`&&` 优先级高于 `||`，
+#   所以 A || B 必须加括号，否则 `A || B && 'nightly'` 会被解析成 A || (B && 'nightly')，
+#   schedule 时返回布尔 true，组名变成字符串 "true"。这里写成
+#   `(A || B) && 'nightly' || github.ref`：A/B 为真时得 'nightly'，否则 false || ref = ref。
+#
+# cancel-in-progress：schedule 取 false——新的 schedule 遇到还没跑完的夜跑就排队（同一
+# 时刻仍只有一份夜跑），且夜跑不参与推门的互相取消；其余事件（push / PR / 手动触发）
+# 保持 true，推门「连推只跑最后一次」不变，手动重跑则取消旧的夜跑，省 runner。
 concurrency:
-  group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  group: verify-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'nightly' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   core:
-    name: 内核编译与排版
+    name: 内核编译与排版（Node ${{ matrix.node }}）
+    # Node 版本矩阵（P6）：engines 是 >=22.19，本仓库的支持面底线是 22，同时验 24
+    # （当前开发机版本）——两个都绿才允许合。
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 —— 架构铁律的第三条（loop.ts 不许被功能分支改）要算
+      # `git diff <base>...HEAD`，浅克隆拿不到 base 会退 2；这条门禁宁可慢几秒也不许静默放行。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译（src/ 全量，--noEmit）
+        run: pnpm typecheck
+      # 测试文件被根 tsconfig 排除（不进主构建、不随包发布），所以它们唯一的类型检查入口
+      # 就是这条。少了它，Vitest 只用 esbuild 剥类型、不校验类型，夹具里把字段写错
+      # 也不会有人发现，直到某天本地跑一次。
+      - name: 测试代码的类型检查（两份 tsconfig：node 侧 + 界面半）
+        run: pnpm run typecheck:spec
+      - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
+        run: pnpm run check:style
+      # 架构铁律（三条：src/core 不引界面依赖 / 界面只调 INVOKABLE_METHODS 白名单 /
+      # 新功能不许改 session-core/loop.ts）。纯静态扫描，秒级；存量已实测干净，所以立刻阻塞。
+      #
+      # base 按事件取：PR 用 base.sha，push 用 before；两者都空或全零（新分支）时脚本自己回退
+      # origin/dev。不传这一行的话，PR 的 detached HEAD 上 git rev-parse dev 拿不到，门禁会
+      # 以退 2 的形式把每个 PR 判红——那是「环境问题冒充代码问题」。
+      - name: 架构铁律
+        run: pnpm run law
+        env:
+          NUMA_LAW_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      # CI 覆盖核对：每个 check:* 都有归属，每条 push/nightly 门禁都真的在 workflow 里跑。
+      # 防的是「登记了但没人跑」——它红了说明台账与流水线脱节，不是代码有问题。
+      # --remind 会在结尾打「本次改动可能影响 P0 清单中 N 条」，N 从 check-p0.mjs 实读。
+      - name: CI 覆盖核对
+        run: pnpm run ci-coverage
+      # P0 清单（informational，continue-on-error）：只打印那 19 条手动门禁的名单，不判红。
+      # 它不检查任何行为，作用是让动了这批行为的人看见「你该手动跑哪一条」。
+      - name: P0 清单（只报不拦）
+        run: pnpm run check:p0-list
+        continue-on-error: true
+      # 探针孤儿台账：scripts/*.mjs 必须落进六类之一。它红了说明有脚本永远不会被跑。
+      - name: 探针孤儿台账
+        run: pnpm run probe-inventory
+      # 文档漂移第一批（规则 1/2，带基线）：只报不红，跑一周把「有哪些漂移」摊开再转阻塞。
+      # 转阻塞条件：基线命中占比 < 5% 且连续一周没有新增违规。
+      - name: 文档漂移（第一批，只报不红）
+        run: pnpm run docs-check
+        continue-on-error: true
+      # unit + ui + tui 三层（2026-11-14 起 221 文件 / 2500+ 条）。JUnit 报告同时落一份，
+      # 失败时能在 Actions 的 artifact 里逐用例看（P6 flake 治理：报告 + 耗时历史）。
+      - name: 单元、界面与 TUI 测试
+        run: pnpm test --reporter=default --reporter=junit --outputFile.junit=reports/unit-${{ matrix.node }}.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-${{ matrix.node }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  integration:
+    name: 集成测试分片（${{ matrix.shard }}/3）
+    # 分片（P6）：每个文件都要起一次真内核，单 job 串行太慢；按 Vitest 的 --shard 切三片并行。
+    # 每片各自 build（1-2 分钟）换来不用搞构建产物缓存，简单可靠优先。
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -47,10 +149,287 @@ jobs:
           cache: pnpm
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
-      - name: 编译（src/ 全量，--noEmit）
-        run: pnpm typecheck
-      - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
-        run: pnpm run check:style
+      # test:int 脚本里是「build && vitest」，分片需要把 vitest 单独拎出来加 --shard，
+      # 所以这里手动分两步（build 的新鲜度守卫口径不变）。
+      - name: 编译内核
+        run: pnpm run build
+      - name: 集成测试（分片 ${{ matrix.shard }}）
+        run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --reporter=default --reporter=junit --outputFile.junit=reports/int-${{ matrix.shard }}.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-reports-${{ matrix.shard }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  bench:
+    name: 性能基准（对比本机基线）
+    # 为什么不并进 integration 的分片 job：基准计时对并发敏感，三个分片一起跑等于把
+    # 三条基准放在三倍负载下录数；而且分片跑三次基准会写出三份基线。
+    #
+    # 判据分两层（设计 §9.2「基线绑机器」）：
+    #   - 结构判据（每条基准内部的断言：B4 必须是 2 次通知、B1 服务面齐备、B3 压缩产出
+    #     正确）**跨机器都成立**，红了就是代码问题，直接闸；
+    #   - 数值判据（中位数 > 基线 × 1.5）只在 runner 与基线一致时生效。共享 runner 换
+    #     代次后数值整体平移，`run.mjs` 会打印「runner 不同，只记录不判退化」并绿——要
+    #     恢复数值闸，从 Actions 日志里取本次中位数、按同格式提交 baseline.json 的
+    #     runner 段（人工审一次，别让一次抖动被钉成「正常」）。
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # 基准只认构建产物 lib/**（plain node，不经 tsx）：不 build 就是拿旧 lib 录数。
+      - name: 编译内核
+        run: pnpm run build
+      - name: 性能基准（对比本机基线；runner 不符时只记录）
+        run: pnpm run test:bench
+
+  cli:
+    name: 真入口 e2e（bin/dsc.js）
+    # 设计 §11：spawn 用户真正会敲的那条命令，验「启动器自己坏了」——参数翻译、子进程
+    # 转发、退出码传递。这一层起的是 lib 产物平面，必须先 build；单条 2–5 秒，八条
+    # 加起来不到 10 秒，放 PR 门不亏。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核
+        run: pnpm run build
+      - name: 真入口 e2e
+        run: pnpm test:cli --reporter=default --reporter=junit --outputFile.junit=reports/cli.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  snapshot:
+    name: 快照层（TUI 帧 + 浏览器 DOM）
+    # 设计 §7.4/§8：快照层是夜跑门。TUI 帧不需要显示器；浏览器 DOM 快照要真 Electron，
+    # Linux runner 上用 xvfb 起虚拟显示。会话回放已有录制文件入库（B45，2026-11-17），
+    # 回放必跑；`DSC_SNAPSHOT_STRICT=1` 让「一个用例都没跑」变红（录制文件丢了或指纹
+    # 对不上时不再静默绿）。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳（浏览器快照读 lib/ui 产物）
+        run: pnpm run build && pnpm -C ui-shell build
+      - name: 快照层
+        # `DSC_SNAPSHOT_STRICT=1`：会话回放场景如果因为没录制文件而整段 skip，就改成
+        # 一条必红用例——夜跑上不允许「整层什么都没测」还报绿。
+        env:
+          DSC_SNAPSHOT_STRICT: '1'
+        run: xvfb-run --auto-servernum pnpm run test:snapshot --reporter=default --reporter=junit --outputFile.junit=reports/snapshot.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  e2e:
+    name: 真机 e2e（Electron + bin/dsc.js）
+    # 设计 §10.2：e2e 是夜跑层，单条 10–60 秒，不进 PR 门。Linux 上 Electron 要虚拟显示。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳（e2e 故意验产物平面）
+        run: pnpm run build && pnpm -C ui-shell build
+      - name: 真机 e2e
+        run: xvfb-run --auto-servernum pnpm run test:e2e --reporter=default --reporter=junit --outputFile.junit=reports/e2e.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reports
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  coverage:
+    name: 覆盖率门（全五 project）
+    # D40/B47 定案：覆盖率门跑全部五个 project。integration/tui 是 core 覆盖的主要来源，
+    # 三面口径会让 src/core 的 90% 只能靠重复单测堆。插桩跑要真 Electron（浏览器快照），
+    # 所以同样套 xvfb。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译内核与界面壳
+        run: pnpm run build && pnpm -C ui-shell build
+      # B54-①：覆盖率报告之后必须过自检（一行都没覆盖到就红）。为什么不直接调链式的
+      # test:coverage：pnpm 会把本行追加的参数拼到整条 script 串末尾，`&& node 自检`
+      # 后面的参数会落到自检脚本上，vitest 反而拿不到 --reporter / --outputFile。
+      # 所以跟 integration 分片同一个处理：调只跑 vitest 的 test:coverage:run，自检单独一步。
+      - name: 覆盖率（阈值来自 coverage-baseline.json）
+        run: xvfb-run --auto-servernum pnpm run test:coverage:run --reporter=default --reporter=junit --outputFile.junit=reports/coverage.xml
+      - name: 覆盖率自检（B54-①：一行都没覆盖到就红）
+        run: pnpm run check:coverage-summary
+      - name: 上传覆盖率报告与测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage/
+            reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  all-checks-passed:
+    name: all-checks-passed（分支保护只认这一个）
+    # 聚合 check（P6，对齐 DSH ci.yml 的单一聚合口）：分支保护只要求这一个 check，
+    # 不必枚举易变的 job 名；任何一个失败 / 取消 / 跳过都算没过。
+    #
+    # 判定必须逐条做：needs 里每个 job 的 result 要**全部**等于 success，出现 failure /
+    # cancelled / skipped / 任何别的值都判红，并把哪几个 job 没成功打出来。
+    # 旧写法 `echo "$results" | grep -qv '"success"'` 的语义是「只要有一行不含 success
+    # 就成功退出」，它回答的是「有没有一行是坏的」，不是「有没有 job 没成功」。而 toJson
+    # 给的又是多行 pretty JSON，于是全绿也判红；万一压成单行，有失败反而判绿，两头都错。
+    #
+    # 现在的做法：tr 把 JSON 拍平成 "success,success,failure"（去掉方括号 / 引号 / 空白 /
+    # 换行，保留逗号），再按逗号逐项比较。单行和多行输入走同一条路径，两种形态都对。
+    # 不用 jq：runner 上有，本地 Windows 没有，这份脚本必须能在 Git bash 里自证。
+    # 空数组 [] 判红：needs 声明了 job 就一定有 result，取不到说明 needs 配错了（比如
+    # job 改了名），「聚合门其实什么都没看」不能算绿。
+    #
+    # 刻意不把 probe / snapshot / e2e / coverage 放进 needs（B51）：这四个只在夜跑与手动
+    # 触发，PR 上不执行；放进 needs 会让「skipped」把每个 PR 的聚合门判红。它们的红灯由
+    # 夜跑的 all-nightly-passed 兜住（见文件末尾），分支保护只守 PR 能跑的那批。
+    if: always()
+    needs: [core, ui, desktop, integration, bench, cli, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 聚合判定
+        run: |
+          results="${{ toJson(needs.*.result) }}"
+          echo "needs 结果：$results"
+
+          # 按上面 needs 的声明顺序写；只用来在日志里打印 job 名，不参与判定。
+          # GitHub 不保证 needs.* 的顺序（Object filters 一节明说对象过滤器的输出顺序
+          # 无法保证），名字可能错位；判定不看名字，结论不受影响。
+          names="core ui desktop integration bench cli windows"
+          expected=7
+
+          flat=$(printf '%s' "$results" | tr -d '[]" \t\n\r')
+          if [ -z "$flat" ]; then
+            echo "::error::needs 结果为空，聚合门拿不到任何 job，按红处理。"
+            exit 1
+          fi
+
+          failed=""
+          i=0
+          for r in $(printf '%s' "$flat" | tr ',' ' '); do
+            i=$((i + 1))
+            if [ "$r" != "success" ]; then
+              name=$(printf '%s' "$names" | cut -d' ' -f"$i")
+              [ -n "$name" ] || name="第 $i 个 job"
+              echo "::error::job「$name」的结果是「$r」，不是 success"
+              failed="$failed $name($r)"
+            fi
+          done
+
+          # 个数兜底：某个 result 变成空串（如 ["success",""]）或 null 时，拍平后 token 数会
+          # 变少但仍全是 success，只比 success 会误判为绿。所以个数必须与 needs 数量相等。
+          if [ "$i" -ne "$expected" ]; then
+            echo "::error::只拿到 $i 个结果，期望 $expected 个"
+            exit 1
+          fi
+
+          if [ -n "$failed" ]; then
+            echo "聚合门红：未成功的 job：$failed"
+            exit 1
+          fi
+          echo "聚合门绿：$i 个 job 全部 success。"
+
+  windows:
+    name: Windows 车道（unit + ui + tui）
+    # P7 的平台面：路径分隔符、cmd 参与的命令判定、ConPTY/假终端这些「Linux 上永远
+    # 绿、Windows 上才红」的地方，只有真 Windows runner 能覆盖。范围刻意收窄到纯测试
+    # 三层（不跑 integration：起真内核 + 60s×N 会把单 job 拖到 20 分钟以上；集成层的
+    # 平台差异靠开发机与 probe 夜跑兜底）。
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 测试代码的类型检查
+        run: pnpm run typecheck:spec
+      - name: 单元 / 界面 / TUI 测试
+        run: pnpm test --reporter=default --reporter=junit --outputFile.junit=reports/unit-windows.xml
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-reports-windows
+          path: reports/
+          retention-days: 14
+          if-no-files-found: ignore
 
   ui:
     name: 界面壳编译
@@ -120,3 +499,83 @@ jobs:
         run: pnpm -C ui-shell build
       - name: 界面自检
         run: pnpm run check:ui
+      # B49：产物层（插件 client.js / 界面 SDK 类型树 + examples tsc）。到这一步两份产物
+      # 都刚构建完，正好是它要的输入。
+      - name: 构建产物层
+        run: pnpm run test:built
+      # 插件门禁放这里而不是 PR 门：它包含 plugin-inventory-check，需要上面刚刚构建出来的
+      # lib/ui/plugins/。到这里两份产物都齐了，加这条不多花构建时间。
+      # 包级测试两套并行：老 119 条 2026-11-13 迁进 Vitest，由 PR 门的 pnpm test 覆盖；
+      # 2026-11-17 合并 dev 后带回来 42 条 node:test 形态的 `*.test.mjs`（superagent 新树为主），
+      # 由 check:plugin 里的 scripts/package-tests.mjs 逐个 spawn 跑——它们 import lib/，
+      # 所以必须排在上面「编译内核」之后。合并成一套记在 docs/testing-backlog.md 的 B57。
+      - name: 插件门禁（模型 / 包标准 / 包级测试 / 清单快照 / 装配 / 热替换）
+        run: pnpm run check:plugin
+      # 真机 e2e 档（2026-11-14 起）：ui-*_e2e 探针要 Electron 的 Chromium，
+      # 上面的正常安装（没带 --ignore-scripts）已经把 Electron 二进制拉下来了。
+      - name: 界面 e2e 自检（真 Chromium）
+        run: pnpm run check:ui:e2e
+
+  all-nightly-passed:
+    name: all-nightly-passed（夜跑聚合）
+    # 夜跑 / 手动的聚合口（B51）：snapshot / e2e / coverage / probe 四个只在 schedule 与
+    # workflow_dispatch 执行，PR 上是 skipped。它们此前没有被任何聚合口覆盖——夜跑里哪个
+    # 红了，没有任何一个 check 变红，只能靠人去翻通知。所以补这一个口。
+    #
+    # 分工写死：分支保护只认 all-checks-passed（PR 门）；夜跑看 all-nightly-passed。
+    # 两边互不牵连：这四个 job 不进 all-checks-passed.needs，否则它们在 PR 上全是 skipped，
+    # 逐项比 success 会把每个 PR 判红。
+    #
+    # 事件守卫必须保留，但理由不是「免得 PR 上多一个 skipped 的 check」：加了 if，这个 job
+    # 在 PR 上照样出现在 check 列表里，只是显示 skipped；而按 GitHub 官方语义「被跳过的 job
+    # 报告为 Success」，它本身不影响分支保护。真正必须守卫的理由是：去掉 if 之后 always()
+    # 会让它在 PR 上真的跑起来，而它的 4 个 needs 在 PR 上全是 skipped，逐项比 success
+    # 必然判红——那才会把每一个 PR 判红。
+    #
+    # 判定与 all-checks-passed 同一套规则：全部 success 才算过，其余一律判红，空数组与
+    # 结果个数不足也判红。
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [snapshot, e2e, coverage, probe]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 聚合判定
+        run: |
+          results="${{ toJson(needs.*.result) }}"
+          echo "needs 结果：$results"
+
+          # 按上面 needs 的声明顺序写；只用来在日志里打印 job 名，不参与判定。
+          # GitHub 不保证 needs.* 的顺序（Object filters 一节明说对象过滤器的输出顺序
+          # 无法保证），名字可能错位；判定不看名字，结论不受影响。
+          names="snapshot e2e coverage probe"
+          expected=4
+
+          flat=$(printf '%s' "$results" | tr -d '[]" \t\n\r')
+          if [ -z "$flat" ]; then
+            echo "::error::needs 结果为空，夜跑聚合门拿不到任何 job，按红处理。"
+            exit 1
+          fi
+
+          failed=""
+          i=0
+          for r in $(printf '%s' "$flat" | tr ',' ' '); do
+            i=$((i + 1))
+            if [ "$r" != "success" ]; then
+              name=$(printf '%s' "$names" | cut -d' ' -f"$i")
+              [ -n "$name" ] || name="第 $i 个 job"
+              echo "::error::job「$name」的结果是「$r」，不是 success"
+              failed="$failed $name($r)"
+            fi
+          done
+
+          # 个数兜底：某个 result 变成空串（如 ["success",""]）或 null 时，拍平后 token 数会
+          # 变少但仍全是 success，只比 success 会误判为绿。所以个数必须与 needs 数量相等。
+          if [ "$i" -ne "$expected" ]; then
+            echo "::error::只拿到 $i 个结果，期望 $expected 个"
+            exit 1
+          fi
+
+          if [ -n "$failed" ]; then
+            echo "夜跑聚合门红：未成功的 job：$failed"
+            exit 1
+          fi
+          echo "夜跑聚合门绿：$i 个 job 全部 success。"

@@ -91,6 +91,32 @@ export * from './signal.js'
 export * from './i18n.js'
 
 /**
+ * 字体与字号的归一（`contract/fonts.ts`）：宿主读档、壳落地、设置页画控件三处共用一份。
+ *
+ * 与下面那块 `export type` 不同，这里是**运行期**导出：只有几个纯函数与常量
+ * （不读 DOM、不碰文件、不引宿主依赖），打进浏览器包是几十行字符串与数字处理。
+ * 换来的是「三端对同一串输入的结论一致」——以前字号倍率在宿主、壳、设置页各夹一次，
+ * 改基准时漏一处就会出现「设置页显示 16px、界面画 14px」这种只在特定路径出现的偏差。
+ */
+export {
+  FONT_BASE_PX,
+  FONT_FAMILY_MAX_CHARS,
+  FONT_LIST_MAX_CHARS,
+  FONT_LIST_MAX_FAMILIES,
+  FONT_SIZE_PX_DEFAULT,
+  FONT_SIZE_PX_MAX,
+  FONT_SIZE_PX_MIN,
+  LEGACY_FONT_SCALES,
+  LEGACY_FONT_SCALE_MAX,
+  LEGACY_FONT_SCALE_MIN,
+  fontScaleFromTextSizePx,
+  legacyFontScale,
+  normalizeFontList,
+  normalizeTextSizePx,
+  textSizePxFromLegacy,
+} from '../../contract/fonts.js'
+
+/**
  * 宿主那些**界面要读的**视图类型的再导出。
  *
  * 为什么全是 `export type`：编译期就擦掉了，浏览器壳不会因为这一行把 `contract.ts`

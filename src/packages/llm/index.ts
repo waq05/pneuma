@@ -275,7 +275,11 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
       },
       listModels(): ModelChoiceView[] {
         const choices: ModelChoiceView[] = []
-        for (const provider of Object.values(config.providers)) {
+        // `config.providers` 可能整段没有（全新安装、还没配端点）：这里以前直接
+        // `Object.values(config.providers)`，于是「设置 → 模型」与任何列模型的调用点
+        // （如子智能体的授权模型清单）在 listModels() 时抛 TypeError，整页设置打不开。
+        // 同一文件别处都写了 `?? {}`，这里补齐。
+        for (const provider of Object.values(config.providers ?? {})) {
           for (const model of provider.models) {
             const extra = model.modalities.filter((modality: Modality) => modality !== 'text')
             choices.push({

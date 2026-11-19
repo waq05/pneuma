@@ -9,6 +9,9 @@
  * 静默时空行防跳动）+ 提示条（聚焦字段的 help + 右侧按键提示）。help 不进卡片行，
  * 聚焦行才在提示条里出现——每行高度恒为 1，行模型才守得住。
  *
+ * 多选（`checks`）在行模型里摊成「字段标题 + 组标题 + 每个可勾项一行」：可勾行画
+ * `[✓] 标签  副说明`，空格/Enter 翻转（写回在 App），组标题与字段标题不抢焦点。
+ *
  * 子页（0.6.62）：带组的分区在根页画组导航行 `❯ 标题 … ›`，传 group 参时整份
  * rows 已是子页内容（settings-model 负责），这里只多两处观感——标题行变面包屑
  * `设置 › 分区 › 组`、提示条 Esc 换「返回」。
@@ -19,7 +22,7 @@ import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
 import type { SettingsField, SettingsSectionView, SettingsValues } from '@pneuma/runtime/contract.js'
 import { displayWidth } from './display-width.js'
-import { focusableRows, tableRecordsOf, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
+import { checksSelected, focusableRows, tableRecordsOf, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 设置页固定框架行数：外框上下边 2 + 标题 1 + 底部 notice 1 + 提示条 1。 */
@@ -78,6 +81,12 @@ function fieldValueText(field: SettingsField, values: SettingsValues | undefined
       // rows 字段本身不占 field 行（行模型里摊成列头/单元格/添加行），这里只兜个底。
       const count = tableRecordsOf(values, field.key).length
       return count === 0 ? '（空表）' : `${String(count)} 行`
+    }
+    case 'checks': {
+      // checks 字段同样摊成多行（标题/组标题/每个可勾项），这里只兜个底。
+      const picked = checksSelected(values, field.key).length
+      const total = field.groups.reduce((count, group) => count + group.options.length, 0)
+      return `已选 ${String(picked)}/${String(total)} 项`
     }
     default:
       // text / number：空值给「未设置」占位（对齐 dsh 的（未设置））
@@ -303,13 +312,84 @@ export function SettingsOverlay({
           </Text>
         )
       }
+      case 'checks-head': {
+        // 多选字段的标题行：标签左、已选计数右贴边；不可聚焦（焦点落在下面的复选行上）。
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'checks') return <Text key={index}> </Text>
+        const picked = checksSelected(values[row.sectionId], field.key).length
+        const total = field.groups.reduce((count, group) => count + group.options.length, 0)
+        const countText = `已选 ${String(picked)}/${String(total)} 项`
+        const labelText = clipToWidth(field.label, Math.max(8, innerWidth - 4 - displayWidth(countText)))
+        const pad = Math.max(1, innerWidth - 2 - displayWidth(labelText) - displayWidth(countText))
+        return (
+          <Text key={index} wrap="truncate-end">
+            {'  '}
+            <Text bold color={PALETTE.text}>
+              {labelText}
+            </Text>
+            {' '.repeat(pad)}
+            <Text {...TEXT.secondary}>{countText}</Text>
+          </Text>
+        )
+      }
+      case 'checks-group': {
+        // 组标题行（如「按提供方分组」的那一家）：缩进在复选行之上，空组给一句占位。
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'checks') return <Text key={index}> </Text>
+        const titleText = clipToWidth(row.title, Math.max(8, innerWidth - 10))
+        return (
+          <Text key={index} wrap="truncate-end">
+            {'    '}
+            <Text bold dimColor>
+              {titleText}
+            </Text>
+            {row.empty ? <Text dimColor>{'（这一组没有选项）'}</Text> : null}
+          </Text>
+        )
+      }
+      case 'checks-option': {
+        // 一个可勾项一行：`[✓] 模型名  provider/model`；空格/Enter 翻转（App 负责写回）。
+        const field = sectionById.get(row.sectionId)?.fields[row.fieldIndex]
+        if (field === undefined || field.type !== 'checks') return <Text key={index}> </Text>
+        const checked = checksSelected(values[row.sectionId], field.key).includes(row.value)
+        const box = checked ? '[✓]' : '[  ]'
+        const detailMax = row.detail === undefined ? 0 : Math.max(4, Math.floor(innerWidth / 2))
+        const labelText = clipToWidth(row.label, Math.max(8, innerWidth - 8 - detailMax))
+        const detailText =
+          row.detail === undefined
+            ? ''
+            : clipToWidth(row.detail, Math.max(4, innerWidth - 8 - displayWidth(labelText)))
+        return (
+          <Text key={index} wrap="truncate-end">
+            {focused ? MARK.selected : MARK.idle}
+            <Text color={checked ? STATUS_COLOR.done : undefined} {...(checked ? {} : TEXT.secondary)}>
+              {box}
+            </Text>
+            <Text> </Text>
+            <Text {...(focused ? {} : TEXT.secondary)} bold={focused} color={focused ? PALETTE.text : undefined}>
+              {labelText}
+            </Text>
+            {detailText === '' ? null : (
+              <>
+                <Text {...TEXT.secondary}>{'  '}</Text>
+                <Text {...TEXT.secondary}>{detailText}</Text>
+              </>
+            )}
+          </Text>
+        )
+      }
     }
   }
 
   // 底部提示条：聚焦字段的 help（可复制的 info 追加复制提示）截断后靠左，按键靠右
   const focusedRow = rows[focusRow]
   const focusedField =
-    focusedRow !== undefined && (focusedRow.kind === 'field' || focusedRow.kind === 'table-cell' || focusedRow.kind === 'table-head' || focusedRow.kind === 'table-add')
+    focusedRow !== undefined &&
+    (focusedRow.kind === 'field' ||
+      focusedRow.kind === 'table-cell' ||
+      focusedRow.kind === 'table-head' ||
+      focusedRow.kind === 'table-add' ||
+      focusedRow.kind === 'checks-option')
       ? sectionById.get(focusedRow.sectionId)?.fields[focusedRow.fieldIndex]
       : undefined
   let help =
@@ -328,9 +408,11 @@ export function SettingsOverlay({
         ? 'Enter 编辑 · Del 删行 · Esc 返回'
         : focusedRow?.kind === 'table-add'
           ? 'Enter 添加一行 · Esc 返回'
-          : groupSpec !== undefined || activeSection !== undefined
-            ? 'Enter 切换/编辑 · Esc 返回'
-            : 'Enter 切换/编辑 · Esc 关闭'
+          : focusedRow?.kind === 'checks-option'
+            ? '空格 切换选中 · Esc 返回'
+            : groupSpec !== undefined || activeSection !== undefined
+              ? 'Enter 切换/编辑 · Esc 返回'
+              : 'Enter 切换/编辑 · Esc 关闭'
   const helpText = clipToWidth(help, Math.max(0, innerWidth - displayWidth(keys) - 2))
 
   return (

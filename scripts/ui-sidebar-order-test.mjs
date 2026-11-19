@@ -50,22 +50,33 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 /**
  * 找 esbuild 的可执行文件。
  *
- * 为什么手找而不是 `npx esbuild`：这个仓库的 esbuild 只作为 desktop 的间接依赖装在
- * `.pnpm` 里，没在 `.bin` 挂快捷方式；探针必须在没有全局 esbuild 的机器上也跑得动。
+ * 为什么手找而不是 `npx esbuild`：这个仓库的 esbuild 只作为间接依赖装在 `.pnpm` 里，
+ * 没在 `.bin` 挂快捷方式；探针必须在没有全局 esbuild 的机器上也跑得动。
  * 为什么用 `execFile` 而不是 esbuild 的 JS API：JS API 起子进程时用管道收输出，
  * 在受限环境里会被 EPERM 拦掉；直跑 CLI 并把 stdio 设成 inherit 就能过。
+ *
+ * 2026-11 补：虚拟仓的位置取决于安装形态。四个项目收进一个 pnpm workspace 之后，
+ * 干净 checkout 里只有仓库根的 `node_modules/.pnpm`，`desktop/node_modules/.pnpm`
+ * 是旧安装留下的；只认后者会让这条探针在新 worktree 里直接判失败——那是脚本自己的
+ * 环境假设坏了，不是被测行为坏了。所以三处都找。
  */
 function findEsbuild() {
-  const store = join(root, 'desktop', 'node_modules', '.pnpm')
-  if (!existsSync(store)) return null
-  for (const entry of readdirSync(store)) {
-    if (!entry.startsWith('@esbuild+')) continue
-    const pkgDir = join(store, entry, 'node_modules', '@esbuild')
-    if (!existsSync(pkgDir)) continue
-    for (const platform of readdirSync(pkgDir)) {
-      for (const name of ['esbuild.exe', 'esbuild']) {
-        const bin = join(pkgDir, platform, name)
-        if (existsSync(bin)) return bin
+  const stores = [
+    join(root, 'node_modules', '.pnpm'),
+    join(root, 'desktop', 'node_modules', '.pnpm'),
+    join(root, 'ui-shell', 'node_modules', '.pnpm'),
+  ]
+  for (const store of stores) {
+    if (!existsSync(store)) continue
+    for (const entry of readdirSync(store)) {
+      if (!entry.startsWith('@esbuild+')) continue
+      const pkgDir = join(store, entry, 'node_modules', '@esbuild')
+      if (!existsSync(pkgDir)) continue
+      for (const platform of readdirSync(pkgDir)) {
+        for (const name of ['esbuild.exe', 'esbuild']) {
+          const bin = join(pkgDir, platform, name)
+          if (existsSync(bin)) return bin
+        }
       }
     }
   }
@@ -74,7 +85,7 @@ function findEsbuild() {
 
 const esbuild = findEsbuild()
 if (esbuild === null) {
-  console.log('  FAIL 找不到 esbuild（desktop/node_modules/.pnpm 下没有 @esbuild/*）')
+  console.log('  FAIL 找不到 esbuild（node_modules/.pnpm 与 desktop、ui-shell 的 .pnpm 下都没有 @esbuild/*）')
   process.exit(1)
 }
 

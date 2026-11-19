@@ -6,7 +6,7 @@
  *
  * @module dsc/core/session
  */
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp, type Stats } from 'node:fs'
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp, type Stats } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -29,6 +29,28 @@ export interface SessionMeta {
   createdAt: number
   /** 首条用户消息截断（会话列表展示用），无用户消息时 undefined。 */
   title?: string
+  /**
+   * 会话的出身（2026-11-18）：省略 = 用户自己开的普通会话；`'subagent'` = 队友的运行记录，
+   * 由 subagent 插件派活时写下。
+   *
+   * 为什么要写进 meta 而不是靠目录区分：队友日志从 `.teammates/` 挪到会话目录之后，
+   * 「是不是队友」就只能靠这一行认。它同时是三条判断的依据——会话列表要不要收这一行、
+   * 归档/分叉/删除能不能对它下手、没有 driver 时要不要给它造一个常驻 agent。
+   */
+  origin?: 'subagent'
+  /** 派出这条队友会话的父会话 id（`meta.id`）；只在 `origin === 'subagent'` 时有值。 */
+  parentSession?: string
+}
+
+/**
+ * `Session.create` 的出厂身份：省略全部字段 = 用户自己开的新会话。
+ * @see SessionMeta.origin
+ */
+export interface SessionSeeds {
+  /** 指定会话 id；必须与落盘文件名一致，否则 `load` 会按 id 重算出另一个路径。 */
+  id?: string
+  origin?: 'subagent'
+  parentSession?: string
 }
 
 /** 一条请求注入备忘（note 记录的内存形状）。 */
@@ -658,10 +680,19 @@ export class Session {
 
   /**
    * 新建会话：只在内存里，第一条日志写下去时磁盘上才出现这个文件。
-   * @param file - 指定落盘路径（队友日志住在 `.teammates` 下，不进会话列表）；省略走默认。
+   * @param file - 指定落盘路径；省略走默认的 `<会话根>/<工作目录名>/<id>.jsonl`。
+   * @param seeds - 出厂身份（2026-11-18）：队友会话把 `origin`、`parentSession` 与**自己的
+   *   id** 交进来。id 必须与文件名一致，否则 `load` 按 meta.id 重算路径会算出另一个位置
+   *   （旧队友日志就踩过：id 与文件名是两个 uuid，点开它等于换到一个磁盘上不存在的路径）。
    */
-  static create(cwd: string, file?: string): Session {
-    const meta: SessionMeta = { id: randomUUID(), cwd, createdAt: Date.now() }
+  static create(cwd: string, file?: string, seeds: SessionSeeds = {}): Session {
+    const meta: SessionMeta = {
+      id: seeds.id ?? randomUUID(),
+      cwd,
+      createdAt: Date.now(),
+      ...(seeds.origin === undefined ? {} : { origin: seeds.origin }),
+      ...(seeds.parentSession === undefined ? {} : { parentSession: seeds.parentSession }),
+    }
     const target = file ?? join(sessionsRoot(), slugCwd(cwd), `${meta.id}.jsonl`)
     return new Session(meta, target, [], false, undefined, [], takeWriteLease(target))
   }
@@ -708,7 +739,13 @@ export class Session {
       }
       switch (record.type) {
         case 'meta':
-          meta = { id: record.id, cwd: record.cwd, createdAt: record.createdAt }
+          meta = {
+            id: record.id,
+            cwd: record.cwd,
+            createdAt: record.createdAt,
+            ...(record.origin === 'subagent' ? { origin: record.origin } : {}),
+            ...(typeof record.parentSession === 'string' ? { parentSession: record.parentSession } : {}),
+          }
           break
         case 'user':
           messages.push({
@@ -1389,6 +1426,13 @@ export interface SessionListItem {
   archivedAt?: number
   /** jsonl 的绝对路径（UI 侧的会话 id 就是它）。 */
   path: string
+  /**
+   * 出身（2026-11-18）：`'subagent'` = 队友的运行记录。扫盘时这类行**不进侧栏**
+   * （见 {@link scanSessions}），但仍按其它字段照常读出来，给需要它的调用方用。
+   */
+  origin?: 'subagent'
+  /** 派出它的父会话 id；配合 {@link origin} 画谱系。 */
+  parentSession?: string
 }
 
 /** 归档区与回收站（都在 ~/.dsc 下，点开头的名字让正常列表自然跳过）。 */
@@ -1433,7 +1477,9 @@ function scanSessions(root: string, metas: Record<string, SessionMetaRecord>): S
       if (!file.endsWith('.jsonl')) continue
       // 文件名就是 `<uuid>.jsonl`，sidecar 按 uuid 存，所以按文件名取属性
       const item = readSessionFile(join(dirPath, file), metas[basename(file, '.jsonl')])
-      if (item !== null) out.push(item)
+      // 队友的运行记录躺在会话目录里（2026-11-18 起，与主会话同一个落盘形状），
+      // 但它们不是用户开的会话：侧栏不列，入口只在状态面板的「子智能体」区。
+      if (item !== null && item.origin !== 'subagent') out.push(item)
     }
   }
   return out.sort((a, b) => b.createdAt - a.createdAt)
@@ -1553,6 +1599,8 @@ function readSessionFileUncached(filePath: string, mtimeMs: number, sidecar?: Se
         updatedAt: lastActivityAt(text, mtimeMs),
         ...(title !== undefined ? { title } : {}),
         ...(sidecar?.pinnedAt !== undefined ? { pinnedAt: sidecar.pinnedAt } : {}),
+        ...(record.origin === 'subagent' ? { origin: record.origin } : {}),
+        ...(typeof record.parentSession === 'string' ? { parentSession: record.parentSession } : {}),
         path: filePath,
       }
     }
@@ -1597,12 +1645,49 @@ function readSessionFileUncached(filePath: string, mtimeMs: number, sidecar?: Se
 }
 
 /**
- * 队友（子智能体）运行记录的根目录。它放在会话根目录下的 `.teammates`，
- * 于是会话列表扫不到它（scanSessions 跳过点开头的条目），
- * 但路径校验仍认它是"自己家的日志"，桌面端可以只读打开它。
+ * 队友（子智能体）运行记录的根目录。
+ *
+ * 2026-11-18 之前队友日志住在这里（`sessions/.teammates`），靠「点开头 = 列表跳过」与主会话隔开；
+ * 那套隔法有两个代价：`Session.load` 按 meta.id 重算路径时会算出别的位置，界面因此只能只读地
+ * `peek` 它。现在新队友直接落在会话目录里（`sessions/<工作目录名>/<id>.jsonl`），用 meta 的
+ * `origin: 'subagent'` 标记身份——本函数只剩两种用途：认老日志（迁移前的记录还在这儿）、
+ * 以及 `peek` / `remove` 的路径校验要同时认两处。
  */
 export function teammateRoot(): string {
   return join(sessionsRoot(), '.teammates')
+}
+
+/**
+ * 这个文件是不是队友的运行记录（老目录里的，或 meta 里标了 `origin: 'subagent'` 的）。
+ *
+ * 只读开头 4KB：两代队友日志的 meta 都在首行，读一条比读整份便宜得多——会话文件可能有几 MB，
+ * 而调用方（归档 / 分叉 / 删除的路径校验）是高频动作。
+ * 读不出首行（空文件 / 坏文件）按「不是」处理——调用方拿它做权限判断，宁严勿松。
+ */
+export function isTeammateSessionFile(filePath: string): boolean {
+  const resolved = join(filePath)
+  for (const sep of ['\\', '/']) {
+    if (resolved.startsWith(teammateRoot() + sep)) return true
+  }
+  let fd: number | undefined
+  try {
+    fd = openSync(resolved, 'r')
+    const buffer = Buffer.alloc(4096)
+    const read = readSync(fd, buffer, 0, buffer.length, 0)
+    const head = buffer.subarray(0, read).toString('utf8').split(/\r?\n/, 1)[0] ?? ''
+    const record = JSON.parse(head) as { type?: string; origin?: string }
+    return record.type === 'meta' && record.origin === 'subagent'
+  } catch {
+    return false
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // 关不掉不影响判断结果
+      }
+    }
+  }
 }
 
 /** 会话文件必须落在 sessions 根下（归档区也算），才允许被这些操作碰到。 */
@@ -1616,10 +1701,9 @@ function assertSessionFile(filePath: string): string {
     throw new Error(`会话文件不存在：${filePath}`)
   }
   // 队友的运行记录是只读史料：归档、永久删除、分叉都不许对它下手。
-  for (const sep of ['\\', '/']) {
-    if (resolved.startsWith(teammateRoot() + sep)) {
-      throw new Error(`这是队友的运行记录，不能归档、永久删除或分叉：${basename(filePath)}`)
-    }
+  // 2026-11-18 起它们与主会话同目录，靠 meta 的 origin 认（老记录仍在 .teammates 下）。
+  if (isTeammateSessionFile(resolved)) {
+    throw new Error(`这是队友的运行记录，不能归档、永久删除或分叉：${basename(filePath)}`)
   }
   return resolved
 }

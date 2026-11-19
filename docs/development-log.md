@@ -17258,3 +17258,302 @@ TUI 接通后，桌面端的 @ 面板仍只从会话 cwd 懒递归——同一�
 
 
 
+
+## 2026-11-17：0.9.1 之后的合并内容，打包产物逐功能实机验收
+
+**为什么做**：11-16 把 387 个提交快进到 main（0.8.1 → 0.9.1 之后的那批），用户要求「重新打包，
+对新合进来的内容做实机测试」。测的不是 dev，是 `desktop/dist/win-unpacked/Pneuma.exe`。
+
+**怎么测**：新加了一个共用壳 `desktop/shots/_pkg-harness.mjs`（一次性 HOME + 本地假 OpenAI 端点
++ CDP + 截图），场景写成它的 body。打包产物与 dev 的区别是 `resources/dsc-core` 里另一批文件，
+dev 过不代表包里过。
+
+| 功能 | 判据 | 结果 |
+| --- | --- | --- |
+| 首屏问候 | h1 = 当前时段那一句、副行 = Codex 式引导、四张卡 | 5/5 通过 |
+| 核心闭环 | 发一句话 → 用户气泡 + 助手回复 + 无错误条目 | 5/5 通过 |
+| 思考正文 Markdown | `.think-block` 里有 `<pre>/<code>`、`<li>`、`<strong>` | 4/4 通过 |
+| 命令调用的终端块 | `$ echo …` 终端样式 + 退出码 | **失败**（见下） |
+| 设置页 | 打开、九个分区在 | 通过；但没有「运行日志」分组 |
+| 插件 / 技能页 | 点了主区换页 | **失败**（见下） |
+
+**问题一：`bash` 工具在全新 HOME 下第一次调用就失败。**
+界面原话：`沙箱：受限令牌后端已降级为策略围栏（不再换执行体）：给可写根
+[…\\.dsc\\sandbox\\tmp\\<hash>]（能力 SID S-1-4-…）打 ACL 失败：GetNamedSecurityInfoW(三件套)
+失败（Win32 错误码 2）：系统找不到指定的文件。` 结果：命令没执行，界面没有 `$ 命令` 与退出码，
+只剩一行说明。预建 `sandbox/tmp` 后同样失败（`_diag-bash-sandbox.mjs` 的 A/B 两轮），所以不是
+「目录晚一步建」这么简单，是打 ACL 的那个路径本身没被创建。待修。
+
+**问题二：侧栏「插件 / 技能」点了不换页。** 三个入口按钮本身正常（`BUTTON.nav-item`、不 disabled），
+element click、CDP 真实鼠标、点父节点三种方式都点过，主区仍是首屏。代码指向
+`src/packages/ui-sessions/ui/ui.tsx:220` 的守卫：当前页在页面注册表里查不到就 `setShellPage(null)`
+踢回对话页。dev 版（`desktop/out`）用 `DIAG_DEV=1 node desktop/shots/_diag-plugins.mjs` 复现同一现象，
+所以不是打包漏包（`lib/ui/plugins/` 下 22 个包齐全，含 `plugins`、`skills`）。待查。
+
+**没覆盖**：superagent（用户要求先留着）；归档的 OS 锁（要两个进程同时抢，另开）；
+「编辑重发后折叠复位」（时序成本高）；`/doctor`、`/log`、`/doctor --bundle`——壳的
+`shell: true` 白名单只有七条，这三条在应用里跑不了（`commands-core/commands-completion.ts`
+的 `shellHelpText`），要验得走终端。
+
+**这一批新增的探针**（都在 `desktop/shots/`，不进 CI）：`_pkg-harness.mjs`、
+`_verify-welcome-packaged.mjs`、`_verify-core-loop-packaged.mjs`、`_verify-features-packaged.mjs`、
+`_verify-pages-packaged.mjs`、`_diag-plugins.mjs`、`_diag-bash-sandbox.mjs`。
+
+**登记**：上面三条已写进 [docs/bugs.md](bugs.md)——BUG-0001（沙箱打 ACL 失败，bash 不可用）、BUG-0002（侧栏「技能/插件」点了不换页）、BUG-0003（设置里没有「运行日志」分区）。修完在那条 issue 下面补验收命令与提交号。
+
+
+## 2026-11-17：三条缺陷修完（沙箱建目录 / 切页守卫 / 运行日志分区）
+
+**为什么做**：上一节验收挑了三条缺陷（BUG-0001/0002/0003）。用户要求「先核实、再修、修完起子代理复核」。
+三条的结论都写在 [docs/bugs.md](bugs.md)，这里只记「根因—改法—怎么验」和踩到的坑。
+
+**BUG-0001（P0，P0 是真的）：第一次跑命令沙箱必降级。**
+根因不是「目录晚一步建」，是**两处算的不是同一个目录**：宿主建的是 `sandbox/tmp/<会话 id>`
+（`src/packages/sandbox/index.ts:224`），受限令牌后端要授权的是 `sandbox/tmp/<工作区哈希>`
+（`src/packages/sandbox/win/backend.ts:206`，不带会话 id）。后者谁都没建 → `GetNamedSecurityInfoW`
+返 Win32 错误 2 → 整条后端作废。自检一直绿，是因为 `scripts/sandbox-win-token-test.mjs` 里替它建好了，
+注释还写着「真实宿主里由插件建」，那句话是错的。
+改法：`ensureAuthorized` 打 ACL 前对每个可写根 `mkdirSync(path, { recursive: true })`，建不出来才降级。
+验收：自检 **90 通过 / 0 失败**（新增 3 条回归判据）；打包版实跑一条命令，会话 jsonl 里工具结果是
+`CWD=D:\dsc INSIDE_OK OUTSIDE_DENIED EPERM`——写根内真落盘、写根外被系统层拒。
+
+**BUG-0002（P1）：侧栏技能/插件点了不换页。**
+文档里记的两条候选（槽条目 id 与页键不一致、点击没进 React）**都被实验排掉了**：`/api/events` 的
+plugins 帧里 id 就是 `plugins`/`skills`/`superagent`；`onClick` 从 `__reactProps$` 里取出来直接调用，
+效果与真实点击一致，且点完侧栏那一行确实重渲染过。
+真因在第三处：`usePageEntryAvailable` 把「这页在不在」缓存成**布尔**。停在对话页时传的 entryId 是 `''`
+（恒 false），切页那一帧 entryId 变了、state 还是旧答案 false，守卫
+`if (page !== null && !pageEntry) setShellPage(null)` 就把「答案没更新」当成「插件被停用」踢回对话页。
+改法：state 存**启动图帧**，每次渲染现算。验收：新加闸门 `scripts/ui-page-switch-test.mjs` **15/15**
+（含「脏副本必须红」），`check:ui` **80/80**，打包版真实鼠标点技能 `aria-pressed=true`、主区换成技能页。
+
+**BUG-0003（P2）：设置里没有「运行日志」。**
+分区其实推上来了，是设置页过滤掉了：`src/packages/settings/index.ts:551` 的
+`builtin: section.inSettings === true || builtinIds.has(id)`，而 `log` 注册时没声明 `{ inSettings: true }`。
+改法：补声明（`src/packages/log/index.ts:346`）。验收：左栏 9 项 → 10 项，多出「运行日志」。
+
+**踩到的两个坑（都写进探针注释了）**
+
+1. 探针 HOME 原来落在仓库里（D 盘）。这台机器的 **D 盘不许给新建目录设完整性标签**
+   （`icacls /setintegritylevel` 直接 Access is denied），于是每个沙箱用例都撞 ACL 失败——
+   看着像产品坏了，其实是探针位置。`_pkg-harness.mjs` 的 HOME 已挪到系统临时目录（C 盘），
+   与真实用户的 `%USERPROFILE%` 同一条路。
+2. 验沙箱写边界时，「命令原文」也会被画进界面，用 `text.includes('OUTSIDE_WRITTEN')`
+   会把**命令里出现的词**当成**命令跑出来的结果**（第一版就这么假通过了）。改成读会话 jsonl 里
+   `type:"tool"` 的真实结果，标记串在运行时拼，界面文本只用来判「有没有降级提示」。
+
+**没修的**：`/doctor`、`/log`、`/doctor --bundle` 在桌面输入框里本来就不执行（壳只转 7 条
+`shell: true` 命令），探针里已从 FAIL 改成 SKIP 并写清原因，要验得走终端。
+
+
+## 2026-11-17：BUG-0004 修完（附加可写根的相对路径）
+
+**为什么做**：复核 BUG-0001 时在同一片代码里发现的独立成因，用户要求接着修。
+
+**根因**：策略层按**会话 cwd** 展开附加可写根（`policy.ts:677` 的 `canonicalizePath`），
+受限令牌后端照收原始串（`backend.ts:207-210`），`mkdir`/打 ACL 由**宿主进程的 cwd** 决定
+（打包版就是安装目录）。于是围栏放行、系统层拒写，还可能顺手在安装目录旁边造一个目录。
+
+**改法**：在 `writeRootsFor` 里对每条附加根调同一个 `canonicalizePath(…, { cwd })`，
+拿到绝对路径再派生能力 SID。没选「在 `sandbox/index.ts` 提前绝对化」，是因为那里有策略快照
+与受限令牌后端两个入口，漏一个就重现同一个 bug；放在产出可写根的那一处，后端被谁调用都绕不过去。
+绝对路径也过一遍同一个函数：8.3 短名、大小写、符号链接拼法不同会派生另一个 SID，
+而 runner 按 realpath 复算，对不上直接退 127。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **98 通过 / 0 失败**，其中 5 条新判据
+（解析成会话 cwd 下的绝对路径 / 不是宿主 cwd 旁边那个 / 与 `createPolicy` 同一条 / `--root`
+里是绝对路径 / 受限令牌里真写进那个相对附加根成功）。打包产物已按 HEAD 重建，沙箱写边界探针复跑 PASS。
+
+**没验到的**：没在打包版界面上点着改「附加根」再跑命令，证据停在令牌层——那正是出问题的那一层。
+
+
+### 2026-11-17 复核第二轮（BUG-0004）
+
+**复核提了什么**：`ok === false` 的附加根仍被拿去授权（与策略层口径不一致）、cwd 未规范化
+（junction 进来的会话会派生出第二条身份）、文档里「runner 按 realpath 复算 → 退 127」这句不实、
+「附加根写成文件会打 ACL 失败」这句不实。
+
+**怎么改的**
+
+1. `writeRootsFor` 里 `!resolved.ok` 直接跳过——策略层已经把它记进 `problems` 并拒绝写，
+   后端再授权只会失败一次、把整条后端降级。
+2. `cwd` 也过一遍 `canonicalizePath`（解析失败退回原串）：会话从 junction 进来时，
+   cwd 按原串、附加根按真实拼法会派生出两条根、两份能力 ACE，root 侧授权还不回收。
+   副作用是 junction 会话的 `--temp` 目录名换成真实拼法，旧目录由清扫按龄回收。
+3. 文档那两句改实：runner 的 `verifySidForPath` 用的是 `--root` 收到的串原样复算，不会退 127；
+   附加根写成已存在的文件时 `grantWrite` 对文件同样成功，只是 OI|CI 继承没意义。
+4. 顺手给自检里那行 `[Console]::OutputEncoding` 套 try——宿主 stdout 不是控制台时它会报
+   「无法设置」，整段假红（当天撞过一次）。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **100 通过 / 0 失败**（新增 junction 去重判据）。
+
+
+### 2026-11-17 复核第三轮（`--temp` 同源）
+
+**复核抓到一条真回归**（我上一步 `b4ec8ebf` 带进来的）：授权的是规范化后的 temp 根，
+`plan()` 的 `--temp` 还在用 `run.cwd` 原串。junction 或大小写拼法的会话里，TMP/TEMP 就指到
+一条既没能力 ACE、也没人建过的目录，子进程写临时目录直接被拒。100 条判据全绿也没照出来，
+因为 junction 那条只看 `writeRootsFor`，没检查 `--temp`。
+
+**改法**：把「规范化 cwd」抽成 `canonicalWriteCwd`，`writeRootsFor` 与 `plan()` 的 `--temp`
+共用同一个结果；顺带修掉「相对 cwd 被二次拼接」（`canonicalizePath('work', { cwd: 'work' })`
+会拼成 `work\work`）——契约上是绝对路径，相对路径不猜、原样返回。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **101 通过 / 0 失败**，新增判据
+「junction 会话的 `--temp` 与已授权的 temp 根是同一条」。
+
+**留下的一句**：junction 会话规范化之后，旧的原串哈希 temp 目录没人再派生得出来，能力 ACE
+等于惰性残留，由清扫按 24 小时龄回收；每个 junction 会话多一个空目录，可以接受。
+
+
+### 2026-11-17 复核第四轮：连「临时目录显示口径」一起收口（BUG-0005）
+
+**复核说了什么**：`--temp` 与授权那条 temp 根已经同源、`revokeWrite` 回收的也是同一条，可以合并；
+只剩一个老账——策略层（`sandbox/index.ts:224`）按**会话 id** 算私有临时目录，界面上显示的、
+策略层放行的都是那个目录，而子进程真正的 `TMP/TEMP` 是规范化 cwd 的哈希目录。
+
+**为什么顺手并掉**：这跟 BUG-0004 是同一类病（两层各算一遍路径），只是这次错在显示与放行那一侧，
+不影响强制，所以记 P3。一行改动、加一条判据就能收口，留着只会让后来人再查一遍。
+
+**改法**：插件层改用后端导出的 `canonicalWriteCwd`（[index.ts:224](src/packages/sandbox/index.ts#L224)），
+`currentSessionId` 这个帮手随之删掉。现在「策略层放行 / 界面显示 / 后端授权 / 子进程 TMP」四者同一个路径。
+
+**怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据
+「插件层算的私有临时目录 = 后端授权的那条 temp 根」。
+
+### 2026-11-17 外观加「正文字体 / 代码字体」，字号改存像素
+
+**起因**：用户报「会话字体辨识度不高」。查下来不是字体选错了，是三层叠加：过程正文 12px + 54%
+灰（`--dsc-text-tertiary-a`，对 `#faf9f5` 约 3.9:1）、卡片行 11px 同一档灰、等宽栈里没有中文字形
+（Windows 上 Consolas 不带中文，最后一族是裸 `monospace`，中文落到宋体）。三处里前两处是设计
+取舍，第三处是真 bug。
+
+**改法**：
+1. 字号真源从「倍率 0.85–1.35」改成 `ui.textSizePx`（10–22，默认 14）。`fontSize` 保留在
+   `UiPrefsView` 里，但每次读档都由 px 重算（= px ÷ 14），只给没升级的消费方读；旧档只写了倍率
+   或 `'sm'|'md'|'lg'` 的，读档时一次性换算成 px，下一次写盘起就只有 px。
+2. 新增 `ui.textFontFamily` / `ui.codeFontFamily`（逗号分隔的 CSS 字体列表，空串 = 内置栈）。
+   归一函数 `normalizeFontList` 与 px↔倍率换算都放在 `src/contract/fonts.ts`，宿主读档、壳落地、
+   设置页三处共用一份——以前字号倍率在这三处各夹一次，改基准时漏一处就会「设置页 16px、界面 14px」。
+3. `tokens.css` 把两条字体令牌拆成「默认栈 + 用户变量前缀」：
+   `--dsc-font-ui: var(--dsc-font-text, 默认), 默认`、`--dsc-font-mono: var(--dsc-font-code, 默认), 默认`；
+   等宽默认栈在 `monospace` 前插 `Microsoft YaHei UI / Microsoft YaHei / PingFang SC / Noto Sans SC`。
+   空串时壳 `removeProperty`，**不写空串**——`var()` 的兜底只在变量未定义时生效，空串会让整条
+   `font-family` 非法、退回浏览器默认字体。
+4. 设置页：外观区加两行字体输入框（草稿 + 失焦/回车提交 + Esc 还原，提交时把归一结果回填给
+   用户看），字号滑杆从百分比改成 px（10–22，步长 1）。
+
+**怎么验的**：
+- `node scripts/ui-font-prefs-test.mjs` → **40/40 通过**（旧档迁移、夹取、字体串归一、写盘往返）。
+- `node scripts/ui-font-apply-test.mjs` → **41/41 通过**（假 `document` 上跑真 `applyAppearance`：
+  空串删变量、px→倍率、老镜像迁移、tokens 接线）。
+- `pnpm run check:ui` → **83/83 通过**；`node scripts/ui-locale-test.mjs` → 全部通过（56 个包）。
+- `pnpm run build`、`pnpm run build:ui`、`pnpm --dir desktop typecheck`、`node scripts/check-core.mjs`
+  见当次交接（内核门禁里有几条与本次无关的既有红，逐条写在交接里）。
+
+**顺带修的**：`scripts/ui-sidebar-order-test.mjs` 找 esbuild 只认 `desktop/node_modules/.pnpm`；
+四个项目收进一个 pnpm workspace 之后干净 checkout 里虚拟仓在仓库根，这条探针于是直接判失败。
+改成三处都找（根 / desktop / ui-shell），原因写在函数注释里。
+
+**留下的一句**：`textSizePx` 只到 22px、默认 14px；代码字号还没有独立档（`--dsc-fs-code` 仍按
+倍率跟随），要独立得再开一轮——`contract/fonts.ts` 里把基准与范围都收在一处，加一档只动那里。
+
+### 2026-11-17 技能市场秒开：进程内缓存、skills.sh 搜索态与刷新打通
+
+**报上来的三件事**（三张界面截图）：技能页「市场」每次点都要转很久、换源也要再等；skills.sh 源点开是一张
+红色错误条，那里应该留搜索框；市场按钮旁的数字没有意义。
+
+**根因三处**：
+1. 技能页是整页插件（`src/packages/ui-skills/ui/ui.tsx`）：离开这一页 `SkillsPage` 返回 null，`SkillsView`
+   整个卸载，市场 state 跟着丢；切回市场时 `market === null` 就立刻抓第一个源。换源 chip 也是每次直接联网，
+   客户端没有任何缓存。宿主默认 invoke 超时 30 秒（`ui-runtime/ui/host-channel.ts:42`），GitHub 源 trees
+   15 秒 + 补描述 6 秒叠起来会顶到它。
+2. 点 skills.sh 时立刻发请求，宿主对空查询直接抛「skills.sh 只提供搜索…」，界面把它当红条显示。宿主侧还有
+   一个前置 bug：`skills/index.ts` 调 `browseRemote` 时没把已算好的 `needle` 传进去，搜索词根本到不了宿主。
+3. 市场 tab 按钮里渲染 `market?.items.length`，那是「上一个源有多少条」，和页签语义无关。
+
+**参考实现怎么做到秒开**：DSH 的技能管理插件（`@michengai/dsh-skills-manager`）把仓库清单缓存在宿主
+（`lib/repositories.js` 的 `stateCache` + `repository-cache/`），打开发现页直接读缓存、只有点「刷新并检查更新」
+才联网；扫描/下载失败保留上次列表与缓存；skills.sh 源固定渲染搜索框，关键词为空只给空态、不发请求。本次按
+这条行为路径改，不搬代码。
+
+**改法（界面层 + 宿主与通道）**：
+- 界面层：模块级 `marketCache`（键=源名+关键词，24 条上限、1 小时新鲜期、读也挪队尾）、`marketInflight`
+  同键去重、`prefetchMarket` 进页后台串行预取；离开页面再回来从缓存还原（含上次页签）；过期先显示旧结果再
+  后台刷新，失败只留一行软提示；`browseToken`/`marketEpoch` 挡「换源后旧回包覆盖新视图」与「改源前的在途结果」。
+- skills.sh：点源不发请求、搜索框自动聚焦、<2 字符只显示中性提示、≥2 字符 350ms 防抖；只有市场 tab 里亲手
+  输入的关键词才自动搜（不会拿已安装 tab 的过滤词去打网络）。
+- 宿主与通道：四类源共用 15 秒总预算；联网失败回退磁盘旧清单（不限 TTL），回退原因经既有 `error` 字段做
+  软提示；宿主内存缓存加 1 小时 TTL 且键带源地址（同名换地址不串旧清单）；`browseMarket` 放行第三个可选
+  boolean，runtime 透传 refresh，界面「刷新」从此真的强制联网。
+- 市场 tab 的计数徽章删掉（已安装 tab 的保留）。
+
+**怎么验的**：
+- `pnpm run build`、`pnpm run build:ui`、`pnpm -C ui-shell typecheck`、`pnpm --dir desktop typecheck`
+  全部退出 0。
+- `node src/packages/config-core/tests/market-fallback.test.mjs` → 6 项通过（回退旧缓存、TTL 不挡回退、
+  `onFallback` 带原因、无缓存必抛、总预算收紧单请求超时）。
+- `node scripts/ui-skills-market-test.mjs` → 42 项源码级探针通过；对修复前基线 `--rev` 跑 8/42（exit 1），
+  证明闸门不是永远绿。已按 `ui-*-test.mjs` 命名自动进 `check:ui`。
+- `desktop/shots/skills-market-check.ps1`（隔离 HOME + 本地慢源：`/index.json` 延迟 800ms，命中次数由
+  PowerShell 侧按毫秒窗口读服务端日志）→ 30/30：首次进市场 542~1001ms 出条目；离开技能页再回来二次打开
+  **1ms** 出条目且窗口内 0 次源命中；skills.sh 点开只显示中性提示、无红条、搜索框聚焦、市场 tab 无计数徽章。
+  跑前跑后真实 `~/.dsc` 11313 个文件内容聚合一致（零污染）。
+
+**留下的取舍**：
+- 首源被配成 skills.sh 且源清单尚未加载时，第一次仍会发一次注定失败的请求（用户只看到中性提示，回包后转
+  中性路径）。
+- 回退到旧清单时按当前时间重新记新鲜期，想立刻拿新数据要点一次「刷新」（与 DSH「刷新才联网」同口径）；
+  磁盘层的旧清单仍保留，供下次失败兜底。
+
+### 2026-11-18 直播尾补全：思考内容进组头、准备中的参数前缀进组头
+
+**报障与依据**：用户贴了参考实现的截图（一行「正在分析请求 · Now, why would the user see …」），
+说 numa 的正文直播尾不全——只看得到「正在调用工具」这类抬头，看不到最新一步的具体内容
+（思考正文、工具的具体参数）。逐条核下来是两处**真实缺口**，不是链路坏了。
+
+**缺口一（思考）**：`groupSteps` 里未收口的组只从「运行中的工具参数」取实时详情，没有工具时
+`runningDetail` 一个字段都不写；而做这件事的纯函数 `reasoningDetail()` 从 2026-10-30 起**零调用**。
+实测下来那段时间屏幕上只有一句光秃秃的「正在分析请求」，思考正文全在默认收起的组体里。
+参考实现的 `processActivity` 一直有这条兜底（`process-activity.ts` 的
+`if (running === undefined) runningDetail = liveReasoningDetail(nodes)`）。
+
+**缺口二（工具）**：内核的 `tool/prepare` 事件只带工具名（`src/core/events.ts`），参数在
+`applyToolCallDelta` 里攒着、却从不往外报。于是「模型决定调什么」与「工具真的开跑」之间那几秒，
+组头只有一个名字（通用类别）或者空着。参考实现用参数视图的 `textPrefix` 读流式前缀，
+准备阶段就能显示「准备运行命令 · pnpm bu」。
+
+**改法（两处互不依赖）**：
+
+| 决策 | 理由 |
+| --- | --- |
+| 思考兜底只认**负 id**（还在流式）的那条，取最后一段非空段落 | 定稿的思考行说的是「刚才那段已经想完」，组头要回答的是「此刻在想什么」；参考实现同样只从 `status === 'running'` 的助手步里取。多条时从后往前找第一个能取出一句话的，空段落跳过 |
+| `tool/prepare` 加可选 `args`（累积原文）与 `index`，参数每长一段报一次 | 组头要边流边显示半截命令。`index` 是 OpenAI 的 `tool_calls[].index`——同一条调用的多次更新靠它认人，同名并行两条时只按名字认会串 |
+| 累积原文在**内核侧**截到 4096 UTF-16 单元，且不劈代理对；文本没变化就不重复报 | 每段都带「累积到现在」的原文，一段 20KB 的补丁边流边报会按平方涨；超过上限之后前缀恒定，再报只是白重建快照 |
+| adapter 的 `prepared` 按 `index` **原地更新**，`ts` 保留首个具名 delta 的时间 | 以前每次 prepare 事件都 push 一条，直接改会让准备中的行翻倍；`ts` 跟最后一次刷新会让这一行的时刻一路往后跳 |
+| 半截原文走 `argsPreview`，**不塞 `argsText`** | `argsText` 的语义是「这次调用的终稿参数」，界面各处拿它真解析（工具摘要 / 文件路径 / 改动 diff）。半截 JSON 塞进去会被摘要的 `JSON.parse` 失败兜底原样画出来（`{"command":"pnpm bu` 上屏且随每段抖动） |
+| 半截参数由界面自己扫（`preparingToolDetail`），转义只吃「后一位已到」的那些 | 参数是模型一个字一个字吐出来的，`JSON.parse` 在半截状态一定抛错。扫描器跟踪 `{}`/`[]` 深度与字符串态，只在深度 1 的键位取值——不然嵌套对象里的同名字段、值里冒充的键都会被误认成顶层字段 |
+| 一个字段都没读到就**不显示**（通用类别才补工具名） | 名字到了、内容还没到，写出来是假信息。这处与参考实现**有意保留差异**：参考实现是所有类别都留空直到参数视图闭合，numa 保留旧口径只给通用类别补工具名，代价是通用类别会先显示工具名、参数到了再跳成参数 |
+
+**怎么验的**：
+
+- `pnpm run typecheck`、`pnpm run build` 0 错；`pnpm run check:style` 全过。
+- `pnpm test`：`src/packages/ui-transcript/ui/process-groups.spec.ts` 新增两段（直播思考兜底 5 条、
+  准备中半截参数 12 条：值未闭合 / 值已闭合后续键还在流 / 转义换行 / 转义写一半 / 没有可读字段 /
+  参数已到齐 / 嵌套键不算 / 值里冒充的键不算 / 重复键取最后一个 / 半个代理项裁掉 / 组头详情取
+  argsPreview / 通用类别回退）；`src/core/llm-tool-delta.spec.ts` 新增一段（一片增量最多报一次、
+  4096 上限与去重、同名并行 index 0/1、名字后到时只报一次）；`tests/integration/transcript-order.int.spec.ts`
+  新增两条（准备中的 argsPreview 非空、argsText 仍是空串；同名并行各占一行）。
+- `pnpm run check:ui` 82/82；`pnpm run check:core` 123/126（三条失败里 `skills-roots-test` 与
+  `tui-subagent-live-test` 是既有问题，`teammate-session-open-test` 是并发偶发，单独跑 exit 0）。
+
+**顺手修掉一个门禁隔离的坑**：`scripts/_check-runner.mjs` 派发探针时直接继承了父进程环境，
+而本机把数据目录挪到了 D 盘（`DSC_HOME=D:\waqData\dsc`）——探针靠 `process.env.HOME` 换临时目录的
+隔离被 `DSC_HOME` 盖过，于是读写真实 `~/.dsc`（实测写进去 62 个临时工作区的假会话）。
+修法：新增 `probeEnv()`，派发子进程时删掉 `DSC_HOME` / `DSH_HOME` 两个落点开关；随后用
+「外壳仍有 DSC_HOME」的条件跑 `check:ui` 82/82、单跑之前必红的 `config-file-switch-test` 38/38。
+
+**留下的一句**：准备中的那一行只在**实时路径**有；重放历史时参数已定稿，走的是 `liveToolDetail`。
+`takePrepared()` 升级工具行时仍按名字配对（老口径），`index` 只用来认「同一条调用的多次更新」——
+两条口径没并成一条；另外重试 / 流恢复后同 index 会命中上一轮留下的行，`ts` 保留第一次尝试的时刻
+（差几十毫秒到几秒，比原来留重复行好），这两条都记在 adapter 的 `prepared` 注释里。

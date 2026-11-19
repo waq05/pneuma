@@ -1,0 +1,57 @@
+# 场景：审查结论卡（review-findings）
+# 稳定：用户消息里的 `<review-findings>` 块由壳解析成卡片：徽标、标题、位置、说明都来自种子文本；卡片不带流式状态，静置后 DOM 与 computed style 都不再变化（B37-R 的徽标色改量真值）。
+# hash：（空）
+# 计数：
+#   dom.buttons = 29
+#   dom.elements = 253
+#   dom.inputs = 1
+#   review.badges = 2
+#   review.cards = 1
+#   review.findings = 2
+# 样式（真 Chromium computed style）：
+#   review.badge.p1.background-color = rgba(0, 0, 0, 0)
+#   review.badge.p1.border-radius = 6px
+#   review.badge.p1.color = rgb(220, 38, 38)
+#   review.badge.p1.font-size = 12px
+#   review.badge.p3.background-color = rgba(0, 0, 0, 0)
+#   review.badge.p3.border-radius = 6px
+#   review.badge.p3.color = color(srgb 0.0784314 0.0784314 0.0745098 / 0.54)
+#   review.badge.p3.font-size = 12px
+#   review.card.border-radius = 7px
+#   review.card.padding-left = 10px
+
+Pneuma
+新会话
+技能
+插件
+工作区
+dom-work
+<review-findings teammate="writer-1" state="done"> ### [P1]
+<time>
+今日总用量
+0 tok
+设置
+Super Agent
+<review-findings teammate="writer-1" state="done"> ### [P1]
+标准模式
+对话
+轨迹
+代码审查 · writer-1
+done
+2 条
+P1 重要
+徽标颜色与优先级语义不一致
+src/packages/ui-primitives/ui/review-findings-card.tsx:61
+
+P1 的徽标与 P3 同色，扫一眼分不出优先级。
+
+建议：按 priority 分四档取色，并补 computed-style 断言。
+
+P3 可选
+卡片说明段的折行偏窄
+src/packages/ui-renderer/ui/styles/legacy/views.css:13000
++
+工作区可写
+演示端点/
+demo-chat
+默认

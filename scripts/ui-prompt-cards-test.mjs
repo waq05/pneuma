@@ -10,7 +10,7 @@
  *   [1] 组件：两张卡都在、根类名是 `.entry-prompt` / `.entry-injection`、收起行的读数来自字典
  *   [2] 老会话：`bodyMissing` 分支存在，且那一支里**没有段清单表**（不画空表）
  *   [3] 接线：render.tsx 两个 case 直画卡片（不走节点槽）、存档键是 `${sessionId ?? ''}:${row.stable}`
- *   [4] 结构表：round-fold 的 TURN_INDEPENDENT / rounds.ts 的轮尾早退 / ui.tsx 的欢迎态判据
+ *   [4] 结构表：整轮折叠把两张卡当过程内容收起来（round-fold）+ 轮尾早退 / 欢迎态判据仍认它们
  *   [5] 样式：两份卡用的每一个类名都在 views.css 里有规则（根类名与 CSS 一致）
  *   [6] 文案：27 个键在 zh / en 都在、两份键集一致、英文真译过、占位符两边都留
  *   [7] 反向钉：展开体里没有正文字段（没偷偷去改契约）、组件里没有中文字面量、没有 import 契约
@@ -132,15 +132,28 @@ console.log('[3] 接线：render.tsx 两个 case 直画卡片，存档键与 thi
     && !renderSrc.includes("${sessionId ?? ''}:${String(row.entry.id)}"))
 }
 
-console.log('[4] 结构表：三处集合 / 早退都含两个新 kind')
+console.log('[4] 结构表：整轮折叠收这两类、轮尾早退与欢迎态判据仍认它们')
 {
-  // round-fold：整轮收起不许把它们一起藏掉。
+  // round-fold（2026-11-17 改口径）：两张卡**跟着整轮一起收**，不再挂在独立节点表里。
+  // 但光删表不够——过程区那两趟扫描不认它们时，`hidden` 里不会出现这两行，收起照样不收，
+  // 所以这里同时钉住 `isRoundProcessKind` 把两类算成过程条目。
   const from = roundFoldSrc.indexOf('export const TURN_INDEPENDENT')
   const to = roundFoldSrc.indexOf('])', from)
   const independent = from >= 0 && to > from ? roundFoldSrc.slice(from, to) : ''
-  check('round-fold.tsx 的 TURN_INDEPENDENT 含 system-prompt', independent.includes("'system-prompt'"), independent.slice(0, 120))
-  check('round-fold.tsx 的 TURN_INDEPENDENT 含 context-injection', independent.includes("'context-injection'"), independent.slice(0, 120))
+  check('round-fold.tsx 的 TURN_INDEPENDENT 不再含 system-prompt', !independent.includes("'system-prompt'"), independent.slice(0, 120))
+  check('round-fold.tsx 的 TURN_INDEPENDENT 不再含 context-injection', !independent.includes("'context-injection'"), independent.slice(0, 120))
   check('原来的五类没被删', ['user', 'plan', 'system', 'turn-end', 'turn-max-tokens'].every((kind) => independent.includes(`'${kind}'`)))
+  const processKindAt = roundFoldSrc.indexOf('function isRoundProcessKind')
+  const processKind = processKindAt < 0 ? '' : roundFoldSrc.slice(processKindAt, roundFoldSrc.indexOf('\n}', processKindAt))
+  check('过程条目判定收 system-prompt', processKind.includes("kind === 'system-prompt'"), processKind.slice(0, 160))
+  check('过程条目判定收 context-injection', processKind.includes("kind === 'context-injection'"), processKind.slice(0, 160))
+  // 两趟扫描都得用它：起点/终点那趟（正向）与「最后一条过程行」那趟（反向）。
+  check('两趟扫描都走 isRoundProcessKind', (roundFoldSrc.match(/isRoundProcessKind\(/g) ?? []).length >= 3, String((roundFoldSrc.match(/isRoundProcessKind\(/g) ?? []).length))
+  // render.tsx：收起那一刻要抹掉这两行自己的展开存档（它们现在会被真的藏起来）。
+  const foldKeysAt = renderSrc.indexOf('const ROW_FOLD_KEY_KINDS')
+  const foldKeys = foldKeysAt < 0 ? '' : renderSrc.slice(foldKeysAt, renderSrc.indexOf('])', foldKeysAt))
+  check('render.tsx 的行折叠存档表含 system-prompt', foldKeys.includes("'system-prompt'"), foldKeys.slice(0, 160))
+  check('render.tsx 的行折叠存档表含 context-injection', foldKeys.includes("'context-injection'"), foldKeys.slice(0, 160))
 
   // rounds.ts：开场一条注入不许把「这一轮答没答」变成已答。
   // 切片必须从 guard 的位置往后找终点：轮中途插话那一支（steering）里也有同一句
@@ -203,12 +216,16 @@ console.log('[5] 样式：组件用到的每个类名都在 views.css 里有规�
     region !== '' && !/rgba?\(|hsla?\(/.test(region) && !/#[0-9a-fA-F]{3,8}/.test(region), region.slice(0, 80))
 }
 
-console.log('[6] 文案：27 个键在 zh / en 都在，真译过，占位符两边都留')
+console.log('[6] 文案：31 个键在 zh / en 都在，真译过，占位符两边都留')
 {
   const keys = Object.keys(zh).filter((key) => key.startsWith('transcript.prompt.') || key.startsWith('transcript.injection.'))
   // 26 → 27（2026-11-11）：注入卡头行多了一句口径提示（`transcript.injection.newOnlyTip`），
   // 「卡片记的是这一跳新增了哪些注入」这句话得有个正式的字典位。
-  check('两张卡一共 27 个键', keys.length === 27, String(keys.length))
+  // 27 → 28（2026-11-18）：团队板快照注入（kind=`team-board`）要一个中文标签
+  // （`transcript.injection.kind.teamBoard`），否则卡片只能显示裸 kind。
+  // 28 → 31（2026-11-18，P0）：记忆索引 / 经验沉淀 / 定时任务三个尾部注入各要一个中文标签
+  // （`transcript.injection.kind.memoryIndex|selfImprove|schedule`）。
+  check('两张卡一共 31 个键', keys.length === 31, String(keys.length))
   for (const key of keys) {
     check(`zh 有 ${key}`, typeof zh[key] === 'string' && zh[key] !== '')
     check(`en 有 ${key}`, typeof en[key] === 'string' && en[key] !== '')

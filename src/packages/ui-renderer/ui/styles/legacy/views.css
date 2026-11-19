@@ -3447,6 +3447,31 @@ span.tc-web-link {
   opacity: 0.55;
 }
 
+/* 只读会话的输入位（2026-11-19）：收工的队友 / 一次性子智能体。
+   不是把 textarea 灰掉——那种框看着像「等一下还能打」。这里换成一行说明，位置、宽度、
+   描边与输入框同一套（顶替它，不是另占一格），对照 dsh 的 SubagentReadOnlyComposer。 */
+.composer-readonly {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 10px 12px;
+}
+
+.composer-readonly-title {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  font-weight: 600;
+}
+
+.composer-readonly-body {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  line-height: var(--dsc-lh-caption, 18px);
+  min-width: 0;
+}
+
 .composer-bar {
   align-items: center;
   display: flex;
@@ -6082,6 +6107,35 @@ body.resizing iframe {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
   line-height: 1.6;
+}
+
+/* 搜索型源（skills.sh）的关键词不够长：中性一行字，不是错误 —— 它只是还没输入 */
+.market-hint {
+  padding: 8px 2px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+}
+
+/* 后台刷新 / 搜索失手时的软提示：一行小字，已有列表原样留在下面 */
+.market-notice {
+  padding: 0 2px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.5;
+}
+
+/* 搜索中：同样只占一行，上一次的结果不清空 */
+.market-searching {
+  padding: 4px 2px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 搜索框拿到焦点时描边提一档：skills.sh 靠它取词，要让人一眼看到光标该落在哪 */
+.skills-search:focus-within {
+  border-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+  background: var(--dsc-bg-card);
 }
 
 /* ══════════ 设置面板 ══════════ */

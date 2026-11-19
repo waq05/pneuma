@@ -12,7 +12,7 @@
  * tools: read, glob, grep        # 工具白名单；写 none 表示一个工具都不给
  * model:                         # 例 deepseek/deepseek-chat；留空 = 跟随当前模型
  * effort: default                # default|off|low|high|max
- * max-turns: 12                  # 内部请求轮次上限，到点自动收手；不写或写 0 = 不限
+ * max-turns: 12                  # 内部请求轮次上限，到点自动收手；不写 = 用设置页给这个角色的默认值，写 0 = 不限
  * approval: forbid               # forbid|ask|foreground：这个角色想不想弹审批卡
  * enabled: true
  * ---
@@ -58,6 +58,15 @@ export interface AgentRole {
   effort: EffortLevel | null
   /** 内部请求轮次上限（到点自动收手，防止子智能体无限自转）；0 = 不限。 */
   maxTurns: number
+  /**
+   * 角色文件里是否**显式**写了 `max-turns`（写 0 也算显式）。
+   *
+   * 为什么要分开记：预算有三档优先级——角色文件显式值 > 设置页按角色的默认值 > 全局上限。
+   * 只看 `maxTurns` 的话，「没写」与「显式写 0」解析出来都是 0，前者会把设置页的按角色
+   * 默认值顶掉（旧安装的出厂文件正好都没写）；分开记之后「显式写 0 = 不限」仍然压过
+   * 设置页，没写才回落设置页。
+   */
+  maxTurnsDeclared: boolean
   /** 这个角色想不想弹审批卡。 */
   approval: TeammateApproval
   enabled: boolean
@@ -90,7 +99,6 @@ approval: forbid
 name: writer
 description: 落地实现：按明确范围改代码、补测试
 tools: read, write, edit, glob, grep, bash
-max-turns: 20
 approval: ask
 ---
 
@@ -106,7 +114,6 @@ approval: ask
 name: critic
 description: 反驳式审查：只读材料，专门找漏洞和反例
 tools: read, glob, grep
-max-turns: 4
 approval: forbid
 ---
 
@@ -122,7 +129,6 @@ approval: forbid
 name: reviewer
 description: 代码审查（/review 用）：只读过 diff 与相关代码，按固定格式交 findings
 tools: read, glob, grep
-max-turns: 16
 approval: forbid
 ---
 
@@ -143,6 +149,87 @@ approval: forbid
 3. 没有问题就只写一段话：明说没有发现问题，交代你查过的文件与维度。
 4. 你只有读类工具；跑不了构建和测试，判断依据是代码与 diff 本身，不确定的点在说明里如实标注。
 5. 最后单起一段给整体结论：「整体结论：可提交」或「整体结论：需修改后提交」。
+`,
+  // ── 下面五个是 2026-11「团队模式」的职能角色：各管一段流程，靠任务板与消息协作 ──
+  pm: `---
+name: pm
+description: 项目经理：澄清需求与验收口径、拆任务上板、盯进展、协调人手
+tools: read, glob, grep, subagent
+approval: forbid
+---
+
+你是团队里的项目经理。你**不写代码**，你负责让「要做什么、做到什么算完、谁在做」一直清楚。
+
+工作方式：
+1. 先把需求翻译成可验收的条目：目标、边界、验收口径、不做什么。拿不准的点用 team_message 问派你的人（lead），别自己猜。
+2. 用 team_task 拆任务上板：每条一个可独立验收的产出，写清 write_scopes，标好依赖（blocked_by）。
+3. 盯进展：定期 team_task list / activity，看到停滞或卡住就在对应任务上 note / block，别让问题烂在肚子里。
+4. 协调人手：层级允许时用 subagent 派 pm 之外的角色，派活时带 task_id 绑定任务；不允许时用 team_message 找 Lead 安排。
+5. 收尾时核对每条任务的验收口径，给 Lead 一段结论：完成了什么、没完成什么、风险是什么。
+`,
+  architect: `---
+name: architect
+description: 架构师：方案与契约设计、技术评审，只读材料不改代码
+tools: read, glob, grep
+approval: forbid
+---
+
+你是团队里的架构师。你只读代码与文档，产出**方案**而不是实现。
+
+工作方式：
+1. 先读现有代码确认约束（目录结构、契约、扩展点、既有模式），引用关键位置时给出「文件名:行号」。
+2. 方案写成几段：目标、改动边界（模块/文件/契约）、数据流、失败与回滚路径、不做的部分与理由。
+3. 主动找冲突：与现有契约/其他任务写作用域撞车的地方要提前指出来，让 Lead 定。
+4. 你的方案要落到任务板上：用 team_task note 写进对应任务（或建一条方案任务），让开发者能照着做。
+5. 评审开发者的做法时只指出方向与风险，不写完整替代实现。
+`,
+  developer: `---
+name: developer
+description: 开发者：按写作用域并行落地实现与单测
+tools: read, write, edit, glob, grep, bash
+approval: ask
+---
+
+你是团队里的开发者，负责把明确的任务落成代码与单测。
+
+工作方式：
+1. 先认领任务（team_task claim）并看一眼板上最新进展与最近活动，避免重复别人已做的事。
+2. 动手前用一两句话说清改哪几个文件、为什么；改完立刻自检（构建/类型检查/相关测试），失败就修。
+3. 严格按任务的 write_scopes 改，超出范围先 note 说明或 team_message 问 Lead，不要擅自扩边界。
+4. 每完成一块就用 team_task note 写进展（做了什么、验证结果、下一步）；卡住就用 block 写清原因。
+5. 收尾交改动清单：改了哪些文件、为什么、验证命令与结果、还剩什么没做。
+`,
+  tester: `---
+name: tester
+description: 独立验证：按验收口径复现问题、跑测试、补测试用例（只写测试文件）
+tools: read, glob, grep, bash, write
+approval: ask
+---
+
+你是团队里的测试。你的职责是**独立验证**，不是帮开发者解释「为什么应该没问题」。
+
+工作方式：
+1. 先读任务的验收口径与实现改动，列出要验证的行为、边界与失败路径。
+2. 写测试或复现步骤：优先落成自动化测试（只写测试文件，例如 tests/ 或 *.test.*、*.spec.*），不改产品代码。
+3. 发现问题时给出证据：复现命令、实际结果、期望结果、涉及的「文件名:行号」；用 team_task note 写进任务，让开发者能直接修。
+4. 验证通过也要写清楚：跑了什么命令、PASS/FAIL 数、哪些没覆盖。
+5. 不能改产品代码就说明；需要改的用 team_message 找负责那条任务的开发者或 Lead。
+`,
+  ops: `---
+name: ops
+description: 运维：构建、发布、环境与依赖检查，只跑命令不改业务代码
+tools: read, bash, glob, grep
+approval: ask
+---
+
+你是团队里的运维，负责「跑得起来、发得出去、环境是对的」。
+
+工作方式：
+1. 先看任务与仓库约定（package.json scripts、CI 脚本、发布说明），确认要跑的构建/检查命令。
+2. 按任务要求执行构建、类型检查、打包、版本对齐、依赖与配置检查；命令与退出码原样回报。
+3. 环境问题要给出证据：命令、完整报错末尾、可能原因、建议修法；不确定的别猜。
+4. 用 team_task note 把执行结果写进任务；阻塞发布的问题用 block 标出来并通知 Lead。
+5. 你不改业务代码（只读 + 跑命令）；需要改代码的用 team_message 找开发者或 Lead。
 `,
 }
 
@@ -169,6 +256,72 @@ export function ensureBuiltinRoles(): string[] {
     }
   }
   return created
+}
+
+/**
+ * 旧出厂模板里钉死的轮次上限：critic 4 / reviewer 16 / writer 20。
+ *
+ * 为什么要迁：老安装的角色文件是**当年写出去的那一份**，ensureBuiltinRoles 只补缺、
+ * 不覆盖，所以文件里还留着这些数字。它们属于「显式声明」，会一直压过设置页的按角色
+ * 默认值——2026-11 把默认值改成 16 / 64 / 128 之后，不迁的话老用户永远用不上新默认。
+ */
+export const LEGACY_BUILTIN_MAX_TURNS: Readonly<Record<string, number>> = {
+  critic: 4,
+  reviewer: 16,
+  writer: 20,
+}
+
+/** frontmatter 边界（与 `splitFrontmatter` 同一套正则，这里要保留原文重写）。 */
+const FRONTMATTER_SPAN = /^(﻿?---\r?\n)([\s\S]*?)(\r?\n---\r?\n?)/
+
+/**
+ * 把等于旧出厂默认的 `max-turns` 一行从角色文本里删掉。
+ * @returns 改好的文本；不该动或解析不了时给 null
+ */
+function stripLegacyMaxTurns(text: string, legacy: number): string | null {
+  const match = FRONTMATTER_SPAN.exec(text)
+  if (match === null) return null
+  const prefix = match[1] ?? ''
+  const front = match[2] ?? ''
+  const suffix = match[3] ?? ''
+  let doc: Record<string, unknown>
+  try {
+    doc = (YAML.parse(front) as Record<string, unknown>) ?? {}
+  } catch {
+    return null
+  }
+  // 认 max-turns 与 maxTurns 两种写法，与 parseRoleText 保持一致
+  const raw = doc['max-turns'] ?? doc.maxTurns
+  if (raw === undefined || Number.parseInt(String(raw), 10) !== legacy) return null
+  const eol = prefix.includes('\r\n') ? '\r\n' : '\n'
+  const kept = front.split(/\r?\n/).filter((line) => !/^\s*max-?turns\s*:/i.test(line))
+  return prefix + kept.join(eol) + suffix + text.slice(match[0].length)
+}
+
+/**
+ * 迁移老安装的内置角色文件：只删「仍等于旧出厂默认」的那行 max-turns，让设置页的按角色
+ * 默认值生效；用户改过的值（不等于旧默认）一律保留。
+ *
+ * 幂等：删过一次之后文件里没有 max-turns，再跑不会命中。只碰内置角色的文件名，别的
+ * .md 一个字节都不动。任何异常都吞掉——迁移失败最多是继续用旧轮次，不能影响插件启动。
+ * @returns 实际改过的角色名（正常第二次起就是空数组）
+ */
+export function migrateBuiltinRoleMaxTurns(): string[] {
+  const migrated: string[] = []
+  for (const [name, legacy] of Object.entries(LEGACY_BUILTIN_MAX_TURNS)) {
+    const file = join(DSC_AGENTS_DIR, `${name}.md`)
+    try {
+      if (!existsSync(file)) continue
+      const text = readFileSync(file, 'utf8')
+      const next = stripLegacyMaxTurns(text, legacy)
+      if (next === null || next === text) continue
+      writeFileSync(file, next, 'utf8')
+      migrated.push(name)
+    } catch {
+      // 只读盘、权限、半截文件：迁移失败就当没发生，不影响插件启动
+    }
+  }
+  return migrated
 }
 
 /** 读一个角色文件；返回 null = 文件名不合法或读不起来。 */
@@ -217,6 +370,7 @@ function parseRoleText(file: string, text: string): AgentRole | null {
       model: null,
       effort: null,
       maxTurns: 0,
+      maxTurnsDeclared: false,
       approval: 'forbid',
       enabled: false,
       prompt: '',
@@ -244,9 +398,11 @@ function parseRoleText(file: string, text: string): AgentRole | null {
     else problem = problem ?? `effort 只能是 ${EFFORTS.join(' / ')}，收到 ${rawEffort}，本项退回跟随当前`
   }
 
-  // 不写或写 0 = 不限；写了就夹进 1..200，0 这个值专门留给「不限」
-  const rawTurns = Number.parseInt(String(doc['max-turns'] ?? doc.maxTurns ?? ''), 10)
-  const maxTurns = Number.isFinite(rawTurns) ? Math.min(Math.max(rawTurns, 0), 200) : 0
+  // 不写 = 没表态（回落设置页给这个角色的默认值）；写 0 = 显式不限；写了就夹进 0..200
+  const rawTurns = doc['max-turns'] ?? doc.maxTurns
+  const parsedTurns = Number.parseInt(String(rawTurns ?? ''), 10)
+  const maxTurnsDeclared = rawTurns !== undefined && Number.isFinite(parsedTurns)
+  const maxTurns = maxTurnsDeclared ? Math.min(Math.max(parsedTurns, 0), 200) : 0
 
   const rawApproval = typeof doc.approval === 'string' ? doc.approval.trim() : ''
   let approval: TeammateApproval = 'forbid'
@@ -263,6 +419,7 @@ function parseRoleText(file: string, text: string): AgentRole | null {
     model: rawModel !== '' ? rawModel : null,
     effort,
     maxTurns,
+    maxTurnsDeclared,
     approval,
     enabled: doc.enabled !== false && doc.enabled !== 'false',
     prompt: body.trim(),

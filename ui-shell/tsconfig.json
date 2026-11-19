@@ -26,5 +26,8 @@
       "@dsc/ui-slots": ["../src/packages/ui-slots/ui/index.ts"]
     }
   },
-  "include": ["src", "../src/packages/ui-core", "../src/packages/*/ui"]
+  "include": ["src", "../src/packages/ui-core", "../src/packages/*/ui"],
+  // 界面半的测试文件归 Vitest 的 ui project 管（jsdom + react 插件），不进这份 `tsc --noEmit`：
+  // 这份配置只做类型检查、不带测试运行时的类型，混进来会逼着壳也装一遍 vitest 的依赖。
+  "exclude": ["../src/packages/*/ui/**/*.spec.ts", "../src/packages/*/ui/**/*.spec.tsx"]
 }

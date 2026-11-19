@@ -7,8 +7,13 @@
 
 复制下面的骨架，按顺序填；填不出来的写「查不到」，不要留空。
 
+**描述只写现象，原因与方案写进「解决」**（BUG-0015 起按这个形状写）：复现、期望、实际、证据是
+报告时就知道的东西；什么导致的、怎么修、怎么验，属于事后才知道的，一起塞进「解决」。
+分开放有两个好处——报告时不用猜原因（猜的必须标「这是猜的」，否则事后看成了结论），
+读者先对上的是现象，再看根因，不会被一个错误的初步判断带偏（BUG-0001 当年就猜错过一次）。
+
 ```
-## BUG-000N：一句话说清用户遇到什么
+## BUG-000N：一句话说清用户遇到什么（只写现象，不写原因）
 
 - **状态**：待修 / 修复中 / 已修 / 不修（附理由）
 - **严重度**：P0 阻断（功能不可用）/ P1 高（主要路径受影响）/ P2 中（有替代路径）/ P3 低
@@ -17,7 +22,7 @@
 
 **复现**
 1. ……
-2. 探针：`node desktop/shots/_xxx.mjs`（能一条命令跑出来的必须给）
+2. 探针：`node scripts/<话题>-test.mjs`（能一条命令跑出来的必须给）
 
 **期望**：……
 **实际**：……
@@ -25,11 +30,12 @@
 **证据**
 - 报错原文 / 采样数据 / 截图路径
 
-**初步定位**（推测要标出来）
-- `文件:行号`：……
+### 解决（2026-MM-DD）
 
-**修复方向**：……
-**验收**：跑哪条命令、看哪几个判据
+**原因**：……
+**方案**：改了哪些文件、为什么这么改（修完了才知道的，写这里）
+**怎么验的**：跑哪条命令、看哪几个判据、结果是什么
+**提交**：`<短 hash>`
 ```
 
 ---
@@ -49,6 +55,11 @@
 | BUG-0009 | README 的包数与默认关数量落后于磁盘 | P3 | 已修（2026-11-17） | 文档口径：读者照 README 数包会数不对 |
 | BUG-0010 | superagent-webhook 没有英文译本，本地化探针的包数口径也停在 91 | P3 | 已修（2026-11-17） | 英文界面下这个包的标题与说明仍是中文；`plugin-locale-test` 必红 |
 | BUG-0011 | 设置分区探针的断言停在两处 onChanged，代码已经是三处 | P3 | 已修（2026-11-17） | 不是产品行为，是探针口径漂移；`check:plugin` 必红 |
+| BUG-0012 | 等宽文本里的中文落到宋体，代码块与工具输出发灰发糊 | P2 | 已修（2026-11-17） | Windows 上所有走 `--dsc-font-mono` 的地方：代码块、行内代码、工具输出 |
+| BUG-0013 | 字号只能整体缩放、字体不可选，正文调不到舒服的大小 | P2 | 已修（2026-11-17） | 设置 → 外观：字体不可配；调到 135% 会连带放大侧栏与标题 |
+| BUG-0014 | 过程正文 12px + 54% 灰，对比度约 3.9:1 | P3 | 不修（设计取舍，留记录） | 会话流里的过程正文、工具行、卡片行的可读性 |
+| BUG-0015 | 搜索服务填好了 key，`web_search` 每次仍回 HTTP 401 | P1 | 已修（2026-11-17） | 联网搜索（Tavily / 博查 / Serper 三条路都中） |
+| BUG-0016 | 没填 key 时 `web_search` 从工具表里消失，模型改用 curl 撞沙箱 TLS | P2 | 已修（2026-11-17） | 联网搜索的默认状态；会话里任何「上网查一下」 |
 
 ---
 
@@ -102,7 +113,7 @@
 
 **真正的原因**：宿主（`src/packages/sandbox/index.ts:224`）建的私有临时目录是
 `sandboxTmpDir(DSC_HOME, cwd, currentSessionId())`，**带会话 id**；受限令牌后端要授权的却是
-`sandboxTmpDir(DSC_HOME, root)`（[backend.ts:206](src/packages/sandbox/win/backend.ts#L206)），
+`sandboxTmpDir(DSC_HOME, root)`（[backend.ts:206](../src/packages/sandbox/win/backend.ts#L206)），
 **不带会话 id = 工作区哈希**。后端自己算出来的那个目录谁都没建过，`GetNamedSecurityInfoW`
 返回 Win32 错误 2（找不到文件），`ensureAuthorized` 就整条降级——第一次跑命令必然如此。
 
@@ -112,7 +123,7 @@
 **改了什么**：`ensureAuthorized` 在打 ACL 之前只给**私有临时目录**（`side === 'temp'`）`mkdirSync`，
 建不出来才降级，理由写明是哪条路径；工作区与附加根**不替用户建**（它们是既有路径，配错了要让人
 看见，别悄悄造目录再打上可继承的低完整性标签）。
-（[backend.ts:279-303](src/packages/sandbox/win/backend.ts#L279-L303)）
+（[backend.ts:279-303](../src/packages/sandbox/win/backend.ts#L279-L303)）
 
 **怎么验的**
 
@@ -161,12 +172,12 @@
 
 **初步定位**（推测，两条都要排）
 
-1. 切页后立刻被踢回：[ui-sessions/ui.tsx:220](src/packages/ui-sessions/ui/ui.tsx#L220)
+1. 切页后立刻被踢回：[ui-sessions/ui.tsx:220](../src/packages/ui-sessions/ui/ui.tsx#L220)
    `if (page !== null && !pageEntry) setShellPage(null)`；`pageEntry` 来自
    `usePageEntryAvailable(page ?? '')`（同文件 `:167`），判据是 `frame.graph.entries.some(e => e.id === entryId)`，
    **精确等值**。而两个页在槽里的 id 是 `plugins.page` / `skills.page`
-   （[ui-plugins/ui/ui.tsx:147](src/packages/ui-plugins/ui/ui.tsx#L147)、
-   [ui-skills/ui/ui.tsx:120](src/packages/ui-skills/ui/ui.tsx#L120)），传进去的却是 `'plugins'` / `'skills'`。
+   （[ui-plugins/ui/ui.tsx:147](../src/packages/ui-plugins/ui/ui.tsx#L147)、
+   [ui-skills/ui/ui.tsx:120](../src/packages/ui-skills/ui/ui.tsx#L120)），传进去的却是 `'plugins'` / `'skills'`。
    如果 `entries` 里没有这些短名，守卫就会在 effect 里立刻把页踢回 null——与「按下即回滚、一次都没点亮」吻合。
 2. 点击没进到 React：按钮的 `onClick` 绑的是 `setShellPage(...)`；`el.click()` 与真实鼠标都试过，
    若 handler 根本没跑，采样也应该一次都不变（与观察一致）。区分这两条最省事的办法是在 handler
@@ -197,7 +208,7 @@
 `getSnapshot()` 读到的也一直是 null。
 
 **改了什么**：state 里存**启动图帧**，每次渲染现算「在不在」，entryId 与答案不会再错位
-（[ui-sessions/ui/ui.tsx:167-190](src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留
+（[ui-sessions/ui/ui.tsx:167-190](../src/packages/ui-sessions/ui/ui.tsx#L167-L190)）。守卫保留
 （现在是同文件第 226 行，修前在第 220 行）。
 
 **怎么验的**
@@ -258,7 +269,7 @@
 `src/packages/log/README.md:40` 写的是「设置 → 运行日志」能改，文档与界面这一处对不上。
 
 **改了什么**：`ctx.settings.registerSection(section, { inSettings: true })`
-（[log/index.ts:349](src/packages/log/index.ts#L349)），并就近写清为什么必须声明。
+（[log/index.ts:349](../src/packages/log/index.ts#L349)），并就近写清为什么必须声明。
 
 **怎么验的**
 
@@ -308,7 +319,7 @@
 **改了什么**：走的是「后端复用同一个函数」那条路——`writeRootsFor` 里对每条附加根调用
 `canonicalizePath(…, { cwd })`（与 `policy.ts` 的 `createPolicy` 同一个函数、同一个 cwd），
 拿到绝对路径再派生能力 SID、再交给 `grantWrite`
-（[backend.ts:216-231](src/packages/sandbox/win/backend.ts#L216-L231)）。
+（[backend.ts:216-231](../src/packages/sandbox/win/backend.ts#L216-L231)）。
 
 为什么不在 `sandbox/index.ts` 提前绝对化：那里有两个入口（策略快照与受限令牌后端），
 只要有一个漏了就会重现同一个 bug；放在 `writeRootsFor` 里是「产出可写根的那一处」，
@@ -319,7 +330,7 @@
 `cwd` 自己也过一遍同一个函数：会话从 junction / 符号链接进来时（`D:\link\proj` 实际指
 `E:\data\proj`），cwd 按原串、附加根按真实拼法，同一个目录会变成两条根。这一条留给
 「同一条路径只该有一个身份」，不是防 runner 退 127——runner 的 `verifySidForPath`
-（[runner-entry.ts:300-306](src/packages/sandbox/win/runner-entry.ts#L300-L306)）用的是
+（[runner-entry.ts:300-306](../src/packages/sandbox/win/runner-entry.ts#L300-L306)）用的是
 `--root` 收到的那个串原样复算，宿主怎么拼它就怎么算，对不上是不可能的；上一版文档里
 「runner 按 realpath 复算，对不上会退 127」这句是错的，复核时纠正了。
 
@@ -370,7 +381,7 @@ TMP/TEMP 就指到一条既没能力 ACE、也没人建过的目录，子进程�
 ### 修复（2026-11-17）
 
 **改了什么**：插件层改用后端导出的 `canonicalWriteCwd` 算临时目录
-（[index.ts:224](src/packages/sandbox/index.ts#L224)），`currentSessionId` 这个帮手随之删掉。
+（[index.ts:224](../src/packages/sandbox/index.ts#L224)），`currentSessionId` 这个帮手随之删掉。
 现在「策略层放行 / 界面显示 / 后端授权 / 子进程 TMP」是同一个路径。
 
 **怎么验的**：`node scripts/sandbox-win-token-test.mjs` → **102 通过 / 0 失败**，新增判据
@@ -648,3 +659,236 @@ node scripts/settings-embed-slot-test.mjs
 - 一条 bug 只写一个现象。像 BUG-0002 这种「可能是 A 也可能是 B」的，把两个候选都列出来，
   修的时候用一条实验区分，别在文档里下结论；两条都被排掉也别删，写清「怎么排掉的」——
   真正的原因往往在第三处（BUG-0002 收尾就是这样）。
+
+---
+
+## BUG-0012：等宽文本里的中文落到宋体，代码块与工具输出发灰发糊
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：内容是能读的，只是笔画糊；11–12px 上最明显）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：Windows 上所有走 `--dsc-font-mono` 的地方——代码块、行内代码、工具输出、命令预览。
+  Mac / Linux 上不明显：PingFang / Noto 会先命中系统等宽栈里的中文族，落不到宋体。
+
+**复现**
+
+1. 任意会话里让模型输出一段带中文注释的代码块（或把行内代码写成中文）。
+2. 截一张图放大到 200% 看笔画：中文是宋体的横细竖粗，和旁边的 Consolas 不搭。
+
+**期望**：中文用无衬线黑体（微软雅黑 / 思源黑体），不该是宋体。
+
+**实际**：中文落到浏览器 `monospace` 通用族；Windows 上那是宋体。
+
+**证据**
+
+- 旧令牌：`--dsc-font-mono: 'JetBrains Mono', 'Cascadia Mono', 'Sarasa Mono SC', Consolas,
+  'DejaVu Sans Mono', Menlo, ui-monospace, monospace`——整条没有 CJK，最后一族是裸 `monospace`。
+- 本机 `C:\Windows\Fonts` 里没有 JetBrains Mono / Cascadia Mono / Sarasa Mono SC，
+  Consolas 本身不含中文字形（`node scripts/ui-font-apply-test.mjs` 里那条「CJK 在 monospace 之前」
+  就是给这件事上的锁）。
+
+**初步定位**（已确证）
+
+- `src/packages/ui-renderer/ui/styles/legacy/tokens.css:387-389`（修复前）：等宽栈没有 CJK 兜底。
+- 同款问题 dsh 与 zcode 都修过：dsh 的代码栈**不带** `monospace` 尾巴、末尾挂雅黑；
+  zcode 在 `monospace` 前显式插 `Microsoft YaHei UI / PingFang SC / Noto Sans CJK SC`。
+
+**修复方向**：在 `monospace` 之前显式插入各平台 CJK 无衬线，让缺字形的西文等宽字体先跳过中文。
+
+### 修复（2026-11-17）
+
+**改了什么**：`tokens.css` 把等宽令牌拆成 `--dsc-font-mono-default`（用户变量在前、它兜底），
+默认栈在 `monospace` 前插 `'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC'`。
+提交 `1016fc48`。
+
+**怎么验的**：`node scripts/ui-font-apply-test.mjs` → **42/42 通过**，其中两条判据：
+「等宽栈在 monospace 之前含中文无衬线」「CJK 兜底不止一种（Mac / Linux）」。
+
+---
+
+## BUG-0013：字号只能在 85%–135% 之间整体缩放，字体不可选，正文调不到舒服的大小
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：改系统缩放，但会连带改整个桌面）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：所有嫌正文偏小、或想换掉系统默认字体的人。调字号时侧栏、标题、卡片一起变，
+  没有「只把正文放大」的档；字体更是完全不可配。
+
+**复现**
+
+1. 打开 设置 → 外观。
+2. 只有一行「字号 100%」滑杆（85–135%），没有正文字体 / 代码字体可填。
+3. 把滑杆拉到 135%：侧栏行高、标题、卡片一起放大，正文仍只能用这套系统字体。
+
+**期望**：正文 / 代码能各填一条字体列表（留空用默认），字号按 px 直接调，改完立刻生效、重启保持。
+
+**实际**：只有整体倍率；字体写死在令牌里。
+
+**证据**
+
+- 修复前 `src/packages/ui-settings/ui/ui.tsx:1135` 的 `appearanceKeys` 只有
+  `themeMode / fontSize / density`，设置页没有字体控件。
+- 修复前 `~/.dsc/settings.json` 的 `ui` 段没有字体字段；`tokens.css:384-390` 两条字体令牌写死。
+- 字号语义是倍率，基准实际 14px（`styles.css:3806` 覆盖了 tokens 里的 13px），
+  于是「100%」和「14px」在界面上对不上——设置页的说明还写着「正文 13px 为基准」。
+
+**初步定位**：设计缺口，不是某一处写错。方案与取舍见 `docs/font-settings-plan.md`。
+
+### 修复（2026-11-17）
+
+**改了什么**：
+
+- 字号真源换成 `ui.textSizePx`（10–22，默认 14）；`fontSize` 保留为派生值（px ÷ 14），
+  给还没升级的消费方读；旧档只写了倍率或 `'sm'|'md'|'lg'` 的，读档时一次性换算成 px。
+- 新增 `ui.textFontFamily` / `ui.codeFontFamily`，逗号分隔、空串 = 内置栈。
+  归一函数 `normalizeFontList` 与 px↔倍率换算收在 `src/contract/fonts.ts`，宿主、壳、设置页共用一份。
+- 设置页外观区加两行字体输入框（草稿 + 失焦/回车提交 + Esc 还原），字号滑杆改成 px（10–22，步长 1）。
+- 字体令牌改成 `var(--dsc-font-text, 内置栈), 内置栈` 的形状；空串时壳 `removeProperty`
+  （写空串会让整条 `font-family` 非法、退回浏览器默认字体）。
+
+提交 `1016fc48`。
+
+**怎么验的**：
+
+- `node scripts/ui-font-prefs-test.mjs` → **41/41**（旧档迁移、夹取、字体串归一、写盘往返）。
+- `node scripts/ui-font-apply-test.mjs` → **42/42**（假 DOM 上跑真 `applyAppearance`：空串删变量、
+  px→倍率、老镜像迁移、令牌接线）。
+- `pnpm run check:ui` → **83/83**；`pnpm run build`、`build:ui`、两份 `tsc`、`desktop typecheck` 全 0。
+- 真机 `desktop/shots/font-scale-shots.ps1 -Case fonts-custom` 的 DOM 读数：
+  `textInput="\"Noto Sans SC\""`、`codeInput="Consolas"`、`bodyFirst="Noto Sans SC"`，
+  落盘 `settings.json` 是 `textSizePx:15 / fontSize:1.0714 / textFontFamily:"\"Noto Sans SC\""`。
+
+---
+
+## BUG-0014：过程正文 12px + 54% 灰，对比度约 3.9:1，低于小字号的 4.5:1
+
+- **状态**：不修（理由见下：这是 2026-11-07 的排版取舍，改配色属于主题层整批调整；
+  这次的字号滑杆已能把它按比例放大，先留记录）
+- **严重度**：P3（可读性差，不影响功能）
+- **发现**：2026-11-17，0.9.1，`dev`
+- **影响**：会话流里「模型先说一句再调工具」那种过程正文（`.entry-note`），以及同档灰的
+  工具行 / 卡片行（11px）。中文雅黑在这个色阶上笔画发虚。
+
+**复现**：任意一轮里找「我来查一下……」这种过程正文，截图取色。
+
+**期望**：小字号正文的对比度 ≥ 4.5:1。
+
+**实际**：`--dsc-text-tertiary-a: 54%` 压在 claude 主题的 `#faf9f5` 上约 `#7e7e7b`，
+对比度约 3.9:1。
+
+**证据**
+
+- `src/packages/ui-renderer/ui/styles/legacy/views.css:1416-1420`（`.entry-note`：12px + tertiary）。
+- `tokens.css:536`（`--dsc-text-tertiary-a: 54%`）、`tokens.css:497-537`（claude 主题色阶）。
+
+**初步定位**：`views.css:1416-1420` + `tokens.css:536`。
+
+**修复方向**：两条路——把 `.entry-note` 提到 secondary（74%，约 7.7:1），或把 tertiary 整体上调；
+后者会牵动所有用同一档灰的次要文字（时间、说明、角标），要跟主题层一起评估。
+
+**验收**：改完用取色脚本量 `.entry-note` 的前景/背景，对比度 ≥ 4.5:1；并复查深色与 claude 两套主题。
+
+---
+
+## BUG-0015：搜索服务填好了 key，`web_search` 每次仍回 HTTP 401，一条结果都搜不到
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P1（有替代路径：可以让我直接抓网页，但「搜索」这条主路径整个不可用）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：在插件中心给「联网搜索」填过 Tavily / 博查 / Serper 任何一家 key 的人。因为填不填 key
+  都一样失败，第一反应通常是「key 填错了」「服务挂了」「额度用完了」——排查方向被带偏。
+
+**复现**
+
+1. 插件中心 → 联网搜索 → 搜索服务选 Tavily，填一个好用的 key，保存。
+2. 会话里让模型查一条公开消息（例如某个库的最新版本号）。
+3. 工具结果回 `HTTP 401：{"detail":{"error":"Unauthorized: missing or invalid API key."}}`。
+
+**期望**：返回标题 + 链接 + 摘要的结果清单。
+
+**实际**：每次调用都 401，换哪家提供方都一样。
+
+**证据**
+
+- 修复前 `src/packages/web-search/index.ts:222-227` 已经把鉴权头算好了
+  （`{ authorization: 'Bearer <key>' }` 或 `{ 'X-API-KEY': <key> }`），
+  但 `index.ts:228-231` 调 `search()` 时**没把它传下去**。
+- 修复前 `search()` 的签名里没有这个参数，三个 `postJson(...)` 的第二参都写死空对象：
+  `index.ts:135-137`（tavily）、`index.ts:154-156`（博查）、`index.ts:166`（serper）。
+- 于是请求里既没有 `authorization` 也没有 `X-API-KEY`，服务端按未鉴权处理，回 401。
+
+### 解决（2026-11-17）
+
+**原因**：key 取到了、头也拼好了，但 `search()` 的入参里没这一项，调用点想传都传不进去。
+TypeScript 不会为「算出来没用」报错（那个变量在声明处活了一次就没人读），所以编译、门禁、
+源码形状断言全绿，只有真发一次请求才炸。
+
+**方案**：
+
+- 把 key 挪进请求对象（`SearchRequest`），由 `search()` 自己拼鉴权头（`authHeaders()`）。
+  这样「少传 key」是**编不过**的，同类「参数算了却没传」不会再从数据面漏出去。
+- 三个 `postJson(...)` 改成收 `auth`，不留空头的写法。
+- 补一条请求面探针 `src/packages/web-search/tests/web-search-request.test.mjs`：用假 ctx +
+  假 fetch 把工具真跑一遍，断言 `authorization === 'Bearer test-key-123'`、切到 serper 时换成
+  `X-API-KEY`。以前的包级测试只对源码做形状断言，挡不住运行期丢参数。
+
+**怎么验的**：`node src/packages/web-search/tests/web-search-request.test.mjs` → **18/18 通过，
+退出码 0**；`pnpm run check:plugin` → **退出码 0**（93 包 / 143 用例 / 1752 断言全过）。
+
+**提交**：`9d4db04f`
+
+---
+
+## BUG-0016：没填 key 时 `web_search` 从工具表里消失，模型改用 curl 抓网页并报 SEC_E_NO_CREDENTIALS
+
+- **状态**：已修（2026-11-17）
+- **严重度**：P2（有替代路径：填上 key 立刻正常；但用户看到的是「网络不通」的假象）
+- **发现**：2026-11-17，0.9.1，`dev` 分支本机构建
+- **影响**：装好、用默认配置、还没给「联网搜索」填 key 的人。会话里任何一句「上网查一下」
+  都会落到 shell 里的 curl 上。
+
+**复现**
+
+1. 不动插件配置：`~/.dsc/plugins.json` 里 `web-search` 是开着的，但没有 `apiKey` / `apiKeyEnv`，
+   环境变量与 `~/.dsc/credentials.yaml` 里也没有对应 key。
+2. 会话里说「查一下 X 的最新版本」，模型拿不到 `web_search`，于是 `bash` + `curl https://…`。
+3. 沙箱里回：`curl: (35) schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030e)`。
+
+**期望**：模型看得见 `web_search`，调用后拿到一句「还没配 key，去哪填」，把原因转述给用户。
+
+**实际**：工具整个不在工具表里，提示词里也没有搜索这回事。模型改用 curl，撞上沙箱的 TLS 限制，
+用户看到的是一句网络错误。
+
+**证据**
+
+- 修复前 `src/packages/web-search/index.ts:179-182`：`syncTool()` 开头
+  `if (resolveKey(config) === '') return () => {}`——没 key 就什么都不注册。
+- 修复前 `index.ts:239-249`：提示词也在没 key 时返回空串（`resolveKey(readConfig()) === '' ? '' : …`），
+  模型连「这里本来有搜索」都不知道。
+- 本机 30 个会话的 `session.jsonl` 里 `web_search` 调用 **0 次**；启动时那句 notice
+  （「联网搜索已启用，但还没配搜索服务的 key」）**一次都没出现**——两条独立证据都指向「工具不在场」。
+- 同一环境下 `node -e "fetch('https://www.baidu.com')"` 与 `git ls-remote https://…` 都通，
+  只有走 Windows Schannel 的 `curl.exe` / `Invoke-WebRequest` 失败——所以「网络不通」是假象。
+
+### 解决（2026-11-17）
+
+**原因**：两件事叠在一起。① 没 key 就把工具撤掉，模型失去「我能搜」这个信号，只能改用 shell；
+② 沙箱的受限令牌（Low 完整性 + 限制 SID）拿不到用户凭据，走 Schannel 的 curl 因此报
+`SEC_E_NO_CREDENTIALS`，而 Node 自己的 TLS 栈不受影响。
+
+**方案**：
+
+- 工具改成**稳定注册**：一直挂在工具表里；没取到 key 时调用回一句可照做的错
+  （写明 `DEEPSEEK_API_KEY` / `~/.dsc/credentials.yaml` / 插件中心，并明说别用 curl）。提示词同样常驻。
+- 新增 `web-fetch` 插件（工具 `web_fetch`）：抓取搬到宿主进程，HTML 转 Markdown，不依赖任何 key，
+  模型不必再碰 shell；提示词里写明「别用 curl，沙箱里会报 SEC_E_NO_CREDENTIALS」。
+
+**怎么验的**：
+
+- `node src/packages/web-search/tests/web-search-request.test.mjs` → **18/18**（其中三条钉的就是：
+  没 key 时工具仍在场、调用回可照做的错、启动 notice 提到 `DEEPSEEK_API_KEY`）。
+- `node src/packages/web-fetch/tests/web-fetch.test.mjs` → **25/25**。
+- 真机（进程内、临时 HOME）：`web_fetch` 抓 `https://example.com` → HTTP 200 + Markdown；
+  `http://github.com` → 明确报「被重定向到 https://…（跨域，不自动跟随）」；`file://` → 拦住。
+
+**提交**：`9d4db04f`（web-search 侧）、`b2f55c30`（web-fetch 侧）

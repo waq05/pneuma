@@ -57,7 +57,9 @@ import type { LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '@pne
 import type { CoreEvent } from '@pneuma/runtime/core/events.js'
 import type { ContextInjectionView, EffortLevel, PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { SkillDefinition, SkillSummary } from '@pneuma/runtime/core/skills.js'
-import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { ToolContext, ToolEntry, ToolOutput, ToolRisk } from '@pneuma/runtime/core/tools.js'
+import { z } from 'zod'
+import { resolveImageForRequest } from '../../../core/attachments.js'
 import type { ToolGuardChain, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import { patchSessionMeta } from '@pneuma/runtime/core/session-meta.js'
 import type { AgentService, CompactService, LlmService, PromptService, SkillProvider, ToolService } from '@pneuma/runtime/services/types.js'
@@ -75,6 +77,7 @@ import { initializeRoleModel } from './role-models.js'
 import { bundledSkills } from './skill-files.js'
 import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.js'
 import type { Store } from './store.js'
+import type { Tool } from './tools/tool.js'
 import { KV } from '../kv.js'
 
 /** 会话日志里记「这条会话跑哪个 preset」的 note id（见文件头第 3 条）。 */
@@ -82,6 +85,39 @@ const PRESET_NOTE = 'superagent-preset'
 /** 本插件注册的技能来源名与重名裁决 rank（外部插件建议 500+，见 SkillProvider 的注释）。 */
 const SKILL_PROVIDER = 'dsh-superagent'
 const SKILL_RANK = 500
+/** 主会话里纯读的四个工具；worker 的工具一律按只读（与旧 `tools.ts` 的 `risk: 'read'` 同口径）。 */
+const READ_TOOLS: ReadonlySet<string> = new Set(['orchestrator_read', 'orchestrator_ticket_request_status', 'orchestrator_eval',
+  'orchestrator_eval_read'])
+
+/**
+ * 上游 `Sessions.registerTool`（`app/sessions.ts:205-219`）的宿主侧四步，落在本仓的会话工具目录：
+ * 参数 schema 用 `z.toJSONSchema`；执行前 `schema.parse`；返回值串成 JSON 文本；带 `image` 附件时同时给图片
+ * （`ToolOutput.images` 要 data URL，所以用 `resolveImageForRequest` 把附件引用读成 data URL）。
+ */
+function entryOf(definition: Tool, risk: ToolRisk): ToolEntry {
+  return {
+    name: definition.name,
+    description: definition.description,
+    parameters: z.toJSONSchema(definition.schema) as Record<string, unknown>,
+    risk,
+    run: async (args: Record<string, unknown>, context: ToolContext): Promise<string | ToolOutput> => {
+      const value = await definition.execute(definition.schema.parse(args), context.signal)
+      const text = JSON.stringify(value) ?? String(value)
+      const image = value !== null && typeof value === 'object' && 'image' in value ? (value as { image?: { url?: unknown } }).image : undefined
+      const url = image !== null && typeof image === 'object' && typeof image.url === 'string' ? image.url : undefined
+      return url === undefined ? text : { text, images: [resolveImageForRequest(url)] }
+    },
+  }
+}
+
+/**
+ * 把上游形状的 `Tool[]` 换成会话工具目录的 `ToolEntry[]`：主会话按 `READ_TOOLS` 分读写，worker 一律只读
+ * （与旧 `tools.ts` 的 `risk: 'read'` 同口径，免得审批卡挡住 worker 自主干活）。导出是为了让包级测试
+ * 直接用同一份转换，不必在测试里重写一遍风险分级。
+ */
+export function toolEntries(role: 'orchestrator' | 'worker', definitions: readonly Tool[]): ToolEntry[] {
+  return definitions.map(definition => entryOf(definition, role === 'worker' || READ_TOOLS.has(definition.name) ? 'read' : 'write'))
+}
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -137,8 +173,8 @@ export interface SessionsHost {
   closing(): boolean
   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
   environment(ticket: Ticket): Variable[]
-  /** 这条会话模型可见的工具目录（本仓全局注册表里挑好的 `ToolEntry`，见文件头第 10 条）。 */
-  tools(agent: SessionHandle, ticket?: Ticket): ToolEntry[]
+  /** 这条会话的工具，按上游形状给 `Tool[]`；转换成 `ToolEntry` 在 `toolDirectory` 里做（同上游 `registerTool`）。 */
+  tools(agent: SessionHandle, ticket?: Ticket): Tool[]
 }
 
 /** 本模块为一条会话登记的账：解绑时按 LIFO 释放。 */
@@ -502,7 +538,7 @@ export class Sessions {
   /** 模型可见的工具目录：角色白名单 ∩ 全局注册表 + host 给这条会话补的工具（后者不掩，见文件头第 10 条）。 */
   private toolDirectory(handle: SessionHandle): ToolEntry[] {
     const all = this.tools()?.list() ?? []
-    const extra = this.host.tools(handle, this.ticketOf(handle))
+    const extra = toolEntries(handle.role, this.host.tools(handle, this.ticketOf(handle)))
     const picked: ToolEntry[] = []
     for (const name of handle.role === 'worker' ? WORK_TOOLS : ROUTER_TOOLS) {
       const entry = all.find(item => item.name === name)

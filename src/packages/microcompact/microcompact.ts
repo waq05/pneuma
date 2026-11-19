@@ -26,6 +26,16 @@ export const DEFAULT_KEEP_RECENT_TOOL_RESULTS = 5
 /** 单条至少要省下多少 token 才值得清（默认值；照 ZCode 的 DEFAULT_MICROCOMPACT_MIN_TOKEN_SAVINGS）。 */
 export const DEFAULT_MIN_SAVE_TOKENS = 256
 
+/**
+ * `refresh: 'budget'` 档一次推进的默认预算（字符）：新增条目合计能省这么多才把清理点往前挪。
+ *
+ * 为什么是「攒够再推」而不是每轮都推：前缀缓存里命中的 token 只按约 1/10 价收，
+ * 可清理点一挪，从被改的那条消息往后整段前缀作废、要按全价重读（一次约 10–20K token）。
+ * 一次推进真正省下的只是新增占位符那几个字符；省得不够多就等于拿一次全价重读换几毛钱。
+ * 所以宁可让旧结果多留几轮，攒到这个量再一次性推进——断一次，换一段时间的稳定前缀。
+ */
+export const DEFAULT_ADVANCE_CHARS = 8192
+
 /** spill 落盘后留在正文里的指针：这种结果已经「被处理过」，微压缩不再动它。 */
 const SPILL_POINTER = '[完整输出已落盘：'
 
@@ -103,6 +113,9 @@ function placeholderFor(toolName: string | undefined): string {
  * 工具结果一多，几乎每一步都会有一条刚滑出窗口被清掉——清理点一改，从那条往后
  * 整段前缀作废，服务端前缀缓存命中率被拖到 60% 上下（实测会话 bb13f0b5）。
  * 把计划冻结到「轮到轮之间」复用，同一轮内 30 多步的前缀就是稳的。
+ *
+ * 2026-11-18 起另有一份「已生效计划」（budget 档的 activePlan）：它只增不减，
+ * 攒够 {@link DEFAULT_ADVANCE_CHARS} 才推进一次，见 {@link advanceMicrocompactPlan}。
  */
 export type MicrocompactPlan = ReadonlyMap<string, string>
 
@@ -191,6 +204,56 @@ export function planWorthApplying(messages: readonly ChatMessage[], plan: Microc
 }
 
 /**
+ * 把 `extra` 里还不认识的条目并进 `base`（已存在的 callId 保留 base 的占位符）。
+ *
+ * 语义是「只增不减」：已生效的条目不许被新计划顶掉或删掉，否则模型看到的正文
+ * 会从占位符变回原文——清理点倒退，前缀缓存立刻作废。返回新 Map，不改输入。
+ */
+export function mergeMicrocompactPlans(base: MicrocompactPlan, extra: MicrocompactPlan): MicrocompactPlan {
+  if (extra.size === 0) return base
+  const merged = new Map(base)
+  for (const [id, placeholder] of extra) if (!merged.has(id)) merged.set(id, placeholder)
+  return merged
+}
+
+/**
+ * budget 档的一次推进决策：算出这一次该应用哪份计划，以及这次有没有推进清理点。
+ *
+ * 规则：已生效的 `active` 一律继续替换（只前进不后退）；只有这次新算出来的条目
+ * 合计能省下 `advanceChars` 字符、并且并进 active 之后整份计划仍过 `minFreePercent`
+ * 门槛，才把新条目并进去推进一次；否则原样应用旧 active。
+ *
+ * 代价（为什么宁可攒）：命中的前缀 token 约按 1/10 价收，断一次却把清理点之后
+ * 整段按全价重读（约 10–20K token）。多清一条只省 1/10 价的那点钱，不够赔一次断，
+ * 所以新增条目不够 {@link DEFAULT_ADVANCE_CHARS} 字符就先不动，等攒够再一次性推进。
+ *
+ * @param messages - 本次请求的消息（用来算能省多少、占整段多少）。
+ * @param active - 已经生效的清理计划（budget 档的 activePlan，只增不减）。
+ * @param candidate - 这次按 keepRecent / minSaveTokens 重算出来的计划。
+ * @param thresholds - `advanceChars` 默认 {@link DEFAULT_ADVANCE_CHARS}；`minFreePercent` 由配置给。
+ * @returns `plan` = 这次该应用的计划；`advanced` = 这次有没有把清理点往前挪。
+ */
+export function advanceMicrocompactPlan(
+  messages: readonly ChatMessage[],
+  active: MicrocompactPlan,
+  candidate: MicrocompactPlan,
+  thresholds: { advanceChars?: number; minFreePercent: number },
+): { plan: MicrocompactPlan; advanced: boolean } {
+  const fresh = new Map<string, string>()
+  for (const [id, placeholder] of candidate) if (!active.has(id)) fresh.set(id, placeholder)
+  const merged = mergeMicrocompactPlans(active, fresh)
+  const advanceChars = Math.max(0, Math.floor(thresholds.advanceChars ?? DEFAULT_ADVANCE_CHARS))
+  const advanced =
+    fresh.size > 0 &&
+    planFreeChars(messages, fresh) >= advanceChars &&
+    planWorthApplying(messages, merged, thresholds.minFreePercent)
+  return { plan: advanced ? merged : active, advanced }
+}
+
+/** 程序自动附在 user 消息末尾的声明：P0 的三条尾部注入用它标明「不是用户发言」。 */
+export const AUTO_APPENDED_NOTICE = '（本条是程序自动附上的，不是用户发言）'
+
+/**
  * 这条 user 消息是不是「程序塞进来的」（环境快照 / 任务清单提醒 / 钩子产出 / 队友汇报），
  * 不算用户新开的一轮。轮次键只数真人发言，否则同一轮里 env 快照一刷就被判成
  * 新一轮，冻结计划又白做了。
@@ -198,6 +261,10 @@ export function planWorthApplying(messages: readonly ChatMessage[], plan: Microc
  * 队友汇报（`<teammate-report `）也算：它是子代理干完活后由程序投进来的，不是真人开口。
  * 如果把它算成新一轮，队友每汇报一次就翻一轮，冻结计划重算、清理点跟着移动，等于每份
  * 汇报都花一次整段前缀重读的钱——汇报越勤，前缀缓存越碎。
+ *
+ * 末尾带「{@link AUTO_APPENDED_NOTICE}」的也算：P0 的几条尾部注入（系统提示之外的
+ * 易变事实）都用这句话收尾，标清楚是程序附的、不是用户发言。判据只看**末尾**这句话，
+ * 不认具体是哪个插件注入的——以后新增尾部注入不必回来改这里。
  */
 export function isSyntheticUserMessage(message: ChatMessage): boolean {
   if (message.role !== 'user') return false
@@ -206,6 +273,7 @@ export function isSyntheticUserMessage(message: ChatMessage): boolean {
   if (text.includes('（本条是程序在每次请求时自动附上的当前环境快照')) return true
   if (text.startsWith('<external_content source="hook:')) return true
   if (text.startsWith('<teammate-report ')) return true
+  if (text.trimEnd().endsWith(AUTO_APPENDED_NOTICE)) return true
   return false
 }
 

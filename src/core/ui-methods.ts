@@ -124,10 +124,6 @@ export const UI_METHODS = [
   'superagentAnswer',
   'superagentCleanWorktree',
   'superagentPeekSession',
-  // 推断候选收件箱（backlog G1）：人在界面上给一条候选定结论。两个都是写类，
-  // 与 publish 同一档；远程壳不放行（见 packages/remote/types.ts）。
-  'superagentAcceptCandidate',
-  'superagentIgnoreCandidate',
   // 模型与档位
   'setModel',
   'listModels',
@@ -173,6 +169,8 @@ export const UI_METHODS = [
   'runSettingAction',
   // 队友
   'listTeammates',
+  // 点开一位队友：与 listTeammates 同一档（不写文件、不改配置，只切「当前看哪条会话」）
+  'openTeammate',
   // 任务板（状态面板「共享任务」分区）：只读；改任务仍旧只走模型的 team_task 工具
   'listTeamBoard',
   'stopTeammate',
@@ -400,6 +398,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   browseMarket: [
     { shape: { kind: 'string', max: MAX_NAME }, optional: true },
     { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+    // 第三参 = 强制联网（界面「刷新」按钮）。true 时宿主跳过新鲜缓存与内存缓存，
+    // 到市场源重拉一遍；拉失败仍交旧缓存，但回退原因会写进结果的 error 做软提示。
+    // 不登记这一条的话页面传第三个实参会因为「最多收 2 个实参」被当场拒。
+    { shape: { kind: 'boolean' }, optional: true },
   ],
   // ── 模式（预设） ──────────────────────────────────────────────────────────
   listPresets: [],
@@ -421,6 +423,8 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   runSettingAction: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'string', max: MAX_NAME } }],
   // ── 队友 ──────────────────────────────────────────────────────────────────
   listTeammates: [],
+  // 点开一位队友（名字同队友名）
+  openTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],
   // 任务板：只读一次当前会话的板（无参数；写仍旧只走模型的 team_task）
   listTeamBoard: [],
   stopTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],
@@ -461,10 +465,6 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   superagentAnswer: [{ shape: { kind: 'json', maxBytes: MAX_PUBLISH_JSON } }],
   superagentCleanWorktree: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
   superagentPeekSession: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
-  // 候选收件箱的两个动作：一个候选 id，外加（接单时）可选的标题覆盖。
-  // 形状与工单那几个同一个口径：json 对象，具体字段由服务层校验。
-  superagentAcceptCandidate: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
-  superagentIgnoreCandidate: [{ shape: { kind: 'json', maxBytes: MAX_TICKET_JSON } }],
 }
 
 /** 校验结果：过了一条新实参数组（尾部空值已去掉），没过给一句能读的错。 */

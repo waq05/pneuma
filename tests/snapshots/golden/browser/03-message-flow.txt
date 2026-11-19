@@ -1,0 +1,60 @@
+# 场景：消息流（展开整轮，含思考与工具卡）
+# 稳定：种子记录的时间戳与工具耗时都是固定值；展开的是同一棵已渲染的 DOM。工具结果与思考正文来自种子文件本身，没有流式增量，因此整屏文本在静置后不再变化。
+# hash：（空）
+# 计数：
+#   dom.buttons = 35
+#   dom.elements = 325
+#   dom.inputs = 1
+#   sessions.rows = 1
+#   transcript.text = 1
+#   transcript.think = 1
+#   transcript.tool = 1
+#   transcript.user = 1
+
+Pneuma
+新会话
+技能
+插件
+工作区
+dom-work
+看一下 README，然后说说测试层怎么搭。
+<time>
+今日总用量
+0 tok
+设置
+Super Agent
+看一下 README，然后说说测试层怎么搭。
+标准模式
+对话
+轨迹
+看一下 README，然后说说测试层怎么搭。
+已完成，用时 <elapsed>
+已读取文件
+思考
+先确认仓库结构，再读说明文件。测试层分 unit / integration / ui / snapshot / tui 五层，浏览器快照只钉 DOM 文本，不…
+
+先确认仓库结构，再读说明文件。测试层分 unit / integration / ui / snapshot / tui 五层，浏览器快照只钉 DOM 文本，不钉像素。
+
+读取
+README.md
+第 1 行起
+在轨迹中查看
+# Pneuma
+
+终端 AI 编程助手。
+
+## 测试
+
+五层：unit / integration / ui / snapshot / tui。
+
+README 读完了：测试层按 unit、integration、ui、snapshot、tui 五层分工，快照层负责把渲染面钉成文本。
+
+~32 tok
+·
+<time>
++
+工作区可写
+演示端点/
+demo-chat
+默认
+1 轮 3 步

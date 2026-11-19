@@ -158,9 +158,9 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 ## 插件
 
-功能包共 **79 个**（默认关 12 个；其中 20 个是界面单元 `ui-<id>`、1 个是界面骨架 `ui-layout`、1 个是渲染器 `ui-renderer`）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 17 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
+功能包共 **81 个**（默认关 13 个；其中 20 个是界面单元 `ui-<id>`、1 个是界面骨架 `ui-layout`、1 个是渲染器 `ui-renderer`）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 17 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
 
-17 个功能档里，默认开 5 个（联网搜索、危险命令硬拦截、长输出转存、历史会话搜索、文件与命令围栏）；默认关 12 个，其中 9 个在官方档（子智能体与任务板、操作电脑桌面、MCP 外部工具、工具按需加载、定时任务、代码跳转与报错、受控浏览器、侧栏浏览器、Super Agent），另外 3 个收在「实验」档（经验沉淀、dsh 插件兼容、文档与批量读取）。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
+18 个功能档里，默认开 5 个（联网搜索、危险命令硬拦截、长输出转存、历史会话搜索、文件与命令围栏）；默认关 13 个，其中 10 个在官方档（子智能体与任务板、操作电脑桌面、MCP 外部工具、工具按需加载、定时任务、代码跳转与报错、受控浏览器、侧栏浏览器、Super Agent、Super Agent Webhook），另外 3 个收在「实验」档（经验沉淀、dsh 插件兼容、文档与批量读取）。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
 首启会在 `~/.dsc/profiles/default/` 铺一份 profile（已有就不动）。把一个改过的功能包放进
 `~/.dsc/profiles/default/node_modules/@pneuma/<id>` 再重启，就顶替应用里那份，不用重新打包：
@@ -232,11 +232,11 @@ src/core/           自研引擎（零 UI 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配器：建 Context、挂应用自带的行、挂外部插件（103 行）
-src/packages/       91 个包：79 个功能包（含 20 个界面单元、界面骨架与渲染器）+ 12 个库包（package.json + cordis.patch.yml + index.ts）
+src/packages/       93 个包：81 个功能包（含 20 个界面单元、界面骨架与渲染器）+ 12 个库包（package.json + cordis.patch.yml + index.ts）
 src/packages/tui/app/  ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）
-scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
+src/packages/tui/app/composer.spec.ts  候选面板/输入行的确定性测试（pnpm run test:tui；原 composer 探针已并入）
 ```
 
 **模式（Agent 预设）**：一根独立的旋钮，决定模型是谁、手上有什么、被叮嘱了什么（提示词 + 工具目录）。出厂四个——标准 / PTC / 极简 / 创造（顺序与 dsh 的 preset 一致）：PTC 是全量工具再加 `run_code`，极简只有一条 shell 加 `read_image`、提示词换成一句固定话（保留 AGENTS.md 注入），创造在标准之上加 `runtime_api`。自己加的模式就是 `~/.dsc/presets/<名字>.md` 一个文件，设置页可图形编辑，输入框下方那颗旋钮或 `/preset <名字>` 切换。模式**只做减法**（工具白名单取子集、提示段只能摘掉四段），任何模式都放宽不了安全。详见 [docs/presets.md](docs/presets.md)。
@@ -267,7 +267,7 @@ pnpm build:ui     # 编桌面 / 手机共用的界面壳（产物落 lib/ui/asse
 pnpm typecheck
 pnpm dev          # tsc --watch
 
-node scripts/composer-test.mjs   # 自检：scripts/ 下每个 *-test.mjs 都是一个能单独跑的无头脚本
+pnpm test                        # 主测试：unit + ui + tui（scripts/ 下的 *-test.mjs 是 Vitest 表达不了的探针通道）
 cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过）
 ```
 
@@ -279,17 +279,18 @@ cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过�
 | --- | --- |
 | [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
 | [docs/development-log.md](docs/development-log.md) | 开发记录：各阶段引入了什么、决策台账、真 bug 台账、还欠什么 |
+| [docs/bugs.md](docs/bugs.md) | 缺陷记录：按 issue 写法一条一节（编号、严重度、复现、证据、初步定位、验收），只增不删 |
 | [docs/plugin-development.md](docs/plugin-development.md) | 插件开发：§0 从零上手（选形态、跑通最小链路、扩展点速查、交付自检）+ §1–§10 完整规格（全表签名、dsh 兼容层、界面插件契约） |
 | [docs/presets.md](docs/presets.md) | **模式（Agent 预设）**：模式文件怎么写、出厂四个各是什么、可去掉哪些提示段、四条硬规矩 |
 | [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题引擎对照 |
 
 其余文档按用途分三类：
 
-**活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
+**参考与现状说明**：[docs/archive/harness-benchmark-roadmap.md](docs/archive/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/archive/peer-feature-inventory.md](docs/archive/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
 
-**外部实现拆解（按名字查的参考资料）**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)（codex 的请求组装）、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）、[docs/runtime-comparison.md](docs/runtime-comparison.md)（三家 runtime 逐轮编排对照）
+**外部实现拆解（按名字查的参考资料）**：[docs/archive/codex-request-assembly.md](docs/archive/codex-request-assembly.md)（codex 的请求组装）、[docs/archive/dsh-request-assembly.md](docs/archive/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）、[docs/runtime-comparison.md](docs/runtime-comparison.md)（三家 runtime 逐轮编排对照）
 
-**已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 14 篇，另有 `archive/shots/` 下 6 份当时的施工自检报告。
+**已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 21 篇，另有 `archive/code-review-2026-11-09/` 下 23 份一次性审查报告与 `archive/shots/` 下 6 份当时的施工自检报告。
 
 ## 许可
 

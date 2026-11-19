@@ -35,11 +35,22 @@
  *   标准档才显示详情），收尾后再收口成 closed=true（组头改报聚合类别）。收尾前它一直在长
  *   （新工具会并进来），组序号不变，用户已经展开的那一组不会被直播新增的内容重置。
  *
- * 实时详情（对照 dsh 的 liveToolDetail，process-activity.ts:23-87）：
- * 组体默认收起之后，屏幕上「现在在干什么」只剩组头这一行，所以未结束的组头除了类别还要带一句
- * 具体任务——「正在运行命令 · pnpm build」。取参数的键序照抄 dsh（命令 → 路径 → 查询 → …），
- * 一个都取不到就退回工具名。思考行虽然也在组里，但它只在「组里没有运行中的工具」时才轮到组头——
- * 那种情况 dsh 报「正在分析请求」，不再摘录最后一段直播思考（**那一句由组头自己的扫光承载**）。
+ * 实时详情（对照 dsh 的 process-activity.ts:23-171）有两条来源，按「有没有跑着的工具」二选一：
+ * - **有运行中的工具**：取它的参数（`liveToolDetail`，键序照抄 dsh：命令 → 路径 → 查询 → …），
+ *   一个都取不到才退回工具名；
+ * - **没有运行中的工具**：取组里最后一段还在流式的思考（`liveReasoningDetail`），也就是
+ *   「正在分析请求 · 我先把直播尾读一遍……」。2026-10-30 到 2026-11-18 这段把它删掉了，
+ *   理由是「组头的扫光已经说明在动」——实测下来那段时间屏幕上只有一句光秃秃的
+ *   「正在分析请求」，思考正文全在收起的组体里，等于什么都没直播（用户报障）。
+ *   dsh 的 `processActivity` 一直有这条兜底（process-activity.ts:164）。
+ * 工具还在准备中（参数在流里）时走 {@link preparingToolDetail}：从半截 JSON 里读已经收到的
+ * 字符串前缀，读到了就地显示「正在准备运行命令 · pnpm bu」。
+ *
+ * 有一处**有意保留的差异**（评审会问，先写在这里）：读不到前缀时，numa 只给「通用类别」
+ * 补工具名（「准备调用工具 · some_tool」），别的类别留空；dsh 是**所有类别**都留空，
+ * 直到参数视图闭合才回退工具名（conversation-nodes/README.zh.md:318）。保留旧口径是因为
+ * 那句话在 numa 里已经用了很久、也确实说明「要调哪个工具」；代价是通用类别会先显示工具名、
+ * 参数到了再跳成参数，读者可能看到一次换字。
  *
  * @module dsc-ui-shell/plugins/transcript/process-groups
  */
@@ -107,7 +118,7 @@ export interface StepGroup {
    *
    * 为什么不直接用 `[startIndex, endIndex]` 这个区间：区间会把中间那条 **system**
    * 行（错误提示、宿主通知、「已恢复会话」）一起算成组员，结果是被收进组体、随组体一起
-   * 藏起来——而 system 恰恰是不该被折叠藏掉的那类（见 {@link TURN_PROCESS_INDEPENDENT}）。
+   * 藏起来——而 system 恰恰是不该被折叠藏掉的那类（见 round-fold.tsx 的 `TURN_INDEPENDENT`）。
    * 现在由分组时实际收进组的条目决定，区间只作为读位置用。
    */
   members: readonly number[]
@@ -140,8 +151,10 @@ export interface StepGroup {
   /**
    * 未结束组的实时任务详情（「pnpm build」这种），已结束的组不带。
    *
-   * 来源：组里最后一个运行中的工具的某个参数字段。取不到就是 undefined——组头只显示类别，
-   * 不显示空的分隔点。
+   * 来源有两条（按「有没有跑着的工具」二选一，见 `groupSteps` 的未收口分支）：
+   * 组里最后一个运行中 / 准备中的工具的某个参数字段；没有这样的工具时，取组里最后一段
+   * **还在流式**的思考的末段（`liveReasoningDetail`）。都取不到就是 undefined——组头只显示
+   * 类别，不显示空的分隔点。
    */
   runningDetail?: string
   /**
@@ -204,28 +217,19 @@ export function seatPlan(ats: readonly number[], grouping: StepGrouping): SeatPl
 }
 
 /**
- * 不进整轮过程区、也不该被整轮折叠藏起来的条目类型
- * （逐项对照 dsh 的 `TURN_PROCESS_INDEPENDENT_KINDS`，contract/turn-process.ts:20-34）。
+ * 系统提示卡与上下文注入卡在分组器里的待遇：**不进组，但封组**。
+ * 为什么不进组：它们不是执行步骤，是请求侧的两张账单（模型当时收到的提示与注入）。塞进组体
+ * 等于让「这一阶段干了什么」里混进一条与动作无关的读数。
  *
- * 两件事共用这一份表，别的地方别再各写一遍：
- * - **整轮折叠**：这些条目落在过程区的下标区间里也不挂 `hidden`（dsh 的
- *   `TURN_PROCESS_INDEPENDENT_KINDS` 就是给整轮折叠用的）；
- * - 渲染层据此把它们排到「过程区之后」那一组，不参与阶段分组。
+ * 为什么封组（而不是当它们不存在、让组跨过去）：组员是**连续摆放**的——渲染层在组头那个位置
+ * 一次铺完整个组，夹在组员中间、又不在组里的行会被挤到整组之后。这两条目恰好可能在轮中途出现
+ * （一次多步轮的每一跳都会重新组装请求，注入内容一变就多一条卡），不封组的话卡片会从原来的
+ * 位置跳到这一阶段所有工具调用的下面（与 system 那条同一个成因，见上面那段注释）。
  *
- * 为什么 `system` 在这里：dsc 的 system 条目混了错误提示、宿主通知、「已恢复会话」三种东西，
- * 收起过程不能把「这一轮出错了」也一起藏掉——用户会以为那一轮只是正常答完了。
+ * 注意别和「整轮折叠」混：这两张卡自 2026-11-17 起**跟着整轮一起收**（口径在
+ * `round-fold.tsx` 的 `TURN_INDEPENDENT` / `isRoundProcessKind`）。二级分组把它们当边界、
+ * 整轮折叠把它们当过程内容，两件事互不影响。
  */
-export const TURN_PROCESS_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = new Set([
-  'user',
-  'plan',
-  'system',
-  'turn-end',
-  'turn-max-tokens',
-  // 系统提示 / 上下文注入（2026-11-10）：请求侧的两张账单，不是执行步骤。表要与
-  // round-fold.tsx 的 TURN_INDEPENDENT 逐项一致（那张才是渲染层真正读的，这份是同义副本）。
-  'system-prompt',
-  'context-injection',
-])
 
 /**
  * 工具名 → 过程类别。
@@ -333,36 +337,233 @@ function questionDetail(value: unknown): string {
 /**
  * 一次工具调用的实时详情：按 {@link DETAIL_KEYS} 顺序取参数的第一个非空值。
  *
- * 三种降级（都对照 dsh 的 liveToolDetail，process-activity.ts:70-87）：参数不是完整 JSON
+ * 三种降级（都对照 dsh 的 liveToolDetail，process-activity.ts:121-130）：参数不是完整 JSON
  * （流式途中的半截参数）→ 退回工具名；解析出来不是对象 → 退回工具名；一个键都没取到值 →
- * 退回工具名。**参数解析失败不算异常**：直播途中大半时间参数本来就不完整。
+ * 退回工具名。**参数解析失败不算异常**：直播途中大半时间参数本来就不完整——准备中那段
+ * 另有 {@link preparingToolDetail} 走前缀读法，这里只服务「已经派发」的调用（参数是终稿）。
  *
  * @param name 工具名（read / bash / grep …）
  * @param argsText 模型产出的原始 arguments JSON 字符串
  */
 export function liveToolDetail(name: string, argsText: string): string {
+  const record = parseArgs(argsText)
+  if (record === undefined) return normalizeDetail(name)
+  return detailOfRecord(record) || normalizeDetail(name)
+}
+
+/** 解析参数原文；不是对象（半截 JSON、数组、标量）时返回 undefined。 */
+function parseArgs(argsText: string): Record<string, unknown> | undefined {
   let args: unknown
   try {
     args = JSON.parse(argsText)
   } catch {
-    return normalizeDetail(name)
+    return undefined
   }
-  if (args === null || typeof args !== 'object' || Array.isArray(args)) return normalizeDetail(name)
-  const record = args as Record<string, unknown>
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return undefined
+  return args as Record<string, unknown>
+}
+
+/** 一个参数对象里第一句能当详情用的话（按 {@link DETAIL_KEYS} 的顺序）；取不到返回空串。 */
+function detailOfRecord(record: Record<string, unknown>): string {
   for (const key of DETAIL_KEYS) {
     if (!(key in record)) continue
     const detail = key === 'questions' ? questionDetail(record[key]) : normalizeDetail(record[key])
     if (detail !== '') return detail
   }
-  return normalizeDetail(name)
+  return ''
+}
+
+/** JSON 字符串里能出现的单字符转义（`\uXXXX` 单独处理）。 */
+const JSON_ESCAPES: Readonly<Record<string, string>> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+}
+
+/**
+ * 从一个**还没收尾**的 JSON 字符串字面量里读已经收到的内容。
+ *
+ * 读到闭合引号就停；读到文本末尾也停（说明值还在流里，已经收到的就是全部已知）——
+ * 后者正是准备中的常态，返回半截原文比什么都不显示有用。
+ *
+ * 转义只吃「后面一位已经到了」的那些：`\` 单独出现、`\u12` 只有两位十六进制时就此打住，
+ * 不猜它最终是什么。返回前把末尾孤立的高代理项砍掉：`\ud83d` 收到了、配对的低位还在路上时，
+ * 半个字符送到界面上会渲染成 `�`（dsh 也在同一位置补了这一步，process-activity.ts:70-81）。
+ *
+ * @param text 参数原文
+ * @param start 开引号之后的下标
+ * @returns 已收到的内容、闭合引号的下标（未闭合时是文本长度）、以及这段是否已闭合
+ */
+function readJsonString(text: string, start: number): { text: string; end: number; closed: boolean } {
+  let out = ''
+  let at = start
+  while (at < text.length) {
+    const char = text[at] ?? ''
+    if (char === '"') return { text: trimLoneSurrogate(out), end: at, closed: true }
+    if (char !== '\\') {
+      out += char
+      at += 1
+      continue
+    }
+    const escaped = text[at + 1]
+    if (escaped === undefined) return { text: trimLoneSurrogate(out), end: text.length, closed: false }
+    if (escaped === 'u') {
+      const hex = text.slice(at + 2, at + 6)
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { text: trimLoneSurrogate(out), end: text.length, closed: false }
+      out += String.fromCharCode(Number.parseInt(hex, 16))
+      at += 6
+      continue
+    }
+    out += JSON_ESCAPES[escaped] ?? escaped
+    at += 2
+  }
+  return { text: trimLoneSurrogate(out), end: text.length, closed: false }
+}
+
+/** 末尾是孤立的高代理项（`\ud800`-`\udbff` 后面没等到低位）时砍掉：送到界面会渲染成 `�`。 */
+function trimLoneSurrogate(text: string): string {
+  if (text.length === 0) return text
+  const last = text.charCodeAt(text.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text
+}
+
+/**
+ * 半截 JSON 里某个**顶层字符串字段**已经收到的内容（对照 dsh 的 `ToolArgs.textPrefix`，
+ * process-activity.ts:63-84）。
+ *
+ * 为什么要自己扫：这些参数是模型一个字一个字吐出来的，`JSON.parse` 在半截状态一定抛错。
+ * dsh 那边的参数视图能按 key 取前缀，numa 这边内核把累积原文直接给过来（见
+ * `core/events.ts` 的 `tool/prepare`），于是在这里扫一遍。
+ *
+ * 为什么不能拿 `"键"` 直接 indexOf：值里也可能出现同样的字样（`{"description":"say
+ * \"command\": \"evil\""}`），嵌套对象 / 数组里的同名字段（`{"options":{"command":"…"}}`）
+ * 也会被误认成顶层字段。所以这里是个最小状态机：跟踪 `{}`/`[]` 深度与字符串态，
+ * **只在深度 1 的键位**接受匹配，字符串里的内容整体跳过。
+ *
+ * 两条与 dsh 的差异是有意留的（写在这里免得下一个人当 bug 修）：
+ * - 重复键取**最后**一个（与 `JSON.parse` 的行为一致，dsh 的 `#entries.set` 也是后写覆盖）；
+ * - 只认字符串值：`"queries":["a","b"]` 这种已完成数组读不出来，等参数到齐后的完整解析。
+ *
+ * @param argsText 累积的参数原文（可能是半截 JSON）
+ * @param key 要找的字段名
+ * @returns 字段已收到的字符串内容；这个键不是「顶层键 + 字符串值」的形状时返回 undefined
+ */
+function topLevelStringField(argsText: string, key: string): string | undefined {
+  let depth = 0
+  let at = 0
+  /** 顶层对象的当前位置：key = 等键、colon = 等冒号、value = 等值、none = 值已处理完。 */
+  let expect: 'key' | 'colon' | 'value' | 'none' = 'none'
+  let pendingKey: string | undefined
+  let found: string | undefined
+  while (at < argsText.length) {
+    const char = argsText[at] ?? ''
+    if (char === '"') {
+      const parsed = readJsonString(argsText, at + 1)
+      at = parsed.end + (parsed.closed ? 1 : 0)
+      if (depth === 1 && expect === 'key') {
+        pendingKey = parsed.text
+        expect = 'colon'
+      } else if (depth === 1 && expect === 'value' && pendingKey !== undefined) {
+        if (pendingKey === key) found = parsed.text
+        pendingKey = undefined
+        expect = 'none'
+      }
+      continue
+    }
+    if (char === '{') {
+      depth += 1
+      if (depth === 1) expect = 'key'
+      else expect = 'none'
+      at += 1
+      continue
+    }
+    if (char === '[') {
+      depth += 1
+      expect = 'none'
+      at += 1
+      continue
+    }
+    if (char === '}' || char === ']') {
+      depth -= 1
+      if (depth <= 0) return found
+      expect = 'none'
+      at += 1
+      continue
+    }
+    if (char === ':') {
+      if (depth === 1 && expect === 'colon') expect = 'value'
+      at += 1
+      continue
+    }
+    if (char === ',') {
+      if (depth === 1) {
+        expect = 'key'
+        pendingKey = undefined
+      }
+      at += 1
+      continue
+    }
+    // 非字符串值（数字 / true / false / null）在顶层：整个标量跳过，别把它的字符当结构
+    if (depth === 1 && expect === 'value' && !/\s/.test(char)) {
+      while (at < argsText.length) {
+        const current = argsText[at] ?? ''
+        if (current === ',' || current === '}' || current === ']') break
+        at += 1
+      }
+      pendingKey = undefined
+      expect = 'none'
+      continue
+    }
+    at += 1
+  }
+  return found
+}
+
+/**
+ * 准备中（参数还在流里）的实时详情：从半截 JSON 里读已经收到的字段前缀。
+ *
+ * 为什么要单独一条路（2026-11-18）：准备中那一行以前只有一个工具名，屏幕上那段真空
+ * （长参数能空好几秒）什么内容都没有。dsh 的组头在准备阶段就能显示
+ * 「准备运行命令 · pnpm bu」（process-activity.ts:121-130 的 `args.closed()` 分支），
+ * 靠的正是参数视图的前缀读法。
+ *
+ * 两条边界都照 dsh：一个键都没读到就返回空串（**不**拿工具名顶替——名字到了、内容还没
+ * 到，写出来是假信息；通用类别的工具名由调用方补）；参数已经到齐（流末尾那一拍）时
+ * 走完整解析，与 {@link liveToolDetail} 同一套取法。
+ *
+ * @param argsText 累积的参数原文（可能是半截 JSON，也可能是已经到齐的终稿）
+ * @returns 一行详情；一个字段都没读到返回空字符串
+ */
+export function preparingToolDetail(argsText: string): string {
+  if (argsText.trim() === '') return ''
+  const record = parseArgs(argsText)
+  if (record !== undefined) {
+    const detail = detailOfRecord(record)
+    if (detail !== '') return detail
+  }
+  for (const key of DETAIL_KEYS) {
+    // questions 是对象数组：半截状态读不出「第一个问题」，到齐那一刻走上一条
+    if (key === 'questions') continue
+    const text = topLevelStringField(argsText, key)
+    if (text === undefined) continue
+    const detail = normalizeDetail(text)
+    if (detail !== '') return detail
+  }
+  return ''
 }
 
 /**
  * 一段思考里的实时详情：取最后一个非空段落，去掉 `**` 后压成一行。
  *
- * 2026-10-30 起本模块不再调用它（思考行不进组，组头没有「组内直播思考」这条兜底了）。
- * 保留导出是为了让轨迹页 / 将来的实时组头仍能按同一口径取一句话——
- * 口径本身照 dsh 的 liveReasoningDetail（process-activity.ts:53-68，从后往前扫段落）。
+ * 口径照 dsh 的 liveReasoningDetail（process-activity.ts:98-113，从后往前扫段落，
+ * 规范在 conversation-nodes/README.zh.md:306）。2026-10-30 到 2026-11-18 这段没有调用方
+ * （当时判断「组头的扫光已经说明在动」），2026-11-18 起由 {@link liveReasoningDetail}
+ * 接回——那段时间屏幕上只有「正在分析请求」四个字，思考正文全在收起的组体里。
  *
  * @param text 思考原文（通常是直播尾那一条）
  * @returns 一行详情；整段都是空白时返回空字符串
@@ -375,6 +576,31 @@ export function reasoningDetail(text: string): string {
   }
   return ''
 }
+
+/**
+ * 组里最近一段**还在流式**的思考：没有运行中工具时，组头拿它当实时详情。
+ *
+ * 两条口径都照 dsh：
+ * - 只认直播尾（负 id，还没定稿的那条）。定稿的思考行说的是「刚才那段已经想完」，
+ *   而组头要回答的是「此刻在想什么」；dsh 同样只从 status === 'running' 的
+ *   assistant step 里取（process-activity.ts:99-101）。
+ * - 从后往前找**第一个能取出一句话**的（`reasoningDetail` 内部也按段落从后往前扫），
+ *   空段落跳过，不拿上一段冒充此刻。
+ *
+ * @param entries 当前 transcript（含直播尾）
+ * @param indexes 这一组占的条目下标（按出现顺序）
+ * @returns 一行详情；组里没有直播思考时返回空字符串
+ */
+function liveReasoningDetail(entries: readonly TranscriptEntry[], indexes: readonly number[]): string {
+  for (let at = indexes.length - 1; at >= 0; at -= 1) {
+    const entry = entries[indexes[at] ?? -1]
+    if (entry === undefined || entry.kind !== 'thinking' || entry.id >= 0) continue
+    const detail = reasoningDetail(entry.text)
+    if (detail !== '') return detail
+  }
+  return ''
+}
+
 
 /** 已结束组的类别文案（对照 dsh 的中文文案表 locale.ts:35-48；译文在本包字典里）。 */
 const DONE_LABEL: Record<ProcessActivity, string> = {
@@ -615,8 +841,14 @@ function runningTool(
         // 准备阶段不解析参数（这会儿参数本来就不完整），只有通用类别才补一句工具名——
         // dsh 的原话是「只有『准备调用工具』在标准模式中追加协议工具名，其他类别不追加」，
         // 因为「准备读取文件 · read」纯属废话。
+        //
+        // 2026-11-18 起准备中也能显示半截参数（`preparingToolDetail`）：内核把已经收到的
+        // 参数原文一起报过来，存在 `argsPreview`（不是 `argsText`——那一格是终稿参数，
+        // 界面各处拿它真解析），于是「准备运行命令 · pnpm bu」在工具真的开跑之前就看得见。
+        // 一个字段都没读到才退回原来的做法（通用类别补工具名，其他类别空着）。
         detail: preparing
-          ? (activity === 'tools' ? normalizeDetail(call.name) : '')
+          ? (preparingToolDetail(call.argsPreview ?? '')
+            || (activity === 'tools' ? normalizeDetail(call.name) : ''))
           : liveToolDetail(call.name, call.argsText),
       }
     }
@@ -713,6 +945,11 @@ export function groupSteps(
           group.running = live.activity
           if (live.preparing) group.preparing = true
           if (live.detail !== '') group.runningDetail = live.detail
+        } else {
+          // 组里没有跑着的工具：此刻的进展就是还在流式的思考（见 liveReasoningDetail 的注释）。
+          // 这条兜底 2026-11-18 补回，之前那个 else 是空的——屏幕上一句「正在分析请求」到底了。
+          const detail = liveReasoningDetail(entries, pending)
+          if (detail !== '') group.runningDetail = detail
         }
       }
       groups.push(group)
@@ -746,7 +983,7 @@ export function groupSteps(
       // - turn-end / turn-max-tokens：轮尾标记与长度上限提示，都是轮级的独立事件；
       // - model-retry：模型重试。它是二级分组的边界，但**整轮折叠仍然包含它**
       //   （dsh 的原话：「二级分组把模型重试视为分隔节点，但整轮折叠仍包含重试行」）——
-      //   所以它不在 TURN_PROCESS_INDEPENDENT 那张表里。
+      //   所以它只在这里当边界，不进 `round-fold.tsx` 的 `TURN_INDEPENDENT`。
       if (
         entry.kind === 'text'
         || entry.kind === 'plan'
@@ -769,16 +1006,8 @@ export function groupSteps(
         flush(true)
         continue
       }
-      // 系统提示卡与上下文注入卡：**不进组、但封组**，与 system 同一条路。
-      //
-      // 为什么不进组：它们不是执行步骤，是请求侧的两张账单（模型当时收到的提示与注入）。
-      // 塞进组体等于让「这一阶段干了什么」里混进一条与动作无关的读数。
-      //
-      // 为什么封组（而不是当它们不存在、让组跨过去）：组员是**连续摆放**的——渲染层在组头
-      // 那个位置一次铺完整个组，夹在组员中间、又不在组里的行会被挤到整组之后。这两条目
-      // 恰好可能在轮中途出现（一次多步轮的每一跳都会重新组装请求，注入内容一变就多一条卡），
-      // 不封组的话卡片会从原来的位置跳到这一阶段所有工具调用的下面（与 system 那条同一个
-      // 成因，见上面那段注释）。封组之后它原地待着，前面那一段过程也收口成完整的一阶段。
+      // 系统提示卡与上下文注入卡：**不进组、但封组**，与 system 同一条路
+      //（口径与理由见本文件上面那段「在分组器里的待遇」注释）。
       if (entry.kind === 'system-prompt' || entry.kind === 'context-injection') {
         flush(true)
         continue

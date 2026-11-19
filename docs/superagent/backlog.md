@@ -1,5 +1,7 @@
 # superagent 补齐清单
 
+<!-- docs-check:external: src/core/model.ts -->
+
 > **这份文件记什么**：上游 dsh-superagent 有、当前 DSC 版没有的能力；当前代码自己在文件头或 README 里
 > 声明的限制；还没验证过的项。
 >

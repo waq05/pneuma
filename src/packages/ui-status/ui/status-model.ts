@@ -186,8 +186,14 @@ export function capsuleSummary(input: CapsuleInput): CapsuleSummary | null {
   return null
 }
 
-/** 毫秒 → 「14分30秒」/「8秒」；负数 / NaN 给 null（与团队行的口径一致）。 */
-export function formatDuration(ms: number): string | null {
+/**
+ * 毫秒 → 「14分30秒」/「8秒」；负数 / NaN 给 null（与团队行的口径一致）。
+ *
+ * `padSeconds` 只给**队友行**用：DSH 的面板把秒补成两位（「50分06秒」），
+ * 其余读数（倒计时 / 多久前 / 后台活已运行）沿用不补零的老样子，免得
+ * 一次改格式把所有区的读数一起换了。
+ */
+export function formatDuration(ms: number, padSeconds = false): string | null {
   if (!Number.isFinite(ms) || ms < 0) return null
   const total = Math.max(1, Math.round(ms / 1000))
   const seconds = total % 60
@@ -195,8 +201,27 @@ export function formatDuration(ms: number): string | null {
   const hours = Math.floor(total / 3600)
   const pad = (value: number): string => String(value).padStart(2, '0')
   if (hours > 0) return t('status.duration.hms', { h: hours, m: pad(minutes) })
-  if (minutes > 0) return t('status.duration.ms', { m: minutes, s: seconds })
+  if (minutes > 0) return t('status.duration.ms', { m: minutes, s: padSeconds ? pad(seconds) : seconds })
   return t('status.duration.s', { s: seconds })
+}
+
+/**
+ * token 读数（队友行那一格「58.1M tok」）：百万级固定一位小数，千 / 个位各一档。
+ *
+ * undefined（老名册没有这一项）与 0 都给 null——**不画 0**：0 是「没记过」，
+ * 画出来会被读成「它真的一个 token 都没用」，与事实不符（见 TeammateView.tokens）。
+ */
+export function formatTokens(tokens: number | undefined): string | null {
+  if (tokens === undefined || !Number.isFinite(tokens) || tokens <= 0) return null
+  const text =
+    tokens >= 1_000_000_000
+      ? `${(tokens / 1_000_000_000).toFixed(1)}B`
+      : tokens >= 1_000_000
+        ? `${(tokens / 1_000_000).toFixed(1)}M`
+        : tokens >= 1_000
+          ? `${(tokens / 1_000).toFixed(1)}K`
+          : String(Math.round(tokens))
+  return t('status.tokens', { text })
 }
 
 /**

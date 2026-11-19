@@ -1,4 +1,8 @@
 # superagent 接入 DSC：详细设计与开发规划
+<!-- docs-check:external: docs/00 -->
+<!-- docs-check:external: src/app/ -->
+<!-- docs-check:external: src/policy.ts -->
+<!-- docs-check:external: tests/policy.spec.ts -->
 
 本文档是 [dsh-superagent](https://github.com/) 接入 Pneuma（numa）的落地设计。上游原型是一套跑在
 DeepSeek Harness 上的「主动型编码智能体」，本文只讨论**移植到 DSC 之后长什么样、怎么建**。
@@ -413,14 +417,20 @@ export class DscExecutor implements Executor {
 
 #### 6.2.3 worktree
 
+> **移植后的最终口径（§18.3 有差异条目）**：宿主不再自己建 worktree。工单目录是普通目录
+> `<executionRoot>/<ticket name>`，由执行器的 `executor.prepare` 命令在「目录还不存在时、于
+> 父目录」检出（环境变量 `DSH_SUPERAGENT_DIR` 指向本单目录）。这与上游一致（上游
+> `client/locales.ts` 的 `prepareCommandHint` 就是这么写的），本仓不再保留 `git worktree`
+> 那套宿主侧实现；下面的原始 P0 设计仅作历史记录。
+
 ```sh
 git -C <repo> worktree add -b "agent/<ticket name>" <dir> <base ref>
 ```
 
 - 仓库路径、起点分支都来自设置；
-- 分支名固定 `agent/<ticket name>`，与上游一致（上游靠分支名把 PR 绑回工单，我们暂时不用，但保留格式）；
+- 分支名固定 `agent/<ticket name>`，与上游一致（上游靠分支名把 PR 绑回工单）；
 - 目录已存在就复用，不重复 `add`；
-- 清理按钮做 `git worktree remove --force` + 删目录。
+- ~~清理按钮做 `git worktree remove --force` + 删目录~~：移植后清理只删普通目录（`PanelApi.clean`）。
 
 ### 6.3 dispatcher.ts（P0 的编排器）
 
@@ -1082,7 +1092,7 @@ PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exi
 | 项 | 做了什么 | 与上游的差异 |
 | --- | --- | --- |
 | G2 持久化 effect 队列 | `adapters/effects.ts` 照上游 `app/effects.ts` 移植：`launch` / `delivery` 两种 kind，`seq` / `generation` / `attempts` / `due` 语义逐项对齐 | 上游 6 种 kind，这里只有 2 种——`assessment` / `relay` / `notice` 依赖主会话（G1 不做），`reply` 由发送泵承担 |
-| G4 准备命令 | 设置项 `prepareCommand`，建树后执行、10 分钟超时、失败判 failed 不重试 | 上游跑在工单目录的父目录（目录由 prepare 建）；这里目录由 git worktree 建好，跑在树里 |
+| G4 准备命令 | 设置项 `prepareCommand`，建树后执行、10 分钟超时、失败判 failed 不重试 | 当时目录由本仓的 git worktree 建好、跑在树里；移植后改回上游口径（目录由 prepare 建，跑在父目录，见 §18.3） |
 | G5 临时故障重试 | `transient()` 判据 + 3 次重试（15/30/60 秒），同一会话投「继续」 | 上游投完等 `whenIdle`；`MiniAgent` 没有可等待的 idle 事件，用 `retryPending` 标记让故障回合先不报 |
 | G7 报告语义 | `superagent_report` 工具（state / summary / question），工具报的状态覆盖回合默认的 `ready` | 上游叫 `orchestrator_report`，另有 `question_for_trigger_id` / `pr_number` / `reply_to_trigger_id` 三个参数；DSC 没有对应链路，去掉了 |
 | G8 提示词外置 | `prompts/worker.md` + 构建脚本拷两个落点 + 运行时读文件缓存 + 内置兜底 | 上游 15 个 md；这里只有 worker 一个（主会话提示词随 G1 不做） |
@@ -1092,7 +1102,7 @@ PASS 工单自己跑完了（ended 有值）        → 21 项检查全过，exi
 | S6 飞书准入 | 飞书来源接进 `policy.sources` + 设置项 `feishuAllowed` | 上游 SETUP 里让用户填名单；这里同样必须填，否则消息全判 `not_a_member` |
 | O1 安装引导 | `repoPath` 为空时快照面返回 `repo_missing`，界面画一条不挡页面的警告 | 上游有完整的 `SETUP.md` 向导；这里只有一条提示 |
 | O2 机器校验 | 体检项 `superagent/dependencies`：git / lark-cli 各跑一次 `--version` | 上游 `deployment.ts` 校验更多依赖 |
-| O3 全链路门禁 | `scripts/superagent-e2e-test.mjs`：假模型 + 真宿主 / 工具 / worktree / git，24 条断言 | 上游没有等价探针 |
+| O3 全链路门禁 | `scripts/superagent-e2e-test.mjs`：假模型 + 真宿主 / 工具 / prepare 建出的工单目录 / git，28 条断言 | 上游没有等价探针 |
 | O4 outbox 状态列 | `state`（pending / sending）+ `claimOutbox` + 开库时把残留 `sending` 改回 pending | 上游 `Effects` 管副作用、`Outbox` 只管入队；DSC 的发送泵自己带队列语义 |
 | U1 停用复位 | `ui-sessions` 对任意整页判断「启动图里还有没有人报名」 | 上游没有这个界面 |
 | U2 转录自动刷新 | 详情页在 `working` / `idle` 时每 5 秒静默重读 | 上游没有这个界面 |
@@ -1372,7 +1382,7 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
 
 - 为什么先这 5 个：`route` 是接受、挂靠、忽略、停止候选的唯一正路，现在只有面板按钮；`reply` 是
   worker 答案回到人的那条路；`read` 与 `ticket_status` 是模型判断前要看的现场。
-- 改哪些：新增 `src/packages/superagent/main-tools.ts`（与 `tools.ts` 同构：一个
+- 改哪些：新增 `src/packages/superagent/app/tools/main.ts`（与 `tools.ts` 同构：一个
   `createXxxTool(deps)` 一个文件内函数，依赖面收窄到一个「主会话端口」）；`runtime.ts` 加这个
   端口（九个引擎方法的薄包装 + 读快照 + `isWorkerSession`）；`index.ts` 里 `ctx.tools.register`。
 - **worker 不会被污染**：执行器的工具目录是按 `WORKER_TOOL_NAMES` 白名单挑的
@@ -1382,7 +1392,7 @@ DSC 的后台作业表与 `subagent` 包都已存在，缺的是三处接线。
 - **主会话怎么认**：`project` 的第二个参数是 `AgentScope`（`src/packages/tools/index.ts:44-47`），
   按它判「这条会话是不是 superagent 的 worker」；工具内部再用 `ctx.sessionId` 兜一道
   （不是 worker 会话就抛一句人话），两道都过不了才是干净。
-- 验收：`tests/main-tools.test.mjs`，至少覆盖 route 四个分支（accept / attach / ignore / stop）、
+- 验收：`src/packages/superagent/tests/tools.test.mjs`，至少覆盖 route 四个分支（accept / attach / ignore / stop）、
   一个被拒的分支（`UserError` 转成 `refused` 而不是抛出去）、`requestStatus` 只对 idle 工单生效
   返回 true。全部用假 Engine，不起真会话。
 
@@ -1550,18 +1560,18 @@ src/packages/superagent/
   locale/ tests/ cordis.patch.yml package.json
 ```
 
-对照上游 `src/` 的 77 个非 core `.ts`（10,093 行）：本仓镜像树 85 个 `.ts`（13,896 行）。多出来的约 3,800 行是三类：DSC 宿主专有（`host/` 1,078 + `app/api.ts` 421 + `index.ts` 165）、原生重写替 DSH 服务写的等价实现（`sessions` 680→352 上游等）、以及逐文件的中文来源头。
+对照上游 `src/` 的 77 个非 core `.ts`（10,093 行）：本仓镜像树 85 个 `.ts`（14,420 行）。多出来的约 4,300 行是三类：DSC 宿主专有（`host/` 1,138 + `app/api.ts` 563 + `index.ts` 195）、原生重写替 DSH 服务写的等价实现（`sessions` 680→352 上游等）、以及逐文件的中文来源头。
 
 ### 18.2 两类移植的审计结论
 
-- **逐字类（47 文件）**：38 条 A 类路径经脚本归一（去中文头、`.js`→`.ts`、`policy→core/policy`）后逐行比对——26 个文件 0 差异；9 个只差「上游首行英文注释」，已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块来自不移植的 `app/api.ts`；`skill-files.ts` 用包根解析替代上游 `packagePath`）。`@deepseek-ai/*` import 0 处，残留 `.ts` import 0 处。`as unknown as` 4 处全是上游原文继承（`app/migration.ts`、`app/effects.ts`）。
+- **逐字类（47 文件）**：38 条 A 类路径经脚本归一（去中文头、`.js`→`.ts`、`policy→core/policy`）后逐行比对——26 个文件 0 差异；9 个只差「上游首行英文注释」，已把这 9 行补回原位；允许差异 2 处（`views/threads.ts` 的 `ThreadFilter` 块来自不移植的 `app/api.ts`；`skill-files.ts` 用包根解析替代上游 `packagePath`）。`@deepseek-ai/*` import 0 处，残留 `.ts` import 0 处。`as unknown as` 4 处全是上游原文继承（`app/migration.ts`、`app/effects.ts`）。**2026-11-17 对齐轮**把审计扩到全部 79 个可对照文件（排除不移植的 client / http / navigation / paths / 入口 / 上游 api）：归一化后 **47 个逐行相同**，4 处结构漂移已修（工具出口回 `Tool[]`、时钟可选、共享常量去重、`Key`/`Family` 缝消除），其余差异全部是宿主 API 替换或 §18.3 已登记的取舍，见 §18.8。
 - **原生类（22 文件）**：语义审计按「导出名/函数划分/判定顺序/错误文案/KV 键/会话 id/阈值」逐项比对，A 档（宿主 API 等价替换）106 处全部在文件头声明；B 档（行为偏差）9 条，其中 3 条已修：worker 最后发言提取改为上游的「最后一条 assistant 消息 + `join('\n')` + trim」（`app/sessions.ts`）、队友收尾判据从 `working` 放宽到非终态（`executor/background.ts`）、`ensure` 复用分支不再早退（补权限/标题/角色模型）。C 档（缺能力）7 条，按 DSC 是否需要逐条记为已知差异。
 
 ### 18.3 仍然存在的差异（原则：能对齐的都对齐了，剩下的写清影响）
 
 | 差异 | 影响 | 为什么不追平 |
 | --- | --- | --- |
-| `app/api.ts` 的 `acceptCandidate`/`ignoreCandidate` 抛错，快照无 `candidates` 格 | 面板上「推断候选先等确认」不可达；候选结论直接进主会话 | 新树把候选做成工具调用（`orchestrator_eval/route`），没有收件箱模型 |
+| 无候选收件箱：契约没有 `candidates` 格与两个候选 RPC，`PanelApi` 也没有 `acceptCandidate`/`ignoreCandidate` | 面板上「推断候选先等确认」不可达；候选结论直接进主会话 | 新树把候选做成工具调用（`orchestrator_eval/route`），没有收件箱模型；复审后已把残留的契约 / 白名单 / 界面 / 文案一并删除 |
 | `app/sessions.ts` 无 `retryHealth.restore` | 重启后模型预算重试状态从零 | 本仓无「会话事件序号快照」，恢复点不存在 |
 | `app/sessions.ts` 无 `limitSubagent` | worker 派出的队友不继承 WORK_TOOLS 白名单与「工单结束拒动」闸 | 需要 subagent 插件加白名单能力，属另一扩展点 |
 | `app/delivery.ts` 认领按正文而非消息 id | 两条同文 pending 会互认；跨重启后编辑过的排队消息重投会重复入箱一次 | 本仓 `Session` 收件箱没有消息 id，正文是唯一稳定锚点（文件头已声明） |
@@ -1571,13 +1581,21 @@ src/packages/superagent/
 | `sources/feishu-image.ts` 缺「模型不支持图片」前置拒绝 | 改为下载后由投影链剥图，用户看到的是替换说明 | `SourceAgent` 只有宿主类型，本层拿不到模型路由 |
 | `sources/github.ts`/`feishu.ts` 的 disposer 不同步等循环结束 | 停用瞬间注册表仍列该 kind | 本仓 cordis disposer 签名要求同步 |
 | `executor/background.ts` 用轮询替代作业事件、`stopping` 状态不存在 | 后台作业收尾最坏多等一个轮询周期 | 本仓 `JobsService` 只有 `running/completed/failed/killed` |
+| `executor/dsh.ts` 在 `untilQuiet` 报静默、且此前确有后台活时，自己投一句「你的后台作业/队友结束了」叫醒 worker | worker 多一轮「后台活结束」回合，能读 `job_output` 再报状态 | DSH 的作业登记表与子智能体服务负责这次唤醒；本仓完成通知只投给常驻 agent，worker 会话不在名册里，收不到（`executor/dsh.ts` 文件头第 1 条） |
+| `sources/host.ts` 的 `SourceAgent = unknown`（上游是 dsh 的 `Agent`） | 读图钩子签名与上游同形，但拿不到会话；`feishu-image.ts` 因此不做「模型不支持图片」的前置拒绝（见下面一行） | 本仓附件服务是全局的，钩子不用 agent；会话句柄类型在 `app/sessions.ts`，sources 不能反向依赖 app |
+| 执行器不自建 git worktree，也不建 `agent/<name>` 分支；工单目录是普通目录，`clean` 只删目录 | 默认 `executor.prepare` 为空时 worker 在空目录里开工；要分支与 PR 自动绑定，得在 prepare 里检出（`$DSH_SUPERAGENT_DIR` / `%DSH_SUPERAGENT_DIR%`） | 上游就是这一模型（上游 `client/locales.ts` 的 `prepareCommandHint`：目录由 prepare 命令创建、例如 `git worktree`）；宿主建树会与上游语义分叉，旧 `adapters/worktree.ts` 随之删除 |
+| Windows 上 `prepare` 以 `cmd.exe /d /s /c` 执行，且参数按 verbatim 传给 cmd（`runAsWorker` 的第 5 个参数） | 含引号的路径（`"C:\a b"`）能原样到达命令；POSIX 仍走 `sh -c` | 上游只跑 POSIX；node 默认的 Windows 参数转义会把命令里的 `"` 变成 `\"`，cmd 原样保留，导致带空格的路径解析失败（2026-11-17 实测） |
+| `surface().recent` 从已结束工单投影（`ended.at` + 结局词 + 报告摘要），最多 20 条 | 「最近动态」只含工单结束，不含开工 / 出站等旧窗口条目 | 上游没有旧 DSC 的内存通知窗口；用库里真实字段拼，不另造内存状态 |
+| `surface().settingsHistory` 由设置历史 revision 投影成逐字段行（点分键 + from/to） | 规则、准入表这类数组变化只显示 JSON 串，不如上游 `change.<code>` 细 | 本仓契约是逐字段行（界面按 `field.<key>.label` 取词），改成上游结构化 changes 要连带改契约与界面 |
+| 移植前的旧库（`PRAGMA user_version` = 4）不迁移：连同 `-wal`/`-shm` 旁置成 `<db>.legacy-<时间戳>` 后按新库启动，`report` 记一句 | 旧工单 / 候选不会出现在新面板（文件保留，可人工取） | 旧库行形状是旧领域模型，与上游 schema 11 不同构，逐行转换等于发明一套迁移；上游没有对应路径 |
+| 旧 `plugins.json` 的 `repoPath` / `ticketTimeoutSeconds` / `confirmInferred` / `githubTokenEnv` 不再生效，启动时告警一次 | 升级后按旧键配置的用户会看到「未完成部署检查」，需要在新设置分区重配 | 新配置模型是设置分区 + 来源实例（仓库在 GitHub 来源里配），旧键没有等价映射 |
 | HTTP 服务（`app/http.ts`）、面板 API（`app/api.ts` 上游版）、会话跳转（`navigation.ts`） | 不移植 | DSC 面板走 `INVOKABLE_METHODS` + 快照面，会话导航由 `ui-sessions` 提供 |
 
 ### 18.4 测试移植
 
 上游 48 份 vitest 规格（11,746 行）→ 本仓 30 份转写成 `node:test`（同一断言语义、真假件按本仓 API 重写），其余 18 份不移植：client 侧 5 份（`draft`/`marks`/`markdown`/`prompt-config`/`locales`，本仓界面是原生重写）、DSH 运行时集成 7 份（`runtime`/`runtime-concurrency`/`http`/`navigation`/`model-surface`/`index`/`service-script`）、文档与打包检查 5 份（本仓自带 `style-check`/`check-plugin`/`check:ui`/`check-docs` 等价闸门）、`bundle-patch` 1 份。
 
-当前：**92 个包 / 139 个用例 / 1696 条断言 / 0 失败**。
+当前：**92 个包 / 141 个用例 / 1,721 条断言 / 0 失败**（复审修复轮新增 `api-surface`、`plugin-config` 两份包级测试，`store` 补「旧库旁置」用例）。
 
 ### 18.5 验收证据
 
@@ -1585,9 +1603,11 @@ src/packages/superagent/
 npx tsc -p tsconfig.json --noEmit   → 0（14 s）
 pnpm run build                      → 0（408 桩 + 80 功能包，23 s）
 pnpm run build:ui                   → 0（22 份 bundle，372 份类型，46 s）
-node scripts/style-check.mjs        → 0（1,484 个文件）
-pnpm run check:ui                   → 0（79/79，77 s）
-pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL，166 s）
+node scripts/style-check.mjs        → 0（1,486 个文件）
+pnpm run check:ui                   → 0（79/79，69 s）
+pnpm run check:plugin               → 0（92 包 / 141 用例 / 1,721 断言 / 0 失败；换包 e2e 17 PASS / 0 FAIL）
+node scripts/check-core.mjs superagent-e2e-test.mjs superagent-candidate-e2e-test.mjs superagent-worker-e2e-test.mjs
+                                    → 0（3/3：28/28、29/29、26/26，合计 72.5 s）
 ```
 
 ### 18.6 「加第三种来源」验收切片
@@ -1600,3 +1620,59 @@ pnpm run check:plugin               → 0（92 包 / 139 用例 / 1696 断言 / 
 4. **体检自动多一项**：注册表替它领 `health: ['webhook']` 格子，`report` 状态变化可见。
 
 为此给主包 `package.json` 开了 `./sources/*.js` 子路径导出（第三方插件只 import 契约类型），插件标准检查只放行这一种形状，依赖图对纯类型 import 免 feature→feature 判定。
+
+### 18.7 复审修复轮（2026-11-17）
+
+代码复审提出 7 条（P1×3、P2×3、P3×1）。逐条核实后 7 条现象全部属实；其中 6 条改代码，1 条（执行器不建 worktree）
+判定为「文档与文案漂移」——代码与上游一致，修的是本仓残留的设计文档、locale 文案与死代码。
+复审判定 P1 的「三条 e2e 必挂」属实（实测 7/10、7/12、7/9），已按新架构重写。
+
+| 复审条目 | 核实结论 | 处理 |
+| --- | --- | --- |
+| P1 执行器不再建 worktree、prepare 在父目录先跑 | 属实；但这是上游行为（上游 `prepareCommandHint` 明说目录由 prepare 建） | 不回退代码：删死代码 `worktreesDir()`、改 locale 两处文案、修 `api.ts` 注释、补 §18.3 差异行、改 §6.2.3 与移植计划 §3 |
+| P1 旧库与旧 `plugins.json` 无迁移路径 | 属实：旧库 `user_version` 被无视，直接写 schema 11；旧键静默忽略 | 旧库旁置成 `.legacy-<时间戳>` 后新建（`report` 记一句，测试覆盖）；旧键启动告警一次（`legacyPluginKeys` + 测试） |
+| P1 三条 e2e 探针未迁移，`check:core` 必挂 | 属实（7/10、7/12、7/9） | 三条全部按新架构重写：settings 播种、假 gh、prepare 检出、主会话工具回合、飞书 bot 推断自动接单；28/28、29/29、26/26 |
+| P2 快照面缺 `settingsHistory` | 属实 | `surface()` 从 `store.settingsHistory(30)` 投影成逐字段行（只比相邻 revision） |
+| P2 候选收件箱已删但界面/契约/README 仍写 | 属实 | 契约、RPC 白名单（`host-methods`/`ui-methods`）、`PanelApi`、界面、locale、README、测试一并删除 |
+| P2 发布页 `base` 被静默忽略 | 属实 | 契约、界面、locale 删除（上游没有起点分支；检出由 prepare 负责） |
+| P3 快照面 `recent` 恒空 | 属实 | 从已结束工单投影（`ended.at` 升序、结局词 + 摘要、上限 20） |
+
+顺带修掉复审之外的一处 Windows 缺陷：`prepare` 走 `cmd.exe /d /s /c` 时 node 默认参数转义会把命令里的
+引号变成 `\"`，带空格的路径直接失败（实测）；`runAsWorker` 加第 5 个参数按 verbatim 传给 cmd，已写进 §18.3。
+
+### 18.8 上游对齐轮（2026-11-17）
+
+复审修完之后又做了一遍**全量对照**：拿上游 `dsh-superagent/src` 与本仓 `src/packages/superagent` 逐文件比，
+归一化规则是「去块注释与行注释、去 import 行、压缩空白」，用 `difflib` 算真实增删行（不是按行号硬对）。
+排除不移植的 `client/**`、`app/http.ts`、`navigation.ts`、`infra/paths.ts`、上游 `index.ts` 与上游 `app/api.ts`，
+可对照 **79 个文件**。
+
+结果：**47 个文件归一化后逐行相同**。其余 32 个分三类：
+
+| 类别 | 文件 | 结论 |
+| --- | --- | --- |
+| DSH 宿主 API 替换（必须不同） | `app/sessions`、`app/delivery`、`executor/background`、`executor/dsh`、`app/resources`、`app/runtime`、`infra/environment`、`deployment`、`app/setup`、`app/role-models`、`app/assessment`、`app/context` | 模块边界、导出名、判定顺序照上游；换掉的是 `ctx.agents` / `ctx.jobs` / `ctx.subagents` / `ctx.subprocess` / `sessionController` 这些 DSH 服务 |
+| 本仓专有（§18.3 已登记） | `app/store`（旧库旁置）、`app/api`（面板服务层）、`sources/github` / `feishu`（disposer 同步）、`sources/feishu-image`（无模型前置拒绝）、`views/threads`（筛选常量落位）、`core/index` 与 `policy` 的 import 行 | 有意为之 |
+| 结构漂移（本轮修掉） | `app/tools/main`、`app/tools/executor`、`core/part`、`core/policy`、`sources/host` | 见下 |
+
+四处结构漂移的处理：
+
+1. **工具出口回到上游形状**：`mainTools` / `executorTools` 返回 `Tool[]`，`ToolEntry` 转换（`z.toJSONSchema`、risk 分级、`image` 附件转 data URL）挪到 `app/sessions.ts` 的 `toolDirectory`，与上游 `Sessions.registerTool` 同一位置；测试改用导出的 `toolEntries` 走同一份转换。这两个文件现在与上游零差异。
+2. **时钟恢复上游口径**：`EngineOptions.now` 改回可选、缺省 `new Date().toISOString()`（运行期仍注入固定时钟，测试确定性不变）。
+3. **共享常量不再本地重抄**：`core/policy.ts` 的 `sameName` / `WORKER_COMMANDS` 改从 `infra/text.ts`、`infra/environment.ts` 取，与上游同一来源——此前两份清单靠人肉同步，`blockedCommands` 校验与 shim 生成一旦分叉就是静默错误。
+4. **`Key`/`Family` 过渡缝消除**：`sources/host.ts` 改从 `kv.ts` 取，移植计划 §0.1 的 P9-C 缝关闭。
+
+两处**有意保留**的偏差，已写进 §18.3：`executor/dsh.ts` 的 `wake`（本仓作业完成通知到不了 worker 会话，执行器自己叫醒它）与 `sources/host.ts` 的 `SourceAgent = unknown`（来源读图钩子不用会话，反向依赖 app 会成环）。
+
+验收（本轮复跑）：
+
+```
+npx tsc -p tsconfig.json --noEmit   → 0
+pnpm run build                      → 0（408 桩 + 80 功能包）
+node scripts/package-tests.mjs      → 92 包 / 141 用例 / 1,721 断言 / 0 失败
+node scripts/style-check.mjs        → 0（1,486 个文件）
+pnpm run check:plugin               → 0（换包 e2e 17 PASS / 0 FAIL）
+三条 e2e                            → 28/28、26/26、29/29
+```
+
+提交：`238d4899`（对齐）+ `333be0b2`、`8698062c`、`756595b4`、`bdfcf63a`（复审修复轮）。

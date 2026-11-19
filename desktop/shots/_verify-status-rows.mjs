@@ -275,7 +275,7 @@ try {
   assert('详情不越出行右缘（差 > 1px 就是铺出界）',
     detailInfo.present === true && detailInfo.detailRight <= detailInfo.rowRight + 1,
     `detailRight=${String(detailInfo.detailRight)} rowRight=${String(detailInfo.rowRight)}`)
-  assert('详情宽度只比行少两侧内距（行内 8 + 4 = 12px，容差 2px）',
+  assert('详情宽度只比行少两侧内距（行内 8 + 8 = 16px，容差 2px）',
     detailInfo.present === true && (detailInfo.rowWidth - detailInfo.detailWidth) >= 8
     && (detailInfo.rowWidth - detailInfo.detailWidth) <= 18,
     `${String(detailInfo.rowWidth)} − ${String(detailInfo.detailWidth)} = ${String(detailInfo.rowWidth - detailInfo.detailWidth)}`)

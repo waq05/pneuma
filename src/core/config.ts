@@ -340,6 +340,32 @@ export function writeWorkspaceRootsConfig(text: string): WorkspaceRootsConfig {
 const DSC_CONFIG_JSON = dscPath('config.json')
 
 /**
+ * 按名字取一个凭据：`process.env` → `~/.dsc/credentials.yaml` 的 refs → `~/.dsh/.credentials.yaml`。
+ *
+ * 与 {@link loadCredentials} 是同一条优先级，区别是这里**现读现取、不往 process.env 里注**：
+ * 插件在运行中才用到 key（比如联网搜索每次调用都读一遍），靠「启动时注过 env」这种时序巧合
+ * 会出问题——插件比读配置早挂载一个节拍，key 就是空的。任何情况下都不打印 key 本身。
+ *
+ * @param name 凭据名（就是环境变量的名字，例如 `DEEPSEEK_API_KEY`）
+ * @returns 取到的 key；哪一处都没配就是空串
+ */
+export function resolveCredentialRef(name: string): string {
+  const fromEnv = process.env[name]
+  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
+  for (const file of [DSC_CREDENTIALS, DSH_CREDENTIALS]) {
+    if (!existsSync(file)) continue
+    try {
+      const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as { refs?: Record<string, unknown> }
+      const value = doc.refs?.[name]
+      if (typeof value === 'string' && value.trim() !== '') return value.trim()
+    } catch {
+      // 单个凭据文件坏了不影响另一个
+    }
+  }
+  return ''
+}
+
+/**
  * 把凭据库的 refs 段（env 名 → key 值）注入 process.env：dsc 自己的
  * 凭据文件优先，dsh 的作兼容回退。只注入缺失项。
  */

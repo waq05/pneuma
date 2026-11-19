@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   verify:
-    name: 校验 tag 与三处 package.json 版本一致
+    name: 校验 tag 与版本口径（scripts/version-sites.json）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: 版本四方对账（tag / 根 / desktop / ui-shell）
+      # 版本口径的唯一来源是 scripts/version-sites.json（tag / 根 / desktop / ui-shell + src/packages 包组）。
+      # 这条与下面「旧 shell」并存一次发版：两条都跑、都绿才许发；确认新脚本连跑两版无异常后再删旧 step。
+      # 注意 checkout 默认浅克隆，git describe 在 CI 里可能看不到 tag，所以这里显式传 --tag。
+      - name: 版本对账（version-sites.json，与旧 shell 并存一次发版）
+        run: node scripts/version-check.mjs --tag "${GITHUB_REF_NAME#v}"
+      - name: 版本四方对账（旧 shell，与 version-check 并存一次发版）
         run: |
           tag="${GITHUB_REF_NAME#v}"
           root="$(node -p "require('./package.json').version")"
