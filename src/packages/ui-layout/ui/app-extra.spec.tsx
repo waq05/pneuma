@@ -771,7 +771,7 @@ describe('异常态：连接、宿主与诊断', () => {
 })
 
 describe('队友面包屑与其他入口', () => {
-  test('shell.teammate.view 换顶栏标题；点父会话先发退出事件再 openSession', () => {
+  test('shell.teammate.view 换顶栏标题；点父会话 openSession 回去', () => {
     const harness = makeChannel()
     const { container } = mount(harness)
     const detail = { name: '小队友', parentTitle: '父会话', parentPath: 'C:/s/parent.jsonl' }
@@ -784,15 +784,12 @@ describe('队友面包屑与其他入口', () => {
     expect(crumbs.getAttribute('aria-label')).toBe('会话层级')
     expect(textOf(crumbs.querySelector('.crumb-link'))).toBe('父会话')
     expect(textOf(crumbs.querySelector('.crumb-current'))).toBe('小队友')
-    expect(textOf(crumbs.querySelector('.crumb-badge'))).toBe('只读')
+    // 2026-11-19：正文区就是队友那条真会话，不再挂「只读」小标（能不能说话由输入区自己显示）。
+    expect(crumbs.querySelector('.crumb-badge')).toBeNull()
     expect(container.querySelector('.topbar .title')).toBeNull()
 
-    const exited = vi.fn()
-    window.addEventListener('shell.teammate.exit', exited)
     fireEvent.click(crumbs.querySelector('.crumb-link') as HTMLElement)
-    expect(exited).toHaveBeenCalledTimes(1)
     expect(harness.calls).toContainEqual({ method: 'openSession', args: ['C:/s/parent.jsonl'] })
-    window.removeEventListener('shell.teammate.exit', exited)
 
     // 重复同一份 detail 不重画；detail=null 还原普通标题。
     act(() => {
@@ -806,7 +803,7 @@ describe('队友面包屑与其他入口', () => {
     expect(textOf(container.querySelector('.topbar .title'))).toBe('新会话')
   })
 
-  test('父会话路径为空时只发退出事件，不调 openSession', () => {
+  test('父会话路径为空时点左段什么都不做（不调 openSession）', () => {
     const harness = makeChannel()
     const { container } = mount(harness)
     act(() => {

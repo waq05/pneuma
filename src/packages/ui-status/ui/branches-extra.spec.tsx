@@ -425,23 +425,30 @@ describe('失败回执与子智能体兜底', () => {
     expect(toastText()).toContain(zh['status.toast.workStopped'].replace('{id}', 'job-1'))
   })
 
-  test('没有 teammateReader 服务：点队友退回右栏 subagent 页签；全员收工时读数换「共 N」', async () => {
-    const dispose = registerDockTab({ kind: 'subagent', label: '子会话', component: (() => null) as never })
-    try {
-      const harness = harnessOf({ teammates: [mate({ name: 'idle-1', state: 'idle' }), mate({ name: 'failed-1', state: 'failed' })] })
-      mountPanel(harness)
-      await flush()
-      expandSection('agent')
-      expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe(
-        zh['status.agent.trailCount'].replace('{n}', '2'),
-      )
-      fireEvent.click(section('agent')?.querySelector('.sp-row-open') as HTMLElement)
-      const tab = dockSurface().panes[0]?.tabs.find((item) => item.kind === 'subagent')
-      expect(tab?.path).toBe('C:/sessions/idle-1.jsonl')
-      expect(tab?.label).toBe('idle-1')
-    } finally {
-      dispose()
-    }
+  test('点队友走宿主的 openTeammate；宿主不认这条方法时退回 openSession（不静默）；全员收工时读数换「共 N」', async () => {
+    const harness = harnessOf({ teammates: [mate({ name: 'idle-1', state: 'idle' }), mate({ name: 'failed-1', state: 'failed' })] })
+    mountPanel(harness)
+    await flush()
+    expandSection('agent')
+    expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe(
+      zh['status.agent.trailCount'].replace('{n}', '2'),
+    )
+    fireEvent.click(section('agent')?.querySelector('.sp-row-open') as HTMLElement)
+    await flush()
+    expect(callsOf(harness, 'openTeammate')[0]?.args).toEqual(['idle-1'])
+  })
+
+  test('旧宿主没有 openTeammate：点队友退回 openSession（那条会话文件），不出现「点了没反应」', async () => {
+    const harness = harnessOf({
+      teammates: [mate({ name: 'idle-1', state: 'idle' })],
+      reject: { openTeammate: new Error('协议不允许调用的方法：openTeammate') },
+    })
+    mountPanel(harness)
+    await flush()
+    expandSection('agent')
+    fireEvent.click(section('agent')?.querySelector('.sp-row-open') as HTMLElement)
+    await flush()
+    expect(callsOf(harness, 'openSession').map((call) => call.args[0])).toEqual(['C:/sessions/idle-1.jsonl'])
   })
 })
 

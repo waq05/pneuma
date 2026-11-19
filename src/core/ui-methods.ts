@@ -169,6 +169,8 @@ export const UI_METHODS = [
   'runSettingAction',
   // 队友
   'listTeammates',
+  // 点开一位队友：与 listTeammates 同一档（不写文件、不改配置，只切「当前看哪条会话」）
+  'openTeammate',
   // 任务板（状态面板「共享任务」分区）：只读；改任务仍旧只走模型的 team_task 工具
   'listTeamBoard',
   'stopTeammate',
@@ -421,6 +423,8 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   runSettingAction: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'string', max: MAX_NAME } }],
   // ── 队友 ──────────────────────────────────────────────────────────────────
   listTeammates: [],
+  // 点开一位队友（名字同队友名）
+  openTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],
   // 任务板：只读一次当前会话的板（无参数；写仍旧只走模型的 team_task）
   listTeamBoard: [],
   stopTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],

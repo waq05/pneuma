@@ -733,7 +733,7 @@ function SessionTitle(): ReactNode {
 }
 
 /**
- * 正文区正在看队友运行记录时，顶栏要的那两段（team 插件经 `window` 事件递上来）。
+ * 正文区正在看队友的会话时，顶栏要的那两段（team 插件经 `window` 事件递上来）。
  *
  * 为什么走 window 事件而不是服务表：布局这层不是插件（它拿不到 `ui.provide` 的消费面），
  * 而壳里跨「插件 ↔ 外壳」的既有通路就是 `window` 事件（`shell.palette.open` /
@@ -745,14 +745,12 @@ interface TeammateCrumbsView {
   name: string
   /** 派它的会话标题（左段，点一下回原会话）。 */
   parentTitle: string
-  /** 派它的会话 jsonl 绝对路径；查不到时 null（那时点左段只关掉只读层）。 */
+  /** 派它的会话 jsonl 绝对路径；查不到时 null（那时点左段什么都不切）。 */
   parentPath: string | null
 }
 
 /** 面包屑的出现 / 消失（detail 为 null 表示「正文区回到普通会话」）。 */
 const TEAMMATE_HINT_EVENT = 'shell.teammate.view'
-/** 请正文区那层只读视图关掉（顶栏左段点一下就发它）。 */
-const TEAMMATE_EXIT_EVENT = 'shell.teammate.exit'
 
 /**
  * 订阅「正文区正在看谁的运行记录」。
@@ -787,13 +785,12 @@ function useTeammateCrumbs(): TeammateCrumbsView | null {
 }
 
 /**
- * 顶栏的层级面包屑（对照 dsh 的 `nav.crumbs`）：`父会话标题 / 队友名` + 一枚「只读」小标。
+ * 顶栏的层级面包屑（对照 dsh 的 `nav.crumbs`）：`父会话标题 / 队友名`。
  *
- * 左边那节是**回原会话**的唯一出口（正文区被只读层盖住了，输入区也在盖子下面）：
- * 点它先请 team 插件关掉那层，再 `openSession(父会话路径)`——当前本来就是父会话时
- * 宿主对「已经在看这条」直接短路（`plugins/session` 的 open 首行），所以这一步是无害的
- * 兜底（用户在看队友记录时从侧栏切去了别的会话，只读层会自动关，那时这一步才真切）。
- * 右边那节不可点：它就是「现在在哪」。
+ * 左边那节是**回原会话**的出口：点它 `openSession(父会话路径)`——队友会话不进侧栏，
+ * 没有这一下就只能靠 Ctrl+P 找回去。当前本来就是父会话时宿主对「已经在看这条」直接短路。
+ * 右边那节不可点：它就是「现在在哪」。这一屏有没有接话的人不在这里说（不挂「只读」小标）：
+ * 输入区自己会显示出只读说明，顶栏再挂一枚只会让人以为整条会话不能动。
  */
 function TeammateCrumbs({ view }: { view: TeammateCrumbsView }): ReactNode {
   const channel = useHostChannel()
@@ -804,7 +801,6 @@ function TeammateCrumbs({ view }: { view: TeammateCrumbsView }): ReactNode {
         className="crumb crumb-link"
         data-tip={t('layout.crumb.parentTip')}
         onClick={() => {
-          window.dispatchEvent(new CustomEvent(TEAMMATE_EXIT_EVENT))
           if (view.parentPath === null) return
           void channel.invoke('openSession', [view.parentPath]).catch(() => undefined)
         }}
@@ -817,7 +813,6 @@ function TeammateCrumbs({ view }: { view: TeammateCrumbsView }): ReactNode {
       <span className="crumb crumb-current" aria-current="page">
         {view.name}
       </span>
-      <span className="crumb-badge">{t('layout.crumb.readonly')}</span>
     </span>
   )
 }

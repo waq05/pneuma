@@ -23,8 +23,9 @@
  *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
  *   前后折成折叠桶，hover 出预览卡）。
  * - **智能体区是「子智能体列表」**（2026-11-06 与标题旁对调：标题旁那颗现在是「智能体团队」
- *   入口）：一行一个队友（名字 / 角色 / 状态），点一行在**正文区**只读打开它的完整运行记录
- *   （经 team 插件的 `teammateReader` 服务；在跑的队友也能打开，边跑边看）。
+ *   入口）：一行一个队友（名字 / 角色 / 状态），点一行在**正文区打开它那条真会话**
+ *   （2026-11-19 起走宿主的 `openTeammate`：收工的可续接队友先被复活，打开后输入框能直接
+ *   接着说话；行尾在跑的给停止、收工的给移除）。
  *   空列表给一句人话，不留一张空表。
  *
  * ## 为什么挂在 `shell.main` 槽里却画到顶栏页签行
@@ -50,7 +51,7 @@
  * - **工作流**：快照的 `surfaces.scheduled`。dsc 没有工作流引擎，这一区绑的是最接近的
  *   「按规则自动跑一轮」——定点任务；schedule 插件默认关着，关着时整区不渲染。
  * - **智能体**：`listTeammates`（team 插件开着时经共享席位读，缺席才回落到 5 秒轮询）；
- *   点一行由 `teammateReader` 服务在正文区打开它的只读运行记录。
+ *   点一行打开它那条真会话（收工的可续接队友由宿主先复活），与主会话同一套界面。
  *
  * 纯派生规则（聚焦窗口 / 折叠桶 / 胶囊优先级链 / 时长与倒计时）在 `./status-model.ts`，
  * 由 `scripts/ui-status-panel-test.mjs` 逐条钉住。
@@ -77,14 +78,15 @@ import {
   IconStop,
   IconTarget,
   IconTerminal,
+  IconTrash,
   IconTree,
   SLOT,
+  confirmAction,
   createT,
   defineUiPlugin,
   openDockTab,
   registerDockTab,
   setDockPreview,
-  setDockSubagent,
   setDockWorkOutput,
   toastErr,
   toastOk,
@@ -343,18 +345,6 @@ type MateSeatHandle = StoreHandle<MateSeatState, ActionsDecl<MateSeatState>>
 
 /** 服务名（provider 是 team 插件；缺席时回落到本地轮询）。 */
 const TEAMMATES_SERVICE = 'teammates'
-/** 服务名（provider 是 team 插件：在正文区只读打开一位队友的运行记录）。 */
-const TEAMMATE_READER_SERVICE = 'teammateReader'
-
-/**
- * team 插件经服务表给出去的「看运行记录」口子。
- *
- * 在跑的队友也直接打开（2026-11-09 拆掉了「等它收工」那道门：读的是 `peekTranscript`
- * 的 `lease: false` 只读重放，收工之后跟读自己停），所以状态面板这边只管点一下就叫它。
- */
-interface TeammateReaderService {
-  open(mate: TeammateView): void
-}
 
 export default defineUiPlugin({
   name: t('status.plugin.name'),
@@ -625,9 +615,6 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
   // `useService` 订阅服务表的出现/消失，所以 team 启停后自动切源，不需要刷新页面。
   const seat = useService<MateSeatHandle>(TEAMMATES_SERVICE)
-  // 正文区只读运行记录的口子（team 插件提供）：点一行队友就打开它；服务缺席时退回右栏
-  // 页签（老路，仍是只读面）——绝不出现「点了没反应」。
-  const mateReader = useService<TeammateReaderService>(TEAMMATE_READER_SERVICE)
   const instance = useMemo(
     () => (seat === undefined ? undefined : slots.seat(seat)),
     [slots, seat],
@@ -1089,6 +1076,38 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       .catch((reason: unknown) => toastErr(t('status.toast.mateStopFailed', { message: reason instanceof Error ? reason.message : String(reason) })))
   }
 
+  /**
+   * 点一行队友：打开它那条真会话（2026-11-19）。
+   *
+   * 走宿主的 `openTeammate` 而不是「打开文件」：收工的可续接队友要在这一步先被复活一份
+   * 循环，打开后才能直接在输入框里接着说话（见 packages/subagent 的 reviveTeammate）。
+   * 这个口子缺席（team 插件没装/旧宿主）时退回 `openSession`——至少记录看得到，不静默。
+   */
+  const openMate = (mate: TeammateView): void => {
+    void channel
+      .invoke('openTeammate', [mate.name])
+      .catch(() => channel.invoke('openSession', [mate.file]).catch(() => undefined))
+  }
+
+  /** 把一个收工的队友从名册移除（运行记录文件一并删除）。 */
+  const removeMate = (mate: TeammateView): void => {
+    void (async () => {
+      const ok = await confirmAction({
+        title: t('status.agent.removeTitle', { name: mate.name }),
+        detail: t('status.agent.removeDetail'),
+        confirmLabel: t('status.agent.remove'),
+        danger: true,
+      })
+      if (!ok) return
+      try {
+        await channel.invoke('removeTeammate', [mate.name])
+        toastOk(t('status.agent.removed', { name: mate.name }))
+      } catch (reason) {
+        toastErr(t('status.agent.removeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+      }
+    })()
+  }
+
   /** 收掉一个正在跑的后台作业 / 终端会话（「终端」区行尾的停止钮）。 */
   const stopWork = (work: BackgroundWorkView): void => {
     void channel
@@ -1351,12 +1370,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                     toggleSection('agent')
                   }}
                   onStop={stopMate}
-                  onOpen={(mate) => {
-                    // 主路：正文区只读打开（team 插件的 `teammateReader`）。服务缺席（team 没装 /
-                    // 被停用）时退回右栏页签——那条也是只读面，比点了没反应强。
-                    if (mateReader === undefined) setDockSubagent({ path: mate.file, label: mate.name })
-                    else mateReader.open(mate)
-                  }}
+                  onRemove={removeMate}
+                  onOpen={openMate}
                 />
               ) : null}
               {showTeam && board !== null ? (
@@ -1777,8 +1792,9 @@ function FoldPreviewCard({
  * 名字仍是最宽的一格；一次性的在角色后多一个「一次性」小标。耗时在跑时按秒走
  * （`now` 由面板的快档时钟推），收工的按 `finishedAt` 冻结。
  *
- * 点一行在**正文区**只读打开它的完整运行记录（`teammateReader` 服务；在跑的也能打开，
- * 边跑边看，收工后跟读自己停）。行尾仍留一颗停止钮（在跑的才有），各自 stopPropagation。
+ * 点一行在**正文区**打开它那条真会话（2026-11-19 起走 `openTeammate`：收工的可续接队友
+ * 由宿主先复活，打开后输入框能直接接着说话）。行尾一颗钮：在跑的给停止，收工的给移除，
+ * 各自 stopPropagation。
  *
  * 一条队友都没有时**整区不画**（判在 StatusPanel 那一层）：没有空态文案，也不留空表——
  * 2026-11-08 需求「没派就隐藏，等用到再展示」。与「共享任务」区是两件事：这里说
@@ -1792,6 +1808,7 @@ function AgentSection({
   separated,
   onToggle,
   onStop,
+  onRemove,
   onOpen,
 }: {
   mates: readonly TeammateView[]
@@ -1801,6 +1818,7 @@ function AgentSection({
   separated: boolean
   onToggle(): void
   onStop(mate: TeammateView): void
+  onRemove(mate: TeammateView): void
   onOpen(mate: TeammateView): void
 }): ReactNode {
   // 在跑的排前面（点开要给提示的那几条不该被收工的一堆压到下面），同档按派活先后。
@@ -1875,7 +1893,23 @@ function AgentSection({
                 >
                   <IconStop size={12} />
                 </button>
-              ) : null}
+              ) : (
+                // 收工的：名册里的「移除」入口。它以前在正文区那层只读视图的头部，
+                // 2026-11-19 那层撤掉之后回到列表行尾——一处一个动作，不重复。
+                <button
+                  type="button"
+                  className="sp-row-remove"
+                  aria-label={t('status.agent.removeAria', { name: mate.name })}
+                  data-tip={t('status.agent.removeTip')}
+                  data-sp-agent-remove=""
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onRemove(mate)
+                  }}
+                >
+                  <IconTrash size={12} />
+                </button>
+              )}
             </li>
           )
         })}

@@ -50,12 +50,6 @@
       "owner": "界面"
     },
     {
-      "file": "src/packages/ui-team/ui/ui.tsx",
-      "line": 432,
-      "reason": "队友操作封装：停止/发消息/移除共用一条通道，方法名由调用点传入",
-      "owner": "界面"
-    },
-    {
       "file": "desktop/electron/main/index.ts",
       "line": 861,
       "reason": "ipcMain.handle('dsc:invoke') 的转发：目标方法名来自渲染器，主进程只把白名单判断交给宿主",

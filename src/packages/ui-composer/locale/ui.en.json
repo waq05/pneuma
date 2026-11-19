@@ -124,6 +124,8 @@
   "placeholder.blocked": "Waiting for approval…",
   "placeholder.working": "Turn in progress: Enter queues the message, Ctrl+Enter steers (interrupts the current output)",
   "placeholder.idle": "Send a message; @ to reference files; paste or drop images, videos, or files; Enter to send, Ctrl+Enter to steer",
+  "readonly.title": "This run log is read-only",
+  "readonly.body": "Nobody is listening on this session any more (the teammate has finished). Scroll up to read the whole run; to keep the work going, spawn another one from the parent session.",
   "input.aria": "Message input",
   "slash.aria": "Command suggestions",
   "slash.loading": "Reading commands…",

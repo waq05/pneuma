@@ -79,6 +79,14 @@ export interface StatusView {
    * （见 ui-shell 的 plugins/composer/draft.ts）。
    */
   sessionUnsaved?: boolean
+  /**
+   * 当前会话有没有能接住用户输入的一方（2026-11-19）：常驻 agent，或队友自己那个循环
+   * （`agent.acceptsInput`）。没有 = 输入框该换成只读说明——收工的队友、一次性的子智能体
+   * 都属于这一类：会话能打开、记录能看，但没有谁接这句话。
+   *
+   * 缺省（老宿主不给这一项）= 能输入，界面按正常输入框画。
+   */
+  acceptsInput?: boolean
 }
 
 /** 档位按钮的一项：档位 id + 按钮文字 + 悬浮说明。 */

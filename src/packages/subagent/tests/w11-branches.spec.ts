@@ -157,6 +157,8 @@ function fakeCtx(config?: Record<string, unknown>): Harness {
   const systems: Harness['systems'] = []
   const emitted: Harness['emitted'] = []
   const followups: Harness['followups'] = []
+  /** 队友会话的外部驱动登记（attach 记、detach 摘）：断言看它。 */
+  const attached = new Map<string, unknown>()
   const effects: Array<() => void> = []
   const parent = newSession()
   cleanups.push(() => {
@@ -258,6 +260,14 @@ function fakeCtx(config?: Record<string, unknown>): Harness {
         return alt !== undefined && alt.meta.id === id ? alt : undefined
       },
       hasAgent: () => false,
+      // 2026-11-18/19：队友会话按「外部驱动的一等会话」登记，假宿主只管把登记记下来供断言看。
+      attach: (session: { meta: { id: string } }, driver?: unknown) => {
+        attached.set(session.meta.id, driver)
+      },
+      detach: (sessionId: string) => {
+        attached.delete(sessionId)
+      },
+      acceptsInput: (sessionId: string) => attached.has(sessionId),
       followup: (text: string, _images?: unknown, sessionId?: string, origin?: string) => {
         followups.push({ text, ...(sessionId === undefined ? {} : { sessionId }), ...(origin === undefined ? {} : { origin }) })
       },

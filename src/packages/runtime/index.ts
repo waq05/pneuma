@@ -301,6 +301,14 @@ export const runtimePlugin: Plugin.Object = {
         return team.board(ctx.session.current().meta.id)
       },
 
+      openTeammate(name) {
+        // 与 stopTeammate 同一条理由：team 是可选服务，只能 ctx.get。
+        // 点开一位队友 = 打开它那条真会话；收工的可续接队友由 subagent 插件先复活再打开。
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('子智能体插件没开，没有队友可以打开'))
+        return team.open(name)
+      },
+
       stopTeammate(name) {
         // 与 listTeammates 同一条理由：team 是可选服务，只能 ctx.get
         const team = ctx.get('team')

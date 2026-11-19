@@ -379,6 +379,11 @@ export const transcriptPlugin: Plugin.Object = {
             sessionPath: ctx.session.current().filePath,
             // 一条消息都没发过 = 还没落盘：界面据此把输入框草稿记在工作区名下（见 contract 的说明）
             sessionUnsaved: ctx.session.current().messages.length === 0,
+            // 谁在接这句话（2026-11-19）：收工的队友会话没有驱动，输入框要换成只读说明。
+            // 用 acceptsInput 而不是 hasAgent：在册队友的循环不在常驻表里，hasAgent 会漏判。
+            // agent 不在 inject 里（转录层不依赖循环插件），走 ctx.get 取；缺席按「能输入」，
+            // 免得把「没装 agent 插件」也画成只读。
+            acceptsInput: ctx.get('agent')?.acceptsInput(ctx.session.current().meta.id) ?? true,
           },
           surfaces,
           sessions: ctx.session.sessions,

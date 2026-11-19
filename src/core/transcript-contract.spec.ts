@@ -423,6 +423,8 @@ describe('⑥ 快照与状态行', () => {
       cwd: 'D:\\ws',
       sessionPath: 'D:\\ws\\s.jsonl',
       sessionUnsaved: true,
+      // 2026-11-19：谁在接这句话（这个假内核没有 agent 服务 → 缺省按能输入）。
+      acceptsInput: true,
     })
     expect(snapshot.sessions).toStrictEqual([])
     expect(snapshot.sessionsLoading).toBe(false)

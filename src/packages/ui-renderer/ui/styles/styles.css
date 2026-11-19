@@ -3516,7 +3516,34 @@
   outline: none;
 }
 
-/* 分节底部的弱化动作行（「进程」区的清空清单）：靠右，只在分区展开时可见。 */
+/* 收工队友的「移除」（2026-11-19）：尺寸与停止钮同一格，悬停只变颜色。
+   不铺底色是同一理由（见上）。 */
+.sp-row-remove {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.sp-row-remove:hover {
+  background: none;
+  color: var(--dsc-red);
+}
+
+.sp-row-remove:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  color: var(--dsc-red);
+  outline: none;
+}
+
+/* 分节底部的弱化动作行（「进程」区的清空清单）：靠右、只在分区展开时可见。 */
 .sp-row-foot {
   display: flex;
   justify-content: flex-end;

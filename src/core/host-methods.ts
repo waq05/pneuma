@@ -39,6 +39,8 @@ export const INVOKABLE_METHODS = [
   'listPlugins',
   'setPluginEnabled',
   'listTeammates',
+  // 点开一位队友（2026-11-19）：正文区打开它那条真会话；收工的可续接队友先复活再打开
+  'openTeammate',
   // 状态面板「共享任务」分区的只读数据源（任务板按会话各一块，只读不写）
   'listTeamBoard',
   // 队友的界面管理通道（等价于 subagent 工具的 stop / message；远程白名单里没有它们）

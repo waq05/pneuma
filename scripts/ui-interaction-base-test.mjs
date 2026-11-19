@@ -110,11 +110,9 @@ console.log('[2] 弹层焦点管理')
   const settings = read(resolveUiHalf('settings') + '/ui.tsx')
   check('设置面板撤掉了原来的 window 级 Esc（不与 hook 双触发）', !settings.includes("window.addEventListener('keydown', onKey)"))
   const team = read(resolveUiHalf('team') + '/ui.tsx')
-  // 2026-11-08：名册模态撤了（入口统一到状态面板），只剩正文区那层只读视图——它的 Esc 仍归自己管。
-  check(
-    '正文区只读层的 Esc 仍是自己那一层（不进对话框基元）',
-    team.includes("if (event.key === 'Escape') closeReader()") && !team.includes('role="dialog"'),
-  )
+  // 2026-11-19：正文区那层只读视图撤了（点谁都开真会话），团队插件不再有浮层、
+  // 也不再自己管 Esc——整条正文区就是主会话那套，没有任何东西盖在它上面。
+  check('团队插件不再往正文区盖层（没有 portal / 窗口级 Esc）', !team.includes('createPortal(') && !team.includes("addEventListener('keydown'") && !team.includes('role="dialog"'))
 }
 
 // ── [3] 骨架屏 ────────────────────────────────────────────────────────────────
@@ -329,26 +327,28 @@ console.log('[8] 子智能体与智能体团队两分区的界面结构')
   check('团队插件在标题旁只剩常挂载的轮询宿主（不画按钮）', team.includes("id: 'team.entry'") && !team.includes('team-btn'))
   void teamOrder
   check('名册面板已撤（不再有模态与「其它会话」折叠组）', !team.includes('TeamPanel') && !team.includes('team.panel.others'))
-  check('只读层落在正文区（createPortal 到 [data-thread-area]）', team.includes('THREAD_AREA_SELECTOR') && team.includes('createPortal('))
-  // 2026-11-09：那道「在跑的队友等收工才能看」的门拆了（peek 本来就是 lease:false 的
-  // 只读重放）。四条一起钉：门与文案没了、open 直接放行、跟读拿到算出来的 working、
-  // 头部按名册跟住当前这一位。都落在真实代码文本上，不接受「永远为真」的断言。
-  check('在跑的队友也能打开（回绝那条键已从源码消失）', !team.includes('team.reader.busy'))
-  check('open 直接放行（不再按 state 回绝）', /open: \(mate: TeammateView\): void => \{\s*openReader\(mate\)\s*\}/.test(team))
+  // 2026-11-19：正文区不再盖只读层。点一行走宿主的 `openTeammate`（收工的可续接队友
+  // 由宿主先复活），正文区就是队友那条真会话；团队插件只剩轮询 + 面包屑两件事。
+  check('正文区不再盖只读层（没有 [data-thread-area] 落点与 portal）', !team.includes('THREAD_AREA_SELECTOR') && !team.includes('createPortal(') && !team.includes('team-reader'))
+  check('点开交给宿主（状态面板调 openTeammate，不再有 openReader）', !team.includes('openReader') && status.includes("invoke('openTeammate'"))
   check(
-    '跟读拿到算出来的 working（不是字面 false）',
-    team.includes("const working = mate !== null && mate.state === 'working'") &&
-      team.includes('<FlowHost flow={flow} file={mate.file} working={working} />') &&
-      team.includes('<PeekView file={mate.file} working={working} />') &&
+    '面包屑按当前会话路径认人（不再靠点下去那一刻的快照）',
+    team.includes('function TeammateCrumb') &&
+      /mates\.find\(\(row\) => sameFile\(row\.file, currentPath\)\)/.test(team) &&
+      team.includes('READER_HINT_EVENT'),
+  )
+  // 右栏的子智能体页签仍是只读重放：跟读按名册状态算 working，收工即停。
+  check(
+    '右栏页签仍是只读重放（working 跟着名册算）',
+    team.includes("const working = mate?.state === 'working'") &&
+      team.includes('<FlowHost flow={flow} file={file} working={working} />') &&
+      team.includes('<PeekView file={file} working={working} />') &&
       !team.includes('working={false}'),
   )
   check(
-    '运行记录按名册找当前这一位（收工后头部跟着翻）',
-    /mates\.find\(\(row\) => sameFile\(row\.file, snapshot\.file\)\)/.test(team) &&
-      team.includes('<TeammateReader mates={list} />'),
+    '名册行尾：在跑给停止、收工给移除',
+    status.includes('data-sp-agent-remove') && status.includes("invoke('removeTeammate'") && status.includes("invoke('stopTeammate'"),
   )
-  check('换会话自动关掉只读层', /openedFor\.current !== sessionId[\s\S]{0,60}?closeReader\(\)/.test(team))
-  check('运行记录页头部能发话 / 停止 / 移除（名册面板撤掉后的唯一落点）', team.includes('function ReaderActions') && team.includes("act('stopTeammate'") && team.includes("act('messageTeammate'") && team.includes("act('removeTeammate'"))
 
   // 两个分区是两件事：成员区的标题叫「子智能体」，任务区的标题叫「智能体团队」，各有自己的钩子。
   check('成员区与任务区是两个独立的 SectionId', status.includes("'agent' | 'team'") && status.includes('<TeamBoardSection'))

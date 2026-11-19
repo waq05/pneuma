@@ -3447,6 +3447,31 @@ span.tc-web-link {
   opacity: 0.55;
 }
 
+/* 只读会话的输入位（2026-11-19）：收工的队友 / 一次性子智能体。
+   不是把 textarea 灰掉——那种框看着像「等一下还能打」。这里换成一行说明，位置、宽度、
+   描边与输入框同一套（顶替它，不是另占一格），对照 dsh 的 SubagentReadOnlyComposer。 */
+.composer-readonly {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 10px 12px;
+}
+
+.composer-readonly-title {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  font-weight: 600;
+}
+
+.composer-readonly-body {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  line-height: var(--dsc-lh-caption, 18px);
+  min-width: 0;
+}
+
 .composer-bar {
   align-items: center;
   display: flex;

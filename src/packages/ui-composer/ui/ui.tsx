@@ -90,7 +90,7 @@ import { BranchMenu } from './branch-menu'
 import { useModelControls } from './model-controls'
 import { NoticeStrip } from './notice-strip'
 import { QueueDock } from './queue-dock'
-import { readDraftCwd, readGit, readHasApproval, readInboxCount, readPermissionPresets, readPresetSurface, readSessionId, readSessionPath, readSessionUnsaved, samePermissionPresets, samePresetSurface } from './surfaces'
+import { readAcceptsInput, readDraftCwd, readGit, readHasApproval, readInboxCount, readPermissionPresets, readPresetSurface, readSessionId, readSessionPath, readSessionUnsaved, samePermissionPresets, samePresetSurface } from './surfaces'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
@@ -158,6 +158,12 @@ function ComposerBox(): ReactNode {
   const permissionPresets = useHostSelector(readPermissionPresets, samePermissionPresets)
   const git = useHostSelector(readGit, sameGit)
   const draftKey = useHostSelector(readSessionPath)
+  /**
+   * 这条会话有没有能接住输入的一方（2026-11-19）：收工的队友、一次性的子智能体没有。
+   * 读到 false 时整张输入卡片换成一行说明（下面 render 里那条早返回）——不给一个
+   * 「敲完发现被吞」的输入框。
+   */
+  const acceptsInput = useHostSelector(readAcceptsInput)
 
   const [text, setText] = useState('')
   const [fault, setFault] = useState<string | null>(null)
@@ -693,6 +699,20 @@ function ComposerBox(): ReactNode {
     : working
       ? t('placeholder.working')
       : t('placeholder.idle')
+
+  // 没有接话人的会话（收工的队友 / 一次性子智能体）：输入卡片整块换成一行说明。
+  // 照 dsh 的 SubagentReadOnlyComposer——那边也是把输入位换成一句解释，不给输入框。
+  // 放在所有 hook 之后：换会话时它随快照重算，不需要额外的卸载 / 重置逻辑。
+  if (!acceptsInput) {
+    return (
+      <div className="composer-stack" style={{ marginTop: 10 }}>
+        <div className="composer composer-readonly" role="note" data-composer-readonly="">
+          <span className="composer-readonly-title">{t('readonly.title')}</span>
+          <span className="composer-readonly-body">{t('readonly.body')}</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     // 这一层是「输入框外面那一列」：分支行在上、输入框在下，各占一行、各带自己的边。

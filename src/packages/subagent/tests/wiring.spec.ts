@@ -233,6 +233,8 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
   const emitted: Harness['emitted'] = []
   const events: Harness['events'] = []
   const followups: Harness['followups'] = []
+  /** 队友会话的外部驱动登记（attach 记、detach 摘）：断言看它。 */
+  const attached = new Map<string, unknown>()
   const decisions: Harness['decisions'] = []
   const routeCalls: Harness['routeCalls'] = []
   const effects: Array<() => void> = []
@@ -376,6 +378,15 @@ function fakeCtx(options: { config?: Record<string, unknown>; decision?: 'allow-
     agent: {
       sessionById: (id: string) => (harness.session.meta.id === id ? harness.session : undefined),
       hasAgent: () => false,
+      // 2026-11-18/19：队友会话按「外部驱动的一等会话」登记（attach / detach / acceptsInput），
+      // 假宿主不解租约、只管把登记记下来供断言看。
+      attach: (session: { meta: { id: string } }, driver?: unknown) => {
+        attached.set(session.meta.id, driver)
+      },
+      detach: (sessionId: string) => {
+        attached.delete(sessionId)
+      },
+      acceptsInput: (sessionId: string) => attached.has(sessionId),
       followup: (text: string, _images?: unknown, sessionId?: string, origin?: string) => {
         followups.push({ text, ...(sessionId === undefined ? {} : { sessionId }), ...(origin === undefined ? {} : { origin }) })
       },
@@ -719,7 +730,9 @@ describe('派活、汇报与回收', () => {
       mode: 'continuable',
       sessionId: harness.session.meta.id,
     })
-    expect(String(record?.file)).toContain('.teammates')
+    // 2026-11-18 起队友会话与主会话同一个落盘形状（sessions/<工作目录名>/<id>.jsonl）。
+    expect(String(record?.file)).toContain('sessions')
+    expect(String(record?.file)).not.toContain('.teammates')
 
     const view = (harness.services.get('team') as { list: () => Array<Record<string, unknown>> }).list()
     expect(view.find((item) => item.name === name)).toMatchObject({ role: 'explorer', state: 'idle', rounds: 1 })
@@ -787,7 +800,9 @@ describe('派活、汇报与回收', () => {
     const removed = String(
       await (harness.services.get('team') as { remove: (name: string) => Promise<string> }).remove(name),
     )
-    expect(removed).toContain('运行记录一并删除')
+    // 回执按事实说话：文件还在就报「一并删除」，还没落盘（假内核没有写流）就报「不在了」——
+    // 两种都是「名册已摘」的意思，断言看的是它摘没摘，不钉死措辞。
+    expect(removed).toContain('从名册移除')
     expect(readRoster().some((entry) => entry.name === name)).toBe(false)
   })
 
@@ -988,7 +1003,7 @@ describe('任务板与团队服务', () => {
       const view = (harness.services.get('team') as { list: () => Array<{ name: string; state: string }> }).list()
       return view.find((item) => item.name === 'removable')?.state === 'idle'
     })
-    expect(String(await service.remove('removable'))).toContain('运行记录一并删除')
+    expect(String(await service.remove('removable'))).toContain('从名册移除')
     expect(String(await service.remove('removable'))).toContain('名册里没有')
   })
 })

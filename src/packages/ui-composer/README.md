@@ -13,7 +13,8 @@
 
 - 四个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:142-144）；模式（预设）钮单独挂顶栏标题旁 `shell.header.lead`、order 10（ui/ui.tsx:148），排在「智能体团队」钮（order 20）前面。
 - 模型与推理等级是**同一颗** chip：两个读数写在一颗钮上，点开是两行卡（模型 / 推理等级），点某一行才进各自的二级面板（ui/model-controls.tsx:555、573；三页互斥见 :254、:264）。
-- 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`（ui/ui.tsx:152-157）。
+- 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`、`acceptsInput`（ui/ui.tsx:152-162）。
+- **只读会话的输入位**（2026-11-19）：快照的 `status.acceptsInput === false` 时（收工的队友、一次性的子智能体），整张输入卡片换成一行说明，不给一个「敲完发现被吞」的输入框（ui/ui.tsx:697-716；样式 `.composer-readonly`）。判据来自 `agent.acceptsInput`（常驻 agent 或带 driver 的队友登记），缺省（老宿主不给这一项）按能输入画。
 - 发送走 `submit`，插话走 `steerQueued`，打断走 `interrupt`（ui/ui.tsx:383、397、415）。
 - 队列条用 `editQueued` / `removeQueued` / `steerQueued` 改收件箱（ui/queue-dock.tsx:76-103）。
 - 停用后：输入框、模型与档位胶囊、附件、排队条、顶栏那颗模式钮一起消失；首屏能力卡的 `composerDraft` 写入服务也没了（ui/ui.tsx:111-125）。

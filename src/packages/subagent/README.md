@@ -40,7 +40,10 @@
 - 收工队友在名册里最多留 12 个，超了挤掉最老的（index.ts:116）。
 - 一次性子智能体同样占名册那 200 条上限，被挤掉后记录文件还在盘上、界面里却找不到了；这条老问题没动。
 - 关掉 `allowDelegation` 撤 `subagent` / `team_message` 与名册提示，已经在跑的队友会把当前这轮跑完，任务板照常；关掉 `board` 只撤 `team_task` 与板子提示，派活、汇报、名册与 `team_message` 照常。
-- 名册在 `~/.dsc/team/roster.json`，队友会话存在 `sessions/.teammates/` 下，不是普通会话（index.ts:288；core/session.ts:1363-1364）。
+- 名册在 `~/.dsc/team/roster.json`，队友会话落在**会话目录里**（`sessions/<工作目录名>/<会话 id>.jsonl`，2026-11-18 起；老记录仍在 `sessions/.teammates/` 下），用 meta 首行的 `origin: 'subagent'` + `parentSession` 认身份（index.ts:288；core/session.ts:26-46）。侧栏不列它们（`scanSessions` 按 origin 跳过），归档 / 分叉 / 删除也不许对它下手。
+- **在册队友的会话能像主会话一样打开**：`session.open(它的路径)` 复用同一个 `Session` 实例（不重读、不另抢写租约），宿主不再为它另造常驻 agent（`agent` 服务的 `attach(session, driver)` 登记），输入框那一句直接进它的收件箱。
+- **收工的可续接队友会被复活**（2026-11-19）：名册里存着冻结的工牌（`badge`）与角色说明书（`prompt`），用户在名册里点它时 `team.open(name)` 按这两样重建一份 MiniAgent 并重新 `attach`，打开后输入框直接说话就是接着干（`reviveTeammate`；`startTeammate` 与它共用 `makeTeammate`，守卫、记账、attach 一条不少）。可续接 = `mode !== 'one-shot'`；一次性的点开只有历史。
+- 复活不了的情形（老名册没有冻结点且角色文件已删、文件被别的窗口占着、父会话不在本窗口）不硬凑：按只读记录打开，并在对话流里说一句原因。
 - 任务板每个会话各一块（`~/.dsc/team/boards/<会话 id>.json`），切会话就是另一块板；清空只清当前会话（core/team-board.ts:22-24、85-88）。
 - **板子归属按发起调用的会话算，不看「当前查看的会话」**：队友转发 `team_task` 时由 `toolsFor` 塞 `caller.sessionId`（= 派它的那个会话），主会话自己的调用回落工具上下文的 `sessionId`。后台队友跑着、用户切走之后，认领仍落在自己那块板上（2026-11-08 修）。
 - 嵌套派活同理：队友自己派出的子队友，父会话是这个队友自己的会话（`runSubagent` 的 `parent` 参数由调用方给），名册过滤与汇报都按它算。
@@ -50,7 +53,7 @@
 - 行 id `subagent`，包名 `@pneuma/subagent`，order 3600（package.json:24-34）。
 - resolution 是 overridable，默认关闭（package.json:25-29；cordis.patch.yml 的 `disabled: true`）。
 - inject 八个服务：`session`、`tools`、`llm`、`approval`、`transcript`、`prompt`、`settings`、`agent`（index.ts:260）。
-- provide 两个：`team`（名册 / 停止 / 传话 / 移除）与 `review`（index.ts:841、932）。
+- provide 两个：`team`（名册 / 打开 / 停止 / 传话 / 移除）与 `review`（index.ts:841、932）。`team.open` 是界面点开队友的那一条（先复活再开会话），`stop` / `message` / `remove` 是名册动作；收发消息那条仍是 `team_message`。
 - 设置分区 id `subagent`，order 40；三组：`turns`「默认最大轮次」（九个内置角色各一个 `roleTurns.<角色>` 数字项，0–200，0 = 不限）、`models`「队友模型」（`allowModelSelection` 开关 + `allowedModels` 分组多选，清单来自 `ctx.llm.listModels()` 按端点显示名分组）与 `board`「任务板」（`board` 开关、板子目录与「清空本会话任务板」）；根页另有 `teamMode`「团队模式」开关（打开即把 `maxDepth` 抬到 2）。
 - **内置角色九个**：`explorer` / `writer` / `critic` / `reviewer`（原样）+ 团队职能角色 `pm`（只读 + `subagent`，48 轮）/ `architect`（只读，32 轮）/ `developer`（读写 + bash，128 轮）/ `tester`（读 + bash + write，64 轮）/ `ops`（读 + bash，32 轮）。默认轮次在 `DEFAULT_ROLE_TURNS`，角色文件显式 `max-turns` 仍优先；`ensureBuiltinRoles` 只补缺，老安装升级后这五个角色会自动出现。
 - **模型授权保存校验**：开关开着却一个模型都没勾（两个方向：开开关、清空清单）都会被拒并给失败文案，落盘是 `plugins.json` 的 `subagent.config.allowedModels` 扁平字符串数组（index.ts:2009-2020；locale 的 `save.needAllowedModel`）。

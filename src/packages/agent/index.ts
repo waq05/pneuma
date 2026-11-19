@@ -21,7 +21,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type ContextInjectionView } from '@pneuma/runtime/contract.js'
 import { appendRepeatReminder, planRepeatReminder } from '@pneuma/runtime/core/repeat-reminder.js'
 import { InjectionNoteLedger } from '@pneuma/runtime/core/context-injection-report.js'
-import { Session, type InboxOrigin } from '@pneuma/runtime/core/session.js'
+import { Session, isTeammateSessionFile, type InboxOrigin } from '@pneuma/runtime/core/session.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 import { MiniAgent } from '@pneuma/session-core/loop.js'
 import { appendToolRecord, appendUsageRecord } from '@pneuma/runtime/core/usage-log.js'
@@ -29,7 +29,7 @@ import { publishDshUsage } from '@pneuma/runtime/core/dsh-compat/llm-usage-event
 import { createDshSessionEventBridge } from '@pneuma/runtime/core/dsh-compat/session-events.js'
 import { clearReadLedger } from '@pneuma/runtime/core/path-policy.js'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
-import type { AgentService, TurnSignal } from '@pneuma/runtime/services/types.js'
+import type { AgentService, ForeignAgentDriver, TurnSignal } from '@pneuma/runtime/services/types.js'
 import { CacheProbe, sortToolSchemas } from './cache-probe.js'
 
 /**
@@ -50,13 +50,15 @@ export const agentPlugin: Plugin.Object = {
     /** 收摊 agent 的墓碑：id → jsonl 路径。非常驻投递（followup 带 id）靠它找文件。 */
     const tombstones = new Map<string, string>()
     /**
-     * 登记过、但不归本插件管的会话（superagent 的 worker）：只让 `sessionById` 查得到。
+     * 登记过、但不归本插件管的会话：只让 `sessionById` / `sessionFor` 查得到。
      *
      * 为什么不并进 `agents`：那张表是「常驻 agent」的名册，`hasAgent`、`followup`、
      * 收摊逻辑都按它算；塞进去会让一条由执行器自己管生命周期的会话被当成常驻 agent
-     * 去唤醒 / 收摊。这里只存 `Session`，够 `subagent` 认父会话、作业通知认归属。
+     * 去唤醒 / 收摊。这里存 `Session` + 可选的 driver：没有 driver 的（superagent 的
+     * worker）只是「查得到」；有 driver 的（队友，2026-11-18）是**可被用户打开的一等
+     * 会话**——投递与中止都交给 driver，本插件既不另造 agent，也不替它写日志。
      */
-    const attached = new Map<string, Session>()
+    const attached = new Map<string, { session: Session; driver?: ForeignAgentDriver }>()
     /** 当前查看的 agent。不变量：它的会话就是 ctx.session.current() 那个对象。 */
     let active: MiniAgent | null = null
     /**
@@ -319,6 +321,29 @@ export const agentPlugin: Plugin.Object = {
 
     ctx.on('dsc/session-open', ({ session }) => {
       const prev = active
+      // 队友的会话（2026-11-18）：在册的那条由 subagent 插件自己的循环驱动，本插件既不
+      // 造 agent 也不接管；已经收工的（`origin: 'subagent'` 但没 driver）只剩史料价值，
+      // 同样不给它造常驻 agent——造出来是一条没有角色工牌的普通会话，往里说话等于
+      // 把已经结束的队友伪装成人在跟它对话。两种情况都只把 `active` 让出来。
+      // `attach` 还有一类只登记会话、不接管的用法（superagent 的 worker），那种照旧
+      // 走下面的常驻 agent 逻辑，所以这里两种标记分开判。
+      const foreign = attached.get(session.meta.id)?.driver !== undefined
+      if (foreign || session.meta.origin === 'subagent') {
+        active = null
+        if (prev !== null) {
+          if (prev.busy) {
+            const waitingApproval = ctx.get('approval')?.pendingFor(prev.session.filePath) === true
+            ctx.emit('dsc/agent-status', {
+              sessionId: prev.sessionId,
+              path: prev.session.filePath,
+              state: waitingApproval ? 'awaiting-approval' : 'working',
+            })
+          } else {
+            rememberIdle(prev.sessionId)
+          }
+        }
+        return
+      }
       let next = agents.get(session.meta.id)
       if (next === undefined) {
         next = makeAgent(session)
@@ -366,6 +391,12 @@ export const agentPlugin: Plugin.Object = {
         ctx.emit('dsc/notice', `一条通知没能投递：会话 ${sessionId.slice(0, 8)} 不在本窗口的名册里`)
         return
       }
+      // 队友的运行记录（2026-11-18）：它没有常驻 agent，也不接受「写进去等它醒来」——
+      // 往一份只读史料里塞一条用户消息，等于伪造一次从没发生过的对话。
+      if (isTeammateSessionFile(path)) {
+        ctx.emit('dsc/notice', '这位队友已经收工，它的运行记录只读：要它接着干，用状态面板里的「发话」')
+        return
+      }
       try {
         const dormant = Session.load(path, true)
         dormant.appendUser(text, images, files, origin)
@@ -375,21 +406,41 @@ export const agentPlugin: Plugin.Object = {
       }
     }
 
+    /** 这次输入该投给谁：显式 sessionId，否则当前查看的会话（不再是「最后一个 active」）。 */
+    const targetOf = (sessionId?: string): string => sessionId ?? ctx.session.current().meta.id
+
+    /** 当前查看的会话的外部驱动（队友）；不是这类会话就是 undefined。 */
+    const currentDriver = (): ForeignAgentDriver | undefined => attached.get(ctx.session.current().meta.id)?.driver
+
     const service: AgentService = {
       followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin, files?: UserFileAttachment[]) {
-        if (sessionId === undefined) {
-          if (active !== null) active.followup(text, images, origin, files)
-          return
-        }
-        const agent = agents.get(sessionId)
+        const target = targetOf(sessionId)
+        const agent = agents.get(target)
         if (agent !== undefined) {
           agent.followup(text, images, origin, files)
           return
         }
-        deliverToDormant(sessionId, text, images, files, origin)
+        const driver = attached.get(target)?.driver
+        if (driver !== undefined) {
+          driver.followup(text, images, origin, files)
+          return
+        }
+        // 已经收工的队友：正文区还开着它的记录，但没有谁能接这句话。明说一句，
+        // 别让它悄悄写进日志（那会在记录里长出一条从没发生过的用户发言）。
+        const current = ctx.session.current()
+        if (current.meta.id === target && current.meta.origin === 'subagent') {
+          ctx.emit('dsc/notice', '这位队友已经收工，它的运行记录只读：要它接着干，用状态面板里的「发话」')
+          return
+        }
+        deliverToDormant(target, text, images, files, origin)
       },
       interrupt(filePath?: string) {
         if (filePath === undefined) {
+          const driver = currentDriver()
+          if (driver !== undefined) {
+            driver.interrupt()
+            return
+          }
           if (active !== null) active.cancel()
           return
         }
@@ -398,28 +449,42 @@ export const agentPlugin: Plugin.Object = {
         for (const agent of agents.values()) {
           if (agent.session.filePath === filePath) agent.cancel()
         }
+        for (const entry of attached.values()) {
+          if (entry.session.filePath === filePath) entry.driver?.interrupt()
+        }
       },
       hasAgent(sessionId: string) {
         return agents.has(sessionId)
+      },
+      acceptsInput(sessionId: string) {
+        // 常驻 agent 与「有驱动的外部会话」（队友）都能接住输入；只登记了会话、
+        // 没有驱动的那种（superagent worker 的账）不能——界面据此把输入框画成只读说明。
+        return agents.has(sessionId) || attached.get(sessionId)?.driver !== undefined
       },
       // 排队输入的三个动作（0.6.67）：只作用于**当前查看**的那个 agent——队列条画在
       // 输入框下方，编辑 / 删除 / 插话的都是眼前这一队；后台会话的排队输入留在它自己的
       // 收件箱里，切回去时随快照一起出现。入箱与编辑删除都会发 `inbox` 事件，
       // 转录层收到即刷新快照，这里不必再补一次 touch。
+      //
+      // 当前查看的是队友的会话时（2026-11-18），队列条上的动作交给它的 driver：
+      // 队列就存在那条会话的收件箱里，MiniAgent 的这三个方法正是它的操作面。
       editQueued(index: number, text: string) {
-        return active?.editQueued(index, text) ?? false
+        if (active !== null) return active.editQueued(index, text)
+        return currentDriver()?.editQueued?.(index, text) ?? false
       },
       removeQueued(index: number) {
-        return active?.removeQueued(index) ?? false
+        if (active !== null) return active.removeQueued(index)
+        return currentDriver()?.removeQueued?.(index) ?? false
       },
       steerQueued(index?: number) {
-        return active?.steerQueued(index) ?? false
+        if (active !== null) return active.steerQueued(index)
+        return currentDriver()?.steerQueued?.(index) ?? false
       },
       sessionById(sessionId: string) {
-        return agents.get(sessionId)?.session ?? attached.get(sessionId)
+        return agents.get(sessionId)?.session ?? attached.get(sessionId)?.session
       },
-      attach(session: Session) {
-        attached.set(session.meta.id, session)
+      attach(session: Session, driver?: ForeignAgentDriver) {
+        attached.set(session.meta.id, { session, ...(driver === undefined ? {} : { driver }) })
       },
       detach(sessionId: string) {
         attached.delete(sessionId)
@@ -428,11 +493,17 @@ export const agentPlugin: Plugin.Object = {
         for (const agent of agents.values()) {
           if (agent.session.filePath === filePath) return agent.session
         }
+        for (const entry of attached.values()) {
+          if (entry.session.filePath === filePath) return entry.session
+        }
         return undefined
       },
       isRunning(filePath: string) {
         for (const agent of agents.values()) {
           if (agent.session.filePath === filePath) return agent.isRunning
+        }
+        for (const entry of attached.values()) {
+          if (entry.session.filePath === filePath) return entry.driver?.isRunning() ?? false
         }
         return false
       },

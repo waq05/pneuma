@@ -200,7 +200,7 @@ console.log('[5] 形态钉（结构约定）')
   check('少动模式下停掉收展过渡', /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.sp/.test(css))
   check('预览卡开合有延迟（120/80ms）', status.includes('PREVIEW_OPEN_MS') && status.includes('PREVIEW_CLOSE_MS'))
   check('折叠桶行带 data-sp-fold 钩子', status.includes('data-sp-fold'))
-  check('子智能体行经 teammateReader 服务（缺服务退回右栏页签）', status.includes("'teammateReader'") && status.includes('data-sp-agent') && status.includes('data-sp-agent-state'))
+  check('子智能体行点开走宿主的 openTeammate（行钩子仍在）', status.includes("invoke('openTeammate'") && status.includes('data-sp-agent') && status.includes('data-sp-agent-state'))
   // 2026-11-08：入口统一到状态面板（标题旁不再有「智能体团队」按钮与名册面板），
   // 所以 teamPanel 服务与它的模态一并撤掉——成员只在这一处列一次。
   check('team 插件不再提供 teamPanel 服务（名册统一在状态面板）', !team.includes("ui.provide('teamPanel'"))
@@ -240,7 +240,9 @@ console.log('[5] 形态钉（结构约定）')
   check('名册轮询仍在（常挂载的那条目录，3 秒一拍写进共享席位）', team.includes("invoke<TeammateView[]>('listTeammates'") && /function TeamEntry[\s\S]*?setInterval\(poll, 3000\)/.test(team))
   // 2026-11-08：名册模态整个删掉（成员只在状态面板列一次）。组件名与渲染点都不许回来。
   check('名册模态已撤（不再渲染 TeamPanel）', !stripComments(team).includes('TeamPanel'))
-  check('运行记录页头部带发话 / 停止 / 移除（ReaderActions）', team.includes('function ReaderActions') && team.includes('<ReaderActions mate={mate} />'))
+  // 2026-11-19：正文区那层只读视图撤了，发话 = 点开直接在输入框里说话，
+  // 停止留在行尾（在跑的），移除也在行尾（收工的）。
+  check('名册行尾：在跑停止、收工移除（动作不再挂只读层头部）', status.includes('data-sp-agent-remove') && status.includes("invoke('removeTeammate'") && status.includes("invoke('stopTeammate'") && !team.includes('ReaderActions'))
 }
 
 console.log('[6] 宿主数据面（文本钉）')

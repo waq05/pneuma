@@ -15,6 +15,8 @@
 
 - 常驻的是 agent，不是无限历史：切走且空闲的会话最多留 3 个，第 4 个起就地收摊、释放写租约与内存（index.ts:49、214-223）。
 - 收摊后的会话再来消息不会唤醒它：只把那条文本写进会话文件等用户回去看，不起回合（index.ts:265-279）。
+- **队友的会话不归本包驱动**（2026-11-18）：`attach(session, driver)` 登记一条外部驱动的会话，`sessionFor` 认它、切到它时不另造常驻 agent、`followup` / `interrupt` / 队列动作都交给 driver；`origin: 'subagent'` 且没有 driver 的（已收工的队友）同样不造 agent——那种会话只剩史料价值，往里打字会被拦下并回一句提示（index.ts:302-330、379-420）。
+- `acceptsInput(sessionId)`（2026-11-19）是「这条会话现在有没有人接这句话」的唯一判据：常驻 agent 或带 driver 的登记都算有，界面据此把输入框画成输入框或只读说明（`status.acceptsInput`）。**不要拿 `hasAgent` 判**：在册队友的循环不在常驻表里，会被误判成不能说话。
 - 只有「当前查看」的 agent 的流式增量与工具卡进转录；后台会话的过程留在各自的 jsonl 里，切回去靠重放（index.ts:153-160）。
 - 归档等收摊最多 10 秒，超时强制收（index.ts:344-349）。
 - 被切走且还在跑的 agent 发回后台上报时，状态点在 working 与 awaiting-approval 之间二选一，不会报「已完成」（index.ts:243-253）。

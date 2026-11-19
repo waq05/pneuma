@@ -17,6 +17,7 @@ import {
   archivedRoot,
   countTrashFiles,
   forkSession,
+  isTeammateSessionFile,
   listArchivedSessions,
   listSessions,
   loadLastSessionPath,
@@ -56,8 +57,10 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
     let startupNote: string | null = null
     const resume = options.resumeSessionPath ?? null
     const pointer = resume === 'auto' ? loadLastSessionPath() : resume
-    // 指针可能指向一个从没发过消息、因此没在磁盘上留过文件的会话：这种情况安静地开新会话
-    const resumePath = pointer !== null && existsSync(pointer) ? pointer : null
+    // 指针可能指向一个从没发过消息、因此没在磁盘上留过文件的会话：这种情况安静地开新会话。
+    // 也可能指向一条队友的运行记录（2026-11-18 起它能被当会话打开）：那种不该在下次启动
+    // 被恢复成「当前会话」——恢复出来的是一条没有角色工牌的普通会话，等于把队友伪装成人。
+    const resumePath = pointer !== null && existsSync(pointer) && !isTeammateSessionFile(pointer) ? pointer : null
     try {
       session = resumePath !== null ? Session.load(resumePath) : Session.create(startupCwd)
     } catch (error) {
@@ -118,7 +121,8 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
               ? Session.create(dir ?? startupCwd)
               : (ctx.get('agent')?.sessionFor(filePath) ?? Session.load(filePath))
           session = next
-          saveLastSession(session)
+          // 队友的会话不进「上次会话」指针：它是别人派活的运行记录，不是用户正在写的那条。
+          if (next.meta.origin !== 'subagent') saveLastSession(session)
           ctx.emit('dsc/session-open', { session: next, filePath } satisfies SessionOpenPayload)
         } catch (error) {
           ctx.emit('dsc/notice', `会话打开失败：${errText(error)}`)
@@ -281,6 +285,11 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         // （硬截了文件却没人重放，等于把界面和模型看到的东西拆成两半）。
         if (path !== session.filePath) {
           return { ok: false, error: '只能改当前会话里的消息：先切到那条会话再编辑' }
+        }
+        // 队友的运行记录是只读史料（2026-11-18 起它能被当会话打开）：在这里截断等于
+        // 改写它当年到底说了什么，没有谁会按截断后的历史继续跑。
+        if (session.meta.origin === 'subagent') {
+          return { ok: false, error: '这是队友的运行记录：可以看，不能编辑重发' }
         }
         // 回合还在跑：这一轮的工具调用与结果正按老历史往下写，此时截断会让它在半截
         // 历史上继续跑（工具结果对不上前面的调用）。界面那颗钮本来就是灰的，这里再挡一道。

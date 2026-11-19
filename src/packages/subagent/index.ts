@@ -20,7 +20,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
 import {
@@ -39,8 +39,15 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import { MiniAgent } from '@pneuma/session-core/loop.js'
 import { subagentEnvironmentText } from '@pneuma/session-core/prompt.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
 import { modeSpec } from '@pneuma/session-core/modes.js'
-import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/session.js'
+import {
+  isTeammateSessionFile,
+  REJECTED_TOOL_TEXT,
+  Session,
+  sessionsRoot,
+  slugCwd,
+} from '@pneuma/runtime/core/session.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { toolApprovalGuard, type ToolGuard, type ToolGuardChain, type ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import {
@@ -414,6 +421,14 @@ type TeammateMode = 'continuable' | 'one-shot'
 interface Teammate {
   name: string
   role: string
+  /**
+   * 角色的说明书原文（派活时从角色文件读来的那一份）。
+   *
+   * 为什么要带在身上：名册要冻一份（{@link RosterRecord.prompt}），收工的队友被用户点开时
+   * 才能按原样复活（{@link reviveTeammate}）——只记角色名的话，角色文件改过或删掉之后
+   * 复活出来的队友就不是原来那个了。
+   */
+  prompt: string
   task: string
   /** 绑定的任务板任务 id（spawn 带 `task_id` 才有）；undefined = 没绑定。 */
   taskId?: string
@@ -616,16 +631,28 @@ interface RosterRecord {
    * 处理——界面不画，也不显示一个假的 0。
    */
   tokens?: number
+  /**
+   * 冻结的工牌（2026-11-19）：收工的队友被用户点开时要按它原样复活。
+   *
+   * 为什么记在这里而不是每次去读角色文件：工牌的语义就是「派活这一刻定死，此后改角色
+   * 文件不影响它」；只记角色名的名册在角色文件被改过之后，复活出来的队友会拿着另一份
+   * 工具表与审批档，与它当年跑的那条对话对不上。老记录没有这一项，读档时退回现读角色。
+   */
+  badge?: Teammate['badge']
+  /** 角色说明书原文的冻结副本；理由同 {@link badge}。 */
+  prompt?: string
 }
 
 /** 名字合法字符，跟角色名同一套。 */
 const NAME_OK = /^[a-z0-9][a-z0-9-]{0,31}$/
 
-/** 工作目录名 → 可当目录名的短名（队友日志按它分堆）。 */
-function cwdSlug(cwd: string): string {
-  const cleaned = cwd.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')
-  return cleaned.slice(-40) === '' ? 'cwd' : cleaned.slice(-40)
-}
+/**
+ * 名册里冻结的角色说明书最多存多少字（2026-11-19）。
+ *
+ * 目的是「收工的队友还能按原样复活」，不是存一份角色库：角色文件正常只有一两 KB，
+ * 截到 16K 是给写歪了的大文件兜底——名册最多 200 条，不封顶就会撑成几十兆的 json。
+ */
+const PROMPT_FREEZE_MAX = 16_000
 
 /**
  * 把父会话切到「上一个完整回合」为止的记录行（不含 meta）。
@@ -801,6 +828,11 @@ export const subagentPlugin: Plugin.Object = {
         // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
         sessionId: teammate.parentSession.meta.id,
         ...(teammate.taskId === undefined ? {} : { taskId: teammate.taskId }),
+        // 冻结工牌与角色说明书：收工的队友被点开时要按原样复活（见 reviveTeammate）
+        badge: { ...teammate.badge },
+        // 说明书可能很长（几 KB）：16K 封顶，免得 200 条名册撑成几十兆的 json。真被截断的
+        // 那种复活出来会少尾巴——角色文件本来就不该写这么长，这里只兜底不让名册爆掉
+        prompt: teammate.prompt.slice(0, PROMPT_FREEZE_MAX),
         ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
       }
       const rest = readRoster().filter((entry) => entry.name !== teammate.name)
@@ -848,6 +880,9 @@ export const subagentPlugin: Plugin.Object = {
     }
 
     const settle = (teammate: Teammate, reason: 'completed' | 'aborted' | 'error', error?: string): void => {
+      // 已经不在队里（被移除、或被挤出名单）：这一拍是上一轮迟到的收尾，不能再往名册写回一行
+      // （2026-11-19 探针抓到：移除之后紧接着的 turn/end 会把刚删掉的那位重新写进 roster.json）
+      if (teammates.get(teammate.name) !== teammate) return
       // 预算最后一轮还欠着（提醒已排队、那一轮还没跑）：这一拍是自然收口，不算收工
       if (teammate.finalRoundPending === true && reason === 'completed' && teammate.rounds < teammate.badge.maxTurns) return
       teammate.finalRoundPending = false
@@ -884,7 +919,11 @@ export const subagentPlugin: Plugin.Object = {
       // 一次性的（spawn 时 keep=false）干完就出队：名册里那条记录留着供查看，但不再
       // 占内存、也不再接传话。对照 dsh 的 one-shot：子代理一结束就从 resident 表删掉，
       // 父会话只剩 catalog 里一行；能续接的那种恰恰相反，收工后还能 send_message 叫醒。
-      if (teammate.mode === 'one-shot') teammates.delete(teammate.name)
+      if (teammate.mode === 'one-shot') {
+        teammates.delete(teammate.name)
+        // 它不再接话了：注销「外部驱动」的登记，之后打开它的会话就只为看记录。
+        ctx.agent.detach(teammate.session.meta.id)
+      }
     }
 
     /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（本包注册的
@@ -1109,11 +1148,10 @@ export const subagentPlugin: Plugin.Object = {
     /**
      * 队友系统提示里的「团队协作」段：**只放规矩，不放队伍/看板数据**（2026-11 改）。
      *
-     * 原先这里每轮现读磁盘与内存，把「当前队伍（名字/角色/状态/绑定任务）+ 任务板摘要
-     * （20 条任务 + 10 条活动）」拼进队友的系统提示。它是队友会话的缓存杀手：队友每发
-     * 一次请求，系统提示 hash 就变一次，转录里反复出「系统提示」卡、服务端前缀缓存每轮
-     * 作废。队友的 MiniAgent 没有投影链（`deps.rewrite` 不存在，见 `session-core/loop.ts`），
-     * 没法像 Lead 那样把易变段挪到请求尾部，所以这里选择「移出」：数据一律现查工具。
+     * 原先这里每轮现读磁盘与内存，把「当前队伍 + 任务板摘要」拼进队友的系统提示。它是队友
+     * 会话的缓存杀手：队友每发一次请求，系统提示 hash 就变一次，转录里反复出「系统提示」卡、
+     * 服务端前缀缓存每轮作废。队友的 MiniAgent 没有投影链，没法像 Lead 那样把易变段挪到请求
+     * 尾部，所以这里选择「移出」：数据一律现查工具。
      *
      * 信息没有丢：`team_task list` / `action=activity` 看板子，`team_message action=inbox`
      * 看消息。规矩第一条本来就要求「动手前先 list」，现在从「提示里塞一份可能过期的快照」
@@ -1121,66 +1159,53 @@ export const subagentPlugin: Plugin.Object = {
      */
     const teamCollabText = (): string => teammateCollabGuide(config.board)
 
-    function startTeammate(input: {
+    /**
+     * 造一个队友：会话在手，其余（工牌、循环、登记、名册）都在这儿接上。
+     *
+     * 派活（{@link startTeammate}）与复活（{@link reviveTeammate}）共走这一条：两边只差
+     * 「会话是新开还是从盘上读回」以及要不要把任务送进信箱，其余一个字都不该分叉——
+     * 分叉就会让复活的队友少挂一条守卫、少记一本账。
+     */
+    function makeTeammate(input: {
       name: string
-      role: AgentRole
+      role: string
+      prompt: string
       task: string
-      caller: Caller
-      background: boolean
-      seed: string[] | null
-      parentSession: Session
-      /** 不填 = 寻常队友（收工后还能传话接着干）。 */
-      mode?: TeammateMode
-      /** spawn 显式指定的模型（已归一成 `端点/模型`）；不填看角色文件与旧配置兜底。 */
-      model?: string | null
-      /** spawn 显式指定的思考强度；不填看角色文件。 */
-      effort?: EffortLevel | null
-      /** spawn 带 `task_id` 时绑定的任务板任务 id（认领与绑定已在 runSubagent 里做完）。 */
+      badge: Teammate['badge']
+      /** spawn 带 `task_id` 时绑定的任务板任务 id（复活时从名册原样带回来）。 */
       taskId?: string
+      session: Session
+      parentSession: Session
+      parent: string
+      depth: number
+      mode: TeammateMode
+      background: boolean
+      startedAt: number
+      rounds: number
+      state: TeammateState
+      /** 派活那一刻要把任务送进它自己的信箱；复活不送（接着上一段对话往下走）。 */
+      announce: boolean
     }): Teammate {
-      const cwd = input.parentSession.meta.cwd
-      const file = join(teammateRoot(), cwdSlug(cwd), `${randomUUID()}.jsonl`)
-      mkdirSync(join(teammateRoot(), cwdSlug(cwd)), { recursive: true })
-      const id = randomUUID()
-      let session: Session
-      if (input.seed === null) {
-        session = Session.create(cwd, file)
-      } else {
-        const meta = JSON.stringify({ type: 'meta', id, cwd, createdAt: Date.now() })
-        writeFileSync(file, [meta, ...input.seed].join('\n') + '\n', 'utf8')
-        session = Session.load(file, true)
-      }
-
-      // 优先级：spawn 显式 > 角色文件 > 旧配置 defaultModel（兼容兜底）> 跟随当前会话
-      const model = resolveTeammateModel(input.model ?? null, input.role, config.defaultModel)
-      const effort = resolveTeammateEffort(input.effort ?? null, input.role)
       const teammate: Teammate = {
         name: input.name,
-        role: input.role.name,
+        role: input.role,
+        prompt: input.prompt,
         task: input.task,
         ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
-        // 工牌在此刻冻结：此后改角色文件不影响它
-        badge: {
-          tools: input.role.tools,
-          // 角色文件显式 max-turns > 设置页按角色默认值 > 全局上限（取更严），见 resolveMaxTurns
-          maxTurns: roleMaxTurns(input.role),
-          approval: input.role.approval,
-          model,
-          effort,
-        },
-        session,
+        badge: input.badge,
+        session: input.session,
         parentSession: input.parentSession,
         // 归谁管：派活时算一次并固化，父队友后来出队也不影响（见 ownerOfSession）
         ownerSession: ownerOfSession(input.parentSession),
-        state: 'working',
-        rounds: 0,
+        state: input.state,
+        rounds: input.rounds,
         toolCalls: 0,
-        lastReportedRound: 0,
-        depth: input.caller.depth + 1,
-        parent: input.caller.name,
-        mode: input.mode ?? 'continuable',
+        lastReportedRound: input.rounds,
+        depth: input.depth,
+        parent: input.parent,
+        mode: input.mode,
         background: input.background,
-        startedAt: Date.now(),
+        startedAt: input.startedAt,
         lastText: '',
         waiters: [],
         outputLines: [],
@@ -1215,7 +1240,7 @@ export const subagentPlugin: Plugin.Object = {
           // 又没有尾部快照那条路，所以环境/模型事实直接写进它自己的系统提示词。
           // cwd 取派它的那个会话（子代理在父会话的 cwd 下干活），模型取冻结的工牌。
           systemPrompt: () => {
-            const text = `${input.role.prompt}
+            const text = `${input.prompt}
 
 ${subagentEnvironmentText(input.parentSession.meta.cwd, teammate.badge.model ?? ctx.llm.model)}
 
@@ -1302,19 +1327,38 @@ ${teamCollabText()}
             } else if (event.type === 'error') {
               lastError.set(teammate.name, event.message)
             }
-            forwardSubagent()
+            // 这条会话正被用户打开（2026-11-18）：事件按主会话同款形状直接进转录——
+            // 此刻用户看的就是它的完整对话，折成父会话里的一张内联卡反而是串台。
+            // 其余时候照旧转发给父会话（内联卡 + 进队状态）。
+            if (ctx.session.current() === teammate.session) {
+              ctx.transcript.emit(event, teammate.session.meta.id)
+            } else {
+              forwardSubagent()
+            }
           },
         },
-        session,
+        input.session,
       )
 
       teammates.set(teammate.name, teammate)
+      // 交给 agent 服务登记成「外部驱动的一等会话」（2026-11-18）：`openSession` 打开它时
+      // 复用这个 Session 而不重建、不再另造一个常驻 agent，输入框里的字投进它的收件箱。
+      ctx.agent.attach(input.session, {
+        followup: (text, images, origin, files) => teammate.agent.followup(text, images, origin, files),
+        interrupt: () => teammate.agent.cancel(),
+        isRunning: () => teammate.agent.isRunning,
+        editQueued: (index, text) => teammate.agent.editQueued(index, text),
+        removeQueued: (index) => teammate.agent.removeQueued(index),
+        steerQueued: (index) => teammate.agent.steerQueued(index),
+      })
       remember(teammate)
-      // T21：新队友一上场就是 working，快照的状态面跟着失效
+      // T21：新队友一上场（或复活）就是快照里的状态面，动一下要跟着失效
       ctx.transcript.touch()
-      teammate.agent.followup(input.task)
-      // 开卡先落一张头行（事件流到达前的 0 空窗），之后每次事件原位刷新
-      forwardSubagent()
+      if (input.announce) {
+        teammate.agent.followup(input.task)
+        // 开卡先落一张头行（事件流到达前的 0 空窗），之后每次事件原位刷新
+        forwardSubagent()
+      }
       return teammate
 
       /** 正文行进瀑布：只留最后 8 行，瀑布永远显示「最新发生的事」。 */
@@ -1353,6 +1397,136 @@ ${teamCollabText()}
           },
         })
       }
+    }
+
+    /**
+     * 派一个队友：新开一条会话（与主会话同形），工牌在此刻冻结，然后把任务送进它的信箱。
+     */
+    function startTeammate(input: {
+      name: string
+      role: AgentRole
+      task: string
+      caller: Caller
+      background: boolean
+      seed: string[] | null
+      parentSession: Session
+      /** 不填 = 寻常队友（收工后还能传话接着干）。 */
+      mode?: TeammateMode
+      /** spawn 显式指定的模型（已归一成 `端点/模型`）；不填看角色文件与旧配置兜底。 */
+      model?: string | null
+      /** spawn 显式指定的思考强度；不填看角色文件。 */
+      effort?: EffortLevel | null
+      /** spawn 带 `task_id` 时绑定的任务板任务 id（认领与绑定已在 runSubagent 里做完）。 */
+      taskId?: string
+    }): Teammate {
+      const cwd = input.parentSession.meta.cwd
+      /**
+       * 队友会话的落盘位置与主会话同形（2026-11-18）：`<会话根>/<工作目录名>/<id>.jsonl`。
+       *
+       * 为什么改到这里来（原来在 `sessions/.teammates/`，id 还与文件名是两个 uuid）：
+       * `Session.load` 按 meta.id 重算路径，两个 uuid 对不上时算出来的是一个磁盘上不存在
+       * 的位置，于是界面只能 `peek` 只读预览、点开就把「当前会话」换成假路径。
+       * 现在 id = 文件名，meta 里还写着 `origin: 'subagent'` 与 `parentSession`：
+       * 它是一条真会话（能开、能说话、能重放），但侧栏不列它（`scanSessions` 按 origin 跳过），
+       * 归档/分叉/删除也不许对它下手（`assertSessionFile` 同一条判断）。
+       */
+      const id = randomUUID()
+      const file = join(sessionsRoot(), slugCwd(cwd), `${id}.jsonl`)
+      const origin = { id, origin: 'subagent' as const, parentSession: input.parentSession.meta.id }
+      let session: Session
+      if (input.seed === null) {
+        session = Session.create(cwd, file, origin)
+      } else {
+        mkdirSync(dirname(file), { recursive: true })
+        const meta = JSON.stringify({ type: 'meta', ...origin, cwd, createdAt: Date.now() })
+        writeFileSync(file, [meta, ...input.seed].join('\n') + '\n', 'utf8')
+        session = Session.load(file, true)
+      }
+      // 优先级：spawn 显式 > 角色文件 > 旧配置 defaultModel（兼容兜底）> 跟随当前会话
+      const model = resolveTeammateModel(input.model ?? null, input.role, config.defaultModel)
+      const effort = resolveTeammateEffort(input.effort ?? null, input.role)
+      return makeTeammate({
+        name: input.name,
+        role: input.role.name,
+        prompt: input.role.prompt,
+        task: input.task,
+        // 工牌在此刻冻结：此后改角色文件不影响它
+        badge: {
+          tools: input.role.tools,
+          // 角色文件显式 max-turns > 设置页按角色默认值 > 全局上限（取更严），见 resolveMaxTurns
+          maxTurns: roleMaxTurns(input.role),
+          approval: input.role.approval,
+          model,
+          effort,
+        },
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+        session,
+        parentSession: input.parentSession,
+        parent: input.caller.name,
+        depth: input.caller.depth + 1,
+        mode: input.mode ?? 'continuable',
+        background: input.background,
+        startedAt: Date.now(),
+        rounds: 0,
+        state: 'working',
+        announce: true,
+      })
+    }
+
+    /**
+     * 复活一位收工的队友（2026-11-19）：用户在名册里点它那一行时走这条。
+     *
+     * 为什么要有：会话本身已经能打开（2026-11-18 的改动），但**没有驱动的会话打开以后，
+     * 输入框里的字没处投递**——用户看到的是一条「只能看」的记录。收工的可续接队友其实只是
+     * 本进程里没了循环，按冻结的工牌照原样重建一份、重新 attach，它就接着那条对话往下走。
+     *
+     * 工牌与角色提示词从名册的冻结点读（{@link RosterRecord.badge} / `prompt`）：老名册没有
+     * 这两项时退回按角色名现读一份；角色文件也没了就不复活，调用方按只读记录打开并说一声。
+     * 一次性的（`keep: false`）不复活：它的语义就是干完即止（对照 dsh 的 one-shot）。
+     */
+    function reviveTeammate(record: RosterRecord, parentSession: Session): Teammate | null {
+      const live = teammates.get(record.name)
+      if (live !== undefined) return live
+      if ((record.mode ?? 'continuable') === 'one-shot') return null
+      const role = findRole(record.role)
+      const prompt = record.prompt ?? role?.prompt
+      const badge =
+        record.badge ??
+        (role === null
+          ? null
+          : {
+              tools: role.tools,
+              maxTurns: roleMaxTurns(role),
+              approval: role.approval,
+              model: resolveTeammateModel(null, role, config.defaultModel),
+              effort: resolveTeammateEffort(null, role),
+            })
+      if (prompt === undefined || badge === null) return null
+      const file = resolve(record.file)
+      if (!isTeammateSessionFile(file) || !existsSync(file)) return null
+      // 写租约与主会话同一条路：同进程重入；别的窗口正开着时会抛，调用方按只读处理
+      const session = Session.load(file)
+      return makeTeammate({
+        name: record.name,
+        role: record.role,
+        prompt,
+        task: record.task,
+        badge,
+        ...(record.taskId === undefined ? {} : { taskId: record.taskId }),
+        session,
+        parentSession,
+        parent: record.parent,
+        depth: record.depth,
+        mode: record.mode ?? 'continuable',
+        // 用户正对着它说话：按前台算（原来派活时是不是后台已经无从得知，但「能不能问授权」
+        // 按前台放宽才不会让复活出来的队友比原来更束手）。
+        background: false,
+        startedAt: record.startedAt,
+        rounds: record.rounds,
+        // 复活后先是空闲：等用户在输入框里说话才起回合
+        state: 'idle',
+        announce: false,
+      })
     }
 
     /** 队友报错文本暂存（emit 的 error 事件比 turn/end 早一步）。 */
@@ -1468,6 +1642,9 @@ ${body}
             ...(sessionId === undefined ? {} : { sessionId }),
             ...(taskId === undefined ? {} : { taskId }),
             ...(tokens === undefined ? {} : { tokens }),
+            // 本进程里还活着吗（2026-11-18）。2026-11-19 起界面不再据此分叉（点开一律走
+            // 真会话），但它仍是「这一位有没有循环」的读数，右栏页签与探针都读它。
+            attached: live !== undefined,
           })
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
@@ -1479,7 +1656,9 @@ ${body}
       },
       peek: async (file: string): Promise<TranscriptEntry[]> => {
         const resolved = resolve(file)
-        if (!resolved.startsWith(resolve(teammateRoot()))) {
+        // 两代队友记录都认（2026-11-18）：新记录在会话目录里、meta 标 `origin: 'subagent'`；
+        // 老记录还在 `.teammates` 下。别的会话一律不许从这里读。
+        if (!isTeammateSessionFile(resolved)) {
           throw new Error('这里只能看队友的运行记录（其它会话请在左侧打开）')
         }
         // 只读：载入内存重放，不往那个文件写任何东西（也不拿写租约——队友可能正活着写它）
@@ -1487,6 +1666,42 @@ ${body}
         const replay = new Transcript()
         replay.replayHistory(session.messages, session.toolErrors, session.fileChanges, session.presentations)
         return [...replay.entries, ...replay.liveEntries()]
+      },
+      // 用户从界面上点开一位队友（2026-11-19）：正文区打开它那条真会话；收工的可续接队友
+      // 先按冻结工牌复活（这样输入框能直接说话），一次性的与复活不了的只按记录打开。
+      // 父会话取「派它的那条」：名册只在它自己的面板里列，正常情况下就是用户当前这条。
+      open: async (name: string): Promise<void> => {
+        const live = teammates.get(name)
+        if (live !== undefined) {
+          await ctx.session.open(live.session.filePath)
+          return
+        }
+        const record = readRoster().find((entry) => entry.name === name)
+        if (record === undefined) {
+          ctx.emit('dsc/notice', `名册里没有叫「${name}」的队友。`)
+          return
+        }
+        const file = resolve(record.file)
+        if (!isTeammateSessionFile(file)) {
+          ctx.emit('dsc/notice', '这不是队友的运行记录：请在左侧会话列表里打开。')
+          return
+        }
+        if ((record.mode ?? 'continuable') !== 'one-shot') {
+          const parent =
+            (record.sessionId === undefined ? undefined : ctx.agent.sessionById(record.sessionId)) ??
+            (record.sessionId === ctx.session.current().meta.id ? ctx.session.current() : undefined)
+          if (parent === undefined) {
+            ctx.emit('dsc/notice', `派「${name}」的那个会话不在本窗口：先按运行记录打开（只读）。`)
+          } else {
+            try {
+              reviveTeammate(record, parent)
+            } catch (error) {
+              // 文件被别的窗口占着、盘上文件没了……都退回只读，不要把这一下变成打不开
+              ctx.emit('dsc/notice', `没把「${name}」叫回来（${errText(error)}）：先按运行记录打开，只读。`)
+            }
+          }
+        }
+        await ctx.session.open(file)
       },
       // 用户从界面上管理队友的两条通道：与模型用的 subagent 工具走同一段逻辑，
       // 只是署名换成 user（队友信箱里看得出这句话是人说的）；
@@ -1520,15 +1735,17 @@ ${body}
         if (live === undefined && record === undefined) return `名册里没有叫「${name}」的队友。`
         // 真正收掉这一位：会话文件要关（释放写租约），再从名单里摘
         live?.agent.dispose()
+        if (live !== undefined) ctx.agent.detach(live.session.meta.id)
         teammates.delete(name)
         writeRoster(readRoster().filter((entry) => entry.name !== name))
-        // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认 teammateRoot 下的路径，
+        // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认同一个口径的队友记录
+        // （`.teammates` 下的老文件，或 meta 标了 origin 的新文件），别的一律不碰；
         // 删不动（被占用等）不算失败——名册已经摘掉，孤儿文件不影响任何列表。
         const file = live?.session.filePath ?? record?.file
         let removedFile = false
         if (typeof file === 'string' && file !== '') {
           const resolvedFile = resolve(file)
-          if (resolvedFile.startsWith(resolve(teammateRoot()))) {
+          if (isTeammateSessionFile(resolvedFile)) {
             try {
               // rmSync 的 force 对不存在的文件也算成功：如实报告文件本来就在不在
               const existed = existsSync(resolvedFile)

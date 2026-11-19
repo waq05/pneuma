@@ -835,7 +835,30 @@ export interface MicrocompactService {
 
 // ── agent ────────────────────────────────────────────────────────────────────
 
-/** Agent 服务：ReAct 循环的对外操作面（0.6.48 起按会话常驻多 agent）。 */
+/**
+ * 一条会话的「外部驱动」（2026-11-18）。
+ *
+ * 有些会话不是常驻注册表造的那条 MiniAgent 在跑：队友的会话由 subagent 插件自己建循环，
+ * 它按角色工牌裁过工具与提示词，不能拿标准的 `makeAgent` 顶替（那会丢掉角色约束）。
+ * 但用户又该能像开主会话一样打开它、往里说话——所以这里只交出三个动作：投递、中止、在跑没在跑。
+ * 其余（正文重放、输入框、快照）都走主会话那套，因为会话本体就是一个普通 `Session`。
+ */
+export interface ForeignAgentDriver {
+  /** 投一条用户输入（跑动中进收件箱、闲置时唤起一轮）。 */
+  followup(text: string, images?: string[], origin?: InboxOrigin, files?: UserFileAttachment[]): void
+  /** 打断正在跑的回合。 */
+  interrupt(): void
+  /** 有没有一轮在跑（切回这条会话时转录层要补「回合中」状态）。 */
+  isRunning(): boolean
+  /** 排队输入的三个动作（输入框下方的队列条）；驱动方不给就按「改不动」处理。 */
+  editQueued?(index: number, text: string): boolean
+  removeQueued?(index: number): boolean
+  steerQueued?(index?: number): boolean
+}
+
+/**
+ * Agent 服务：ReAct 循环的对外操作面（0.6.48 起按会话常驻多 agent）。
+ */
 export interface AgentService {
   /**
    * 提交一条消息（排队执行）。
@@ -870,6 +893,14 @@ export interface AgentService {
   steerQueued(index?: number): boolean
   /** 那个会话有没有常驻 agent（生产者决定「投递」还是「写文件等用户回来」）。 */
   hasAgent(sessionId: string): boolean
+  /**
+   * 那条会话现在有没有能接住用户输入的一方（2026-11-19）：常驻 agent，或
+   * {@link attach} 登记过驱动的外部循环（队友）。都没有 = 输入框该显示成只读说明。
+   *
+   * 为什么单独给这一条：`hasAgent` 只认常驻表，拿它判「能不能说话」会把在册的队友
+   * （由 subagent 插件自己的循环驱动）误判成不能说话。
+   */
+  acceptsInput(sessionId: string): boolean
   /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */
   sessionFor(filePath: string): Session | undefined
   /** 按会话 id 找会话实例（常驻的，或 {@link attach} 登记过的；后台 agent 的权限/提示词按它取自己的会话）。 */
@@ -887,8 +918,13 @@ export interface AgentService {
    * 只登记会话、不登记 MiniAgent：`hasAgent` / `followup` 仍按常驻注册表算，
    * 所以这个口不会让「不在册」的会话被误当成常驻 agent 去唤醒。
    * 生命周期由调用方管：会话关掉时自己 {@link detach}。
+   *
+   * @param driver - 驱动这条会话的那个循环（2026-11-18）。给了它，这条会话就变成
+   *   「可被用户打开、可往里说话」的一等会话：`session.open(它的路径)` 复用它而不是
+   *   重建，切到它时不再另造常驻 agent，`followup` / `interrupt` 交给 driver。
+   *   队友的会话就走这条（driver = 队友自己的 MiniAgent）。
    */
-  attach(session: Session): void
+  attach(session: Session, driver?: ForeignAgentDriver): void
   /** 摘掉 {@link attach} 的登记；执行器关会话时调。没有登记就是空操作。 */
   detach(sessionId: string): void
   /** 那个会话的常驻 agent 正在跑回合吗（切回运行中会话时转录层补「回合中」状态）。 */
@@ -1035,6 +1071,15 @@ export interface TeamService {
   board(sessionId: string): TeamBoardView
   /** 只读重放一个队友的运行记录，返回可渲染的对话条目。 */
   peek(file: string): Promise<TranscriptEntry[]>
+  /**
+   * 用户在名册里点开一位队友：正文区打开它那条真会话（2026-11-19）。
+   *
+   * 为什么不是「打开文件」这么简单：收工的队友在本进程里已经没有循环，直接开会话只能看，
+   * 输入框里的字没处投递。可续接的（`mode !== 'one-shot'`）先按名册里冻结的工牌复活一份
+   * 循环，打开后就能直接接着说话；一次性的、或复活不了（角色定义没了、文件被别的窗口
+   * 占着）的按只读记录打开，并在对话流里说一句为什么。
+   */
+  open(name: string): Promise<void>
   /**
    * 收掉一个队友（打断当前这一轮并从在场名单里摘掉）。
    * 与 `subagent` 工具的 `stop` 是同一条路：来自用户界面，署名是用户。

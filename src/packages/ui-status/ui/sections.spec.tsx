@@ -469,7 +469,7 @@ describe('折叠桶（FoldRow / FoldPreviewCard）', () => {
 })
 
 describe('子智能体区（AgentSection）', () => {
-  test('在跑的排前面；行内 token / 耗时 / 状态词、一次性标记、停止钮与点击打开运行记录', async () => {
+  test('在跑的排前面；行内 token / 耗时 / 状态词、一次性标记、停止钮 / 移除钮与点击开会话', async () => {
     const startedAt = Date.UTC(2026, 0, 1)
     const mates = [
       mate({ name: 'idle-1', state: 'idle', startedAt: 2000 }),
@@ -484,9 +484,7 @@ describe('子智能体区（AgentSection）', () => {
       }),
       mate({ name: 'other', state: 'working', sessionId: 'zzz' }),
     ]
-    const opened: string[] = []
     const services = new ServiceRegistry()
-    services.provide('teammateReader', { open: (m: TeammateView) => opened.push(m.name) }, 'test')
     const harness = harnessOf({ teammates: mates })
     mountPanel(harness, { services })
     await flush()
@@ -503,7 +501,9 @@ describe('子智能体区（AgentSection）', () => {
     expect(textOf(section('agent')?.querySelector('.sp-section-trail'))).toBe('2 已完成 · 2 在跑')
     expect(textOf(rows[0]?.querySelector('.sp-row-mode'))).toBe(zh['status.agent.modeOneShot'])
     expect(rows[3]?.querySelector('.sp-row-time')?.getAttribute('data-tone')).toBe('danger')
+    // 在跑的两行给停止；收工的两行给移除（2026-11-19）。
     expect(section('agent')?.querySelectorAll('.sp-row-stop')).toHaveLength(2)
+    expect(section('agent')?.querySelectorAll('.sp-row-remove')).toHaveLength(2)
     // 行尾右箭头（dsh 面板那一格）。
     expect(rows.every((row) => row.querySelector('.sp-row-arrow') !== null)).toBe(true)
     // token 只在有值时画：run-late 有 58.1M，其余（undefined）不画。
@@ -518,7 +518,8 @@ describe('子智能体区（AgentSection）', () => {
     expect(toastText()).toContain('已叫停 run-early')
 
     fireEvent.click(rows[2]?.querySelector('.sp-row-open') as HTMLElement)
-    expect(opened).toEqual(['idle-1'])
+    await flush()
+    expect(callsOf(harness, 'openTeammate')[0]?.args).toEqual(['idle-1'])
   })
 
   test('token 无值或 0 都不画（不显示假的 0）；全员收工时读数只报「N 已完成」', async () => {
