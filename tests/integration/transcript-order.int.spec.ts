@@ -230,6 +230,33 @@ describe('③ 准备中窗口：直播尾里的「准备中」工具是负 id', 
     const ids = preparingTranscript().liveEntries().map((entry) => entry.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  test('准备中的半截参数走 argsPreview，不进 argsText（终稿参数那一格）', () => {
+    // 2026-11-18：内核边吐参数边报累积原文，adapter 按 index 原地更新；半截原文单开
+    // `argsPreview`——`argsText` 的语义是终稿参数，界面各处会拿它真解析（摘要 / 文件路径 / diff）。
+    const transcript = new transcriptModule.Transcript()
+    transcript.reduce({ type: 'user', text: '跑一下' })
+    transcript.reduce({ type: 'tool/prepare', name: 'bash', args: '{"command":"pnpm', index: 0 })
+    transcript.reduce({ type: 'tool/prepare', name: 'bash', args: '{"command":"pnpm build', index: 0 })
+    const preparing = transcript
+      .liveEntries()
+      .filter((entry): entry is Extract<TranscriptEntry, { kind: 'tool' }> => entry.kind === 'tool' && entry.call.status === 'preparing')
+    expect(preparing).toHaveLength(1)
+    expect(preparing[0]?.call.argsPreview).toBe('{"command":"pnpm build')
+    expect(preparing[0]?.call.argsText).toBe('')
+  })
+
+  test('同名并行两条准备中各占一行，index 不同不合并', () => {
+    const transcript = new transcriptModule.Transcript()
+    transcript.reduce({ type: 'user', text: '读两个' })
+    transcript.reduce({ type: 'tool/prepare', name: 'read', args: '{"file_path":"a', index: 0 })
+    transcript.reduce({ type: 'tool/prepare', name: 'read', args: '{"file_path":"b', index: 1 })
+    const preparing = transcript
+      .liveEntries()
+      .filter((entry): entry is Extract<TranscriptEntry, { kind: 'tool' }> => entry.kind === 'tool')
+    expect(preparing).toHaveLength(2)
+    expect(preparing.map((entry) => entry.call.argsPreview)).toEqual(['{"file_path":"a', '{"file_path":"b'])
+  })
 })
 
 describe('④ 接缝：真 applyHostFrame 归并后顺序与宿主数组逐项一致', () => {

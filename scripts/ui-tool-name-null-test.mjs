@@ -62,20 +62,25 @@ const argsMod = await import(new URL('../src/packages/ui-primitives/ui/tool-args
 {
   console.log('[1] applyToolCallDelta：null 只是「这片没给」')
   const calls = new Map()
+  // 2026-11-18 起回调多带两样：累积参数原文与这次调用在消息里的序号（准备中那一行要显示
+  // 半截命令，同名并行也靠序号认人）。这里只记名字与参数，名字的「不重复报」口径不变。
   const prepared = []
-  const apply = (delta) => llm.applyToolCallDelta(calls, delta, (name) => prepared.push(name))
+  const apply = (delta) => llm.applyToolCallDelta(calls, delta, (name, argsText) => prepared.push({ name, argsText }))
 
   apply({ index: 0, id: 'call_1', function: { name: 'run_code', arguments: '{"co' } })
   const first = calls.get(0)
   check('首发分片落名字与参数', first.name === 'run_code' && first.arguments === '{"co', JSON.stringify(first))
-  check('首发分片通知一次「准备中」', prepared.length === 1 && prepared[0] === 'run_code', prepared.join(','))
+  check('首发分片通知一次「准备中」', prepared.length === 1 && prepared[0].name === 'run_code', JSON.stringify(prepared))
 
   apply({ index: 0, id: null, function: { name: null, arguments: 'de": 1}' } })
   const merged = calls.get(0)
   check('null 名字不覆盖已收到的名字', merged.name === 'run_code', String(merged.name))
   check('null ID 不覆盖已收到的 ID', merged.id === 'call_1', String(merged.id))
   check('参数继续累积', merged.arguments === '{"code": 1}', merged.arguments)
-  check('名字没变→不重复报「准备中」', prepared.length === 1, String(prepared.length))
+  // 参数增长会再报一次（新行为），但报的是同一名字 + 新的累积原文，不是「又声明了一遍名字」
+  check('名字没变→不重复报名字（参数增长那一次照报）', prepared.length === 2 && prepared[1].name === 'run_code' && prepared[1].argsText === '{"code": 1}', JSON.stringify(prepared))
+  apply({ index: 0, id: null, function: { name: 'run_code', arguments: null } })
+  check('名字重复到达、没有新参数→不再报', prepared.length === 2, JSON.stringify(prepared))
 
   // 第一片就是 null：名字落成空串，绝不能落成 null（那是白屏的根）
   const blank = new Map()
