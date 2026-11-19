@@ -249,6 +249,9 @@ export default defineConfig({
     // 测试一律按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧，
     // tui / integration / snapshot 三层探针都靠逐帧读假 stdout 断言。
     env: TERMINAL_TEST_ENV,
+    // Windows CI runner 的 TEMP/TMP 是 8.3 短名，先规范成长名（原因见该文件头）：
+    // 路径策略走 realpath、测试期望值走 os.tmpdir()，两边写法不一致会误红一片。
+    setupFiles: ['tests/setup/canonical-tmp.ts'],
     // 覆盖率（P3 第 3 项）：只出报告不设门（概要设计 §9.1——先看清盲区分布，
     // P4 冻结基线、P6 逐目录抬杠）。纯类型文件与入口不算覆盖面。
     coverage: {

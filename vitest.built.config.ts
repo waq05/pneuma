@@ -29,6 +29,7 @@ export default defineConfig({
     include: ['tests/built/**/*.built.e2e.ts'],
     // 测试进程按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧。
     env: TERMINAL_TEST_ENV,
+    setupFiles: ['tests/setup/canonical-tmp.ts'],
     environment: 'node',
     pool: 'forks',
     maxWorkers: 2,

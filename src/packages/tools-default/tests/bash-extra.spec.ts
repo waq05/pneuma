@@ -245,7 +245,10 @@ describe('createBashTool：超时与取消', () => {
 
   test('取消信号：返回「命令被用户取消」并保留取消前输出', async () => {
     const controller = new AbortController()
-    setTimeout(() => controller.abort(), 300)
+    // 300ms 太紧：Windows CI 上 node 冷启动 + shell 拉起就可能超过它，子进程还没来得及
+    // 打出 BEFORE-ABORT 就被打断，断言就成了「看机器快慢」。子进程本来要睡 30s，
+    // 把取消点放到 3s，语义不变（仍是「跑着的时候取消」），测试仍远低于 20s 上限。
+    setTimeout(() => controller.abort(), 3_000)
     const result = await createBashTool().run(
       { command: nodeScript("console.log('BEFORE-ABORT'); setTimeout(() => {}, 30_000)") },
       ctx(workdir(), controller.signal),
