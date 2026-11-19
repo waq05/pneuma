@@ -90,7 +90,7 @@
 
 **证据**
 
-- 截图：`desktop/shots/out/feat-bash-card.png`
+- 截图：本地跑 `desktop/shots` 下的诊断脚本得到（截图为本机产物，不入库）
 - 两轮对照（`_diag-bash-sandbox.mjs`）：A 不预建任何目录、B 预建 `sandbox/tmp`，**两轮报同一个错**，
   可写根路径里的 hash 也一样（`112b43dfbc29`）。所以不是「目录晚一步建」，是打 ACL 的那个路径
   在打之前就没被创建出来。
@@ -145,7 +145,7 @@
 
 - **状态**：已修（2026-11-17）
 - **严重度**：P1（两个一级入口完全失效，插件中心没有别的入口）
-- **发现**：2026-11-17，打包版；dev 版（`desktop/out`）同样复现，**不是打包问题**
+- **发现**：2026-11-17，打包版；dev 版（本地起开发构建）同样复现，**不是打包问题**
 - **影响**：想进技能页或插件中心的人，点侧栏没反应，只剩「设置」一条路（而设置里也没有插件中心）。
 
 **复现**
@@ -246,7 +246,7 @@
 
 **证据**
 
-- 截图：`desktop/shots/out/feat-settings.png`
+- 截图：本地跑设置页诊断脚本得到（截图为本机产物，不入库）
 - `src/packages/log/locale/ui.zh.json` 里确实有 `section.title = 运行日志`、`section.subtitle = 落到 ~/.dsc/logs…`
 - `src/packages/log` 只有宿主半（`index.ts`/`sink.ts`/`filter.ts`/`locale`），没有 `ui/` 目录、
   `package.json` 里也没有 `client` 声明；`lib/ui/plugins/` 与打包产物 `resources/dsc-core/lib/ui/plugins/`
