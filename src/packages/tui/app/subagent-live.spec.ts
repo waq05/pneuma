@@ -48,7 +48,19 @@ import { render } from 'ink'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { DscRuntime } from '@pneuma/runtime/contract.js'
 import { bootKernel, tempHome, type BootedKernel } from '../../../../tests/harness.js'
-import { runCommand } from '../../commands/index.js'
+
+/**
+ * `runCommand` 只能动态 import（下面的 beforeAll 里），不能写成顶层静态 import。
+ *
+ * 原因：它会拉进 `@pneuma/runtime/core/plugin-registry.js`，而 `core/path-policy.ts:20`
+ * 在**模块加载那一刻**就把 `DSC_HOME` 定死、`core/plugin-registry.ts:192` 跟着把
+ * `PLUGINS_JSON` 定死。静态 import 在本文件顶层的 `process.env.DSC_HOME = <临时目录>`
+ * 之前执行，内核于是去读真实的 `~/.dsc/plugins.json`：那里没有本文件写的那份清单，
+ * `subagent`（`defaultDisabled`）就被当成关着，`subagent`/`team_message`/`team_task`
+ * 一个都不挂——模型调用报「未知工具：subagent」，卡片永远不出现。
+ * 同一条规矩 `composer.spec.ts` 文件头也写着：换 DSC_HOME 必须在模块被加载之前。
+ */
+type RunCommand = typeof import('../../commands/index.js').runCommand
 
 /** 临时主目录：内核的会话、配置、插件清单全落这里（真实 `~/.dsc` 不动）。 */
 const home = tempHome('dsc-subagent-live-')
@@ -201,6 +213,7 @@ beforeAll(async () => {
   })
 
   const { App } = await import('./App.js')
+  const { runCommand }: { runCommand: RunCommand } = await import('../../commands/index.js')
   const runtime = (kernel.ctx as { ui: DscRuntime }).ui
   const instance = render(
     createElement(
@@ -211,7 +224,7 @@ beforeAll(async () => {
         } },
       createElement(App as React.ComponentType<Record<string, unknown>>, {
         runtime,
-        dispatchCommand: (input: string, rt: DscRuntime, ui: unknown) => runCommand(input, rt, ui as Parameters<typeof runCommand>[2]),
+        dispatchCommand: (input: string, rt: DscRuntime, ui: unknown) => runCommand(input, rt, ui as Parameters<RunCommand>[2]),
       }),
     ),
     {
