@@ -42,7 +42,7 @@
  *
  * @module dsc/tests/harness
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -1137,6 +1137,31 @@ export async function bootKernel(options: BootKernelOptions): Promise<BootedKern
 
 // ── 6.6 runCli ───────────────────────────────────────────────────────────────
 
+/**
+ * 收掉一个 CLI 子进程的整棵进程树（wrapper + 它 spawn 的 boot）。
+ *
+ * `bin/dsc.js` 用 `stdio: 'inherit'` spawn `lib/boot.js`；只杀 wrapper 会留下孤儿 boot，
+ * 它仍攥着测试这边的 stdout/stderr 管道写端，`close` 事件于是永远不发——C7/C8 在 Linux
+ * 上撞 60s 超时就是这么来的。POSIX 下用 `detached: true` 起在独立进程组，负 pid 一次收组；
+ * Windows 走 `taskkill /T /F`。
+ */
+function killCliTree(child: ChildProcess): void {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    return
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // 已经退出：正常收场。
+    }
+  }
+}
+
 /** `runCli` 的可选项。 */
 export interface RunCliOptions {
   /** 超时毫秒，默认 60_000；超时后 SIGKILL 并返回，不抛。 */
@@ -1218,6 +1243,7 @@ export function runCli(args: string[], opts: RunCliOptions = {}): Promise<RunCli
     cwd: opts.cwd ?? home,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   })
 
   return new Promise<RunCliResult>((resolveRun, rejectRun) => {
@@ -1227,8 +1253,9 @@ export function runCli(args: string[], opts: RunCliOptions = {}): Promise<RunCli
     let settled = false
     const timer = setTimeout(() => {
       timedOut = true
-      // SIGKILL：CLI 可能装着信号处理器（Ctrl+C 收尾），SIGTERM 会被它接住继续跑。
-      child.kill('SIGKILL')
+      // SIGKILL 整棵进程树：CLI 可能装着信号处理器（Ctrl+C 收尾），SIGTERM 会被它接住继续跑；
+      // 只杀 wrapper 还会留下攥着管道的 boot 子进程，close 永远等不到。
+      killCliTree(child)
     }, timeoutMs)
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8')

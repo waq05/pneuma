@@ -17,7 +17,7 @@
  *
  * @module dsc/tests/cli/support
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -68,7 +68,40 @@ export interface LiveCli {
 }
 
 /**
+ * 收掉 CLI 的整棵进程树（wrapper + 它 spawn 的 boot），并等 `close`。
+ *
+ * 为什么不能只 `child.kill('SIGKILL')`：`bin/dsc.js` 用 `stdio: 'inherit'` spawn
+ * `lib/boot.js`，wrapper 一死 boot 就成孤儿，**仍然攥着**父进程传下去的 stdout/stderr
+ * 管道写端。Node 的 `close` 事件要等所有 stdio 都关闭才发，于是 promise 永远挂着——
+ * 表现为 C7/C8 在 Linux 上直接撞 vitest 的 60s 测试超时。
+ */
+function killCliTree(child: ChildProcess): void {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    // /T 连子进程一起，/F 不给挂起的机会（测试收尾要确定）。
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    return
+  }
+  // detached 起的就是进程组长（pid === 组 id）：负 pid 一次收掉整组。
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // 组已经不在了（或没起成 detached）时退回单进程杀法。
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // 已经退出：正常收场，不是错误。
+    }
+  }
+}
+
+/**
  * 起一个 CLI 并让它活着（stdin 保持打开，不触发 C6 的 EOF 收场）。
+ *
+ * POSIX 上用 `detached: true` 起在**独立进程组**里：`bin/dsc.js` 会再 spawn
+ * `lib/boot.js`（`stdio: 'inherit'`），只杀 wrapper 的话 boot 还活着、还攥着测试给的
+ * 管道写端，`close` 事件永远等不到——C7/C8 在 Linux 上就是卡在这里超时。整组一起杀
+ * 才能让 `close` 落地。Windows 走 `taskkill /T /F`，同一件事。
  *
  * @param args - 传给 `bin/dsc.js` 的参数
  * @param target - 隔离主目录
@@ -78,6 +111,7 @@ export function spawnCli(args: string[], target: CliHome): LiveCli {
     cwd: target.home,
     env: envFor(target),
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   })
   let stdout = ''
   let stderr = ''
@@ -100,12 +134,7 @@ export function spawnCli(args: string[], target: CliHome): LiveCli {
     stderr: () => stderr,
     exited,
     async kill() {
-      if (process.platform === 'win32') {
-        // /T 连同 boot 子进程一起收掉，/F 不给它挂起的机会（测试收尾要确定）。
-        spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
-      } else {
-        child.kill('SIGKILL')
-      }
+      killCliTree(child)
       await exited
     },
   }
