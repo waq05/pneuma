@@ -36,6 +36,7 @@ export default defineConfig({
     include: ['tests/live/**/*.live.spec.ts'],
     // 测试进程按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧。
     env: TERMINAL_TEST_ENV,
+    setupFiles: ['tests/setup/canonical-tmp.ts'],
     environment: 'node',
     // 一条请求 + 一次工具往返就可能 60s 以上；给到 3 分钟，红的就该是真红。
     testTimeout: 180_000,
