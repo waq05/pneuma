@@ -119,6 +119,11 @@ jobs:
       - name: 文档漂移（第一批，只报不红）
         run: pnpm run docs-check
         continue-on-error: true
+      # tui 层里 subagent-live.int.spec 起的是「宿主来自 src、插件来自 lib」的混合平面：
+      # 没有 lib 产物它会以「没有 lib/ 构建产物」整文件失败（2026-11-19 之前一直这么红）。
+      # 所以这层测试前必须先 build，别指望 pnpm test 自己跳。
+      - name: 编译（tui 的真内核用例要 lib 平面）
+        run: pnpm run build
       # unit + ui + tui 三层（2026-11-14 起 221 文件 / 2500+ 条）。JUnit 报告同时落一份，
       # 失败时能在 Actions 的 artifact 里逐用例看（P6 flake 治理：报告 + 耗时历史）。
       - name: 单元、界面与 TUI 测试
@@ -157,6 +162,10 @@ jobs:
       # 所以这里手动分两步（build 的新鲜度守卫口径不变）。
       - name: 编译内核
         run: pnpm run build
+      # 集成层有两处用例读界面壳的产物清单（two-halves：界面半进产物表 / 启动图 / 路由）：
+      # 只 build 内核不 build 壳，它们会以「清单未声明 apiVersion」红（2026-11-19 查账）。
+      - name: 编译界面壳（集成层的界面产物用例要它）
+        run: pnpm run build:ui
       - name: 集成测试（分片 ${{ matrix.shard }}）
         run: pnpm exec vitest run --project integration --shard=${{ matrix.shard }}/3 --reporter=default --reporter=junit --outputFile.junit=reports/int-${{ matrix.shard }}.xml
       - name: 上传测试报告
@@ -424,6 +433,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: 测试代码的类型检查
         run: pnpm run typecheck:spec
+      # 同 core job：tui 的 subagent-live 要 lib 平面，先 build 再跑。
+      - name: 编译（tui 的真内核用例要 lib 平面）
+        run: pnpm run build
       - name: 单元 / 界面 / TUI 测试
         run: pnpm test --reporter=default --reporter=junit --outputFile.junit=reports/unit-windows.xml
       - name: 上传测试报告
