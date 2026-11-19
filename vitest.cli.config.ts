@@ -17,6 +17,7 @@
 import { fileURLToPath, URL } from 'node:url'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
+import { TERMINAL_TEST_ENV } from './tests/support/test-env.js'
 import { jsToTsFallback } from './tests/plugins/js-to-ts.js'
 
 export default defineConfig({
@@ -31,6 +32,8 @@ export default defineConfig({
     // 临时 HOME 的收尾（全绿才清）与新主进程共享同一套判定。
     globalSetup: ['tests/setup/global-clean.ts'],
     include: ['tests/cli/**/*.cli.e2e.ts'],
+    // 测试进程按真实终端跑（原因见 tests/support/test-env.ts）：ink 在 CI 里只写最后一帧。
+    env: TERMINAL_TEST_ENV,
     environment: 'node',
     // 单条上限 60s（设计 §11.1）；C7/C8 要等 TUI 落盘，给足。
     testTimeout: 60_000,
