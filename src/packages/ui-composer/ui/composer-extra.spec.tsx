@@ -368,6 +368,9 @@ describe('附件', () => {
     // 上传成功后本地预览地址要释放，卡片改用宿主引用。
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:fake-preview')
 
+    // 附件上传是异步的：卡片先出现、发送按钮要等上传回执才可用；直接点会被 disabled 挡掉，
+    // Windows runner 上偶发（上传回执比断言慢一拍）。先等按钮可用再点。
+    await waitFor(() => expect(sendOf(container).disabled).toBe(false))
     fireEvent.click(sendOf(container))
     await waitFor(() => {
       expect(harness.calls.some((call) => call.method === 'submit')).toBe(true)
