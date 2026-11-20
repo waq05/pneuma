@@ -385,3 +385,11 @@ integration 层 `win-token.int.spec.ts` 已覆盖真实令牌路径。
 **同一夜跑里另外两处红灯，同批修掉**：
 - probe job：`readme-test` 的 H2 期望清单漏了 0.9.2 新增的「界面」；`settings-embed-slot-test` 把 ✓/✗ 条数写死 3（Linux 只认 2 个 shell）；`superagent-candidate-e2e` 要读 `lib/ui/plugins`，而 CI 把它排在内核自检之前跑（顺序已调）。
 - `check:plugin`：依赖方向判据把 spec 里的跨包 import 也判红（16 条假红；判据改为只管发布代码，见 development.md 包依赖方向门禁）；`plugin-inventory` 快照还停在 `^0.9.1`，按 0.9.2 重录。
+
+### W13（2026-11-20 同日第二轮）
+
+第一轮后仍有约 1,700 行缺口，按文件切成 5 块再补一轮（只新增测试）：superagent 剩余（`subagent/index.ts` 队友生成/名册、`app/sessions` 真回合闭包）、ui 大组件（`ui-settings`/`ui-plugins`/`ui-skills`/`ui-ask`/`model-controls` 等）、需要真对端的 sys 两批（`remote`/`skills`/`memory`/`self-improve/ledger`/`dock-browser` 与 `core` 的 git-info/ui-events/ui-server/ui-bundles/os-lock/`bash.ts`）、零散小组件。
+
+实测（全五 project，Windows 本机）：lines **95.65%**、branches **85.07%**、functions **93.07%**、statements **93.18%**，`src/core/**` lines **96.78%**——原基线阈值仍全部通过。`src/packages/sandbox/win/**`（271 行）不补：只有 Windows 能量到，CI 跑 Ubuntu 天然不计。
+
+本地全量跑仍有 5 条既有 flake（`lsp` 真子进程超时 4 条 + `tests/harness.int.spec.ts` runCli 1 条），单跑全绿，与新增测试无关；CI Ubuntu 上同一批用例一直是绿的。

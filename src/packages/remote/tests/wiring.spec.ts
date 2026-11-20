@@ -16,10 +16,10 @@
  */
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type {
   RemoteServerDeps,
@@ -1171,3 +1171,138 @@ describe('remotePlugin.apply：设置分区与生命周期', () => {
     expect(fieldText(section, '运行状态')).not.toContain('运行中')
   })
 })
+
+// ── w13 补盲：壳档静态资源、路由兜底、主控位待命 ───────────────────────────────
+
+/** 造一份假的壳档伺服面：根路径伺服 assetsDir 里的 index.html，数据通道可注入行为。 */
+function fakeShellUi(overrides: Partial<RemoteShellUi> = {}): RemoteShellUi {
+  const assetsDir = mkdtempSync(join(HOME, 'shell-assets-'))
+  writeFileSync(join(assetsDir, 'index.html'), '<html><body>手机壳首页</body></html>', 'utf8')
+  return {
+    assetsDir,
+    boot: () => ({ plugins: [], batches: {} }) as never,
+    combos: () => ({}),
+    authenticated: () => true,
+    events: {
+      handleInvoke: async () => undefined,
+      handleEvents: () => undefined,
+      stop: () => undefined,
+    },
+    ...overrides,
+  } as RemoteShellUi
+}
+
+describe('w13 补盲：壳档与传输层兜底', () => {
+  test('壳档：根路径回壳产物并注入启动脚本，/api/boot 回启动图', async () => {
+    const testCase = await startRemote({ port: 0, shellUi: fakeShellUi() })
+    const page = await rawRequest(testCase.port, { path: '/' })
+    expect(page.status).toBe(200)
+    expect(page.body).toContain('手机壳首页')
+    // index.html 会被补上外链启动图标签（与本机界面服务同一份变换）
+    expect(page.body).toContain('/boot.js')
+
+    const boot = await rawRequest(testCase.port, { path: '/api/boot' })
+    expect(boot.status).toBe(200)
+    expect(JSON.parse(boot.body)).toMatchObject({ plugins: [] })
+  })
+
+  test('壳档数据通道抛错：顶层兜底回 500 JSON，不是把进程带崩', async () => {
+    const shell = fakeShellUi()
+    shell.events.handleInvoke = async () => {
+      throw new Error('invoke 炸了')
+    }
+    const testCase = await startRemote({ port: 0, shellUi: shell })
+    const response = await rawRequest(testCase.port, {
+      method: 'POST',
+      path: '/api/invoke',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'submit', args: [] }),
+    })
+    expect(response.status).toBe(500)
+    expect(response.body).toContain('invoke 炸了')
+  })
+
+  test('上传落盘失败：回 500 并说明「写盘失败」', async () => {
+    // 上传根目录位置被一个文件占着 → mkdirSync 必炸，走 save 的 catch
+    rmSync(join(HOME, 'uploads'), { recursive: true, force: true })
+    writeFileSync(join(HOME, 'uploads'), '占位文件', 'utf8')
+    try {
+      const testCase = await startRemote()
+      const issued = testCase.pairing.issueCode()!
+      const paired = await pairViaHttp(testCase, issued.code)
+      const response = await rawRequest(testCase.port, {
+        method: 'POST',
+        path: '/api/upload?filename=note.txt',
+        headers: { authorization: `Bearer ${paired.token}` },
+        body: 'hello',
+      })
+      expect(response.status).toBe(500)
+      expect(response.body).toContain('写盘失败')
+    } finally {
+      rmSync(join(HOME, 'uploads'), { force: true })
+    }
+  })
+
+  test('推送退订：推送开着但设备凭据无效时 401', async () => {
+    const testCase = await startRemote()
+    testCase.state.pushEnabled = true
+    const response = await rawRequest(testCase.port, {
+      method: 'POST',
+      path: '/api/push-unsubscribe',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'https://example.com/push' }),
+    })
+    expect(response.status).toBe(401)
+    expect(response.body).toContain('设备凭据无效')
+  })
+})
+
+describe('w13 补盲：主控位被占时的待命与出码', () => {
+  /** 写一份「另一个活进程握着主控位」的文件（pid 用父进程，保证 isProcessAlive 为真）。 */
+  function occupyOwner(): { file: string; pid: number } {
+    const dir = join(HOME, 'remote')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, '.owner.json')
+    const pid = process.ppid > 0 ? process.ppid : process.pid
+    writeFileSync(file, JSON.stringify({ pid, birth: Date.now() - 999_000, port: 17_000, at: Date.now() }), 'utf8')
+    return { file, pid }
+  }
+
+  test('待命：不起服务、写一条「接管」提示、状态报接管方 pid、30 秒后重试', async () => {
+    const owner = occupyOwner()
+    const port = await freePort()
+    vi.useFakeTimers()
+    const harness = mountPlugin({ prefs: { enabled: true, port } })
+    try {
+      expect(harness.notices.join('\n')).toContain('另一个 Pneuma 进程')
+      expect(fieldText(harness.section(), '运行状态')).toContain(String(owner.pid))
+      // 30 秒重试到点：再走一遍 applyPrefs（主控位仍在别人手里，继续待命）
+      await vi.advanceTimersByTimeAsync(OWNER_RETRY_BUDGET)
+      expect(harness.notices.join('\n')).toContain(`pid ${String(owner.pid)}`)
+    } finally {
+      vi.useRealTimers()
+      harness.dispose()
+      rmSync(owner.file, { force: true })
+    }
+  })
+
+  test('局域网出码：服务没就绪时等端口，等不到按 reach=down 如实报', async () => {
+    const owner = occupyOwner()
+    vi.useFakeTimers()
+    const harness = mountPlugin({ prefs: { enabled: false } })
+    try {
+      const action = harness.section().action!('pair-code-lan') as Promise<{ data: { reach: string; code: string } }>
+      await vi.advanceTimersByTimeAsync(2_000)
+      const result = await action
+      expect(result.data.reach).toBe('down')
+      expect(result.data.code.length).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+      harness.dispose()
+      rmSync(owner.file, { force: true })
+    }
+  })
+})
+
+/** 休眠重试的间隔（与 index.ts 的 OWNER_RETRY_MS 同值；测试要推进假钟）。 */
+const OWNER_RETRY_BUDGET = 30_050

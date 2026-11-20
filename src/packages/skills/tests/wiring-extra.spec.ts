@@ -10,6 +10,7 @@
  * @module dsc/packages/skills/tests/wiring-extra.spec
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { createServer as createHttpServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -420,4 +421,183 @@ test('一个技能都没有：/skills 给出放哪的指引', async () => {
     writeSkill(SKILLS, 'alpha')
     writeSkill(SKILLS, 'beta')
   }
+})
+
+// ── 内置 HTTP 市场源：内存缓存、回退、安装（w13）────────────────────────────────
+
+/** 起一个只服务市场索要内容的本地 HTTP 源（端口 0，不联网）。 */
+async function startIndexServer(): Promise<{ url: string; requests: string[]; close: () => Promise<void> }> {
+  const requests: string[] = []
+  const server = createHttpServer((req, res) => {
+    const url = req.url ?? '/'
+    requests.push(url)
+    if (/\.json(\?|$)/.test(url)) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify([
+          { name: 'http-skill', description: '从本地 HTTP 源来的技能', path: 'http-skill.md' },
+        ]),
+      )
+      return
+    }
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('# http-skill\n\n本地源正文\n')
+  })
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  let closed = false
+  return {
+    url: `http://127.0.0.1:${String(port)}`,
+    requests,
+    close: async () => {
+      if (closed) return
+      closed = true
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve())
+      })
+    },
+  }
+}
+
+/** 把 settings.json 的市场源改成指定的几个。 */
+function writeMarketSources(sources: Array<{ name: string; url: string }>): void {
+  writeFileSync(SETTINGS_JSON, JSON.stringify({ version: 1, marketSources: sources }), 'utf8')
+}
+
+test('HTTP 市场源：第二次浏览命中内存缓存不联网；强制刷新失败回退旧列表并给原因', async () => {
+  const source = await startIndexServer()
+  writeMarketSources([{ name: 'local-http', url: `${source.url}/index.json` }])
+  const harness = await mount()
+  try {
+    const first = await harness.service.browseMarket('local-http')
+    expect(first.items.map((item) => item.name)).toEqual(['http-skill'])
+    expect(first.error).toBeUndefined()
+    const requestsAfterFirst = source.requests.length
+    expect(requestsAfterFirst).toBeGreaterThan(0)
+
+    const second = await harness.service.browseMarket('local-http')
+    expect(second.items[0]?.name).toBe('http-skill')
+    // 内存缓存（1 小时新鲜期）命中：一次网络都不碰
+    expect(source.requests.length).toBe(requestsAfterFirst)
+
+    // 清掉磁盘缓存再关服务：强制刷新只能靠内存里那份旧列表兜底，并把原因放进 error
+    rmSync(join(DSH, 'cache'), { recursive: true, force: true })
+    await source.close()
+    const fallback = await harness.service.browseMarket('local-http', true)
+    expect(fallback.items[0]?.name).toBe('http-skill')
+    expect(fallback.error).toBeTruthy()
+  } finally {
+    await source.close()
+  }
+})
+
+test('HTTP 市场源：内存缓存超过新鲜期按未命中重扫，联网失败且无兜底时把错误交出去', async () => {
+  const source = await startIndexServer()
+  writeMarketSources([{ name: 'local-http', url: `${source.url}/index.json` }])
+  const harness = await mount()
+  try {
+    expect((await harness.service.browseMarket('local-http')).items[0]?.name).toBe('http-skill')
+    rmSync(join(DSH, 'cache'), { recursive: true, force: true })
+    await source.close()
+    // 把「现在」推到两小时后：内存缓存按 1 小时判过期，走重扫（这里必然失败）
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2 * 60 * 60 * 1000)
+    try {
+      const result = await harness.service.browseMarket('local-http')
+      expect(result.items).toEqual([])
+      expect(result.error).toBeTruthy()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  } finally {
+    await source.close()
+  }
+})
+
+test('HTTP 市场源：内存条目缓存到上限按最旧淘汰，之后照样能浏览', async () => {
+  const source = await startIndexServer()
+  const sources = Array.from({ length: 33 }, (_unused, index) => ({
+    name: `src-${String(index)}`,
+    url: `${source.url}/index-${String(index)}.json`,
+  }))
+  writeMarketSources(sources)
+  const harness = await mount()
+  try {
+    for (const item of sources) {
+      const result = await harness.service.browseMarket(item.name)
+      expect(result.items[0]?.name).toBe('http-skill')
+    }
+    // 第 33 个 key 进来时触发了淘汰；最后一条仍在缓存里，能直接命中
+    const again = await harness.service.browseMarket('src-32')
+    expect(again.items[0]?.name).toBe('http-skill')
+  } finally {
+    await source.close()
+  }
+})
+
+test('HTTP 市场源安装：按名字回查条目并落盘；重复安装报错走失败分支', async () => {
+  const source = await startIndexServer()
+  writeMarketSources([{ name: 'local-http', url: `${source.url}/index.json` }])
+  const harness = await mount()
+  try {
+    await harness.service.browseMarket('local-http')
+    const installed = await harness.service.installMarketSkill('local-http', 'http-skill')
+    const installedText = installed.ok ? (installed.notice ?? '') : installed.error
+    expect(installed.ok, installedText).toBe(true)
+    expect(installedText).toContain('已安装 http-skill')
+    expect(existsSync(join(SKILLS, 'http-skill.md')), `${installedText} / SKILLS=${SKILLS}`).toBe(true)
+    expect(harness.emitted).toContain('dsc/skills-changed')
+
+    // 目标已存在：installMarketEntry 抛错，插件把它转成 { ok:false, error }
+    const again = await harness.service.installMarketSkill('local-http', 'http-skill')
+    expect(again.ok).toBe(false)
+    expect(again.ok ? '' : again.error).toContain('本地已有')
+  } finally {
+    await source.close()
+  }
+})
+
+test('注册提供方/市场的撤销函数：撤掉后不再参与刷新与源清单', async () => {
+  const harness = await mount()
+  let calls = 0
+  const provider: SkillProvider = {
+    name: 'disp-provider',
+    rank: 600,
+    list: () => {
+      calls += 1
+      return []
+    },
+    get: () => undefined,
+  }
+  const offProvider = harness.service.registerProvider(provider)
+  await waitFor(() => calls >= 1)
+  offProvider()
+  const frozen = calls
+  for (const handler of harness.handlers.get('dsc/skills-changed') ?? []) handler()
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(calls).toBe(frozen)
+
+  const market: SkillMarketProvider = {
+    name: 'disp-market',
+    browse: () => [],
+    install: () => '',
+  }
+  const offMarket = harness.service.registerMarket(market)
+  expect((await harness.service.browseMarket('disp-market')).source).toBe('disp-market')
+  offMarket()
+  const gone = await harness.service.browseMarket('disp-market')
+  expect(gone.error).toContain('没有配置技能市场源')
+})
+
+test('自定义发现目录是个文件：扫描失败写进对话流，其他技能照常', async () => {
+  const harness = await mount()
+  const bogus = join(TMP, 'not-a-directory.md')
+  writeFileSync(bogus, 'x', 'utf8')
+  writeFileSync(CONFIG_YAML, ['skills:', `  - ${JSON.stringify(bogus)}`, ''].join('\n'), 'utf8')
+  for (const handler of harness.handlers.get('dsc/skills-changed') ?? []) handler()
+  await waitFor(() => harness.transcript.some((text) => text.includes('技能目录') && text.includes('读取失败')))
+  expect(harness.transcript.join('\n')).toContain('读取失败')
+  expect(harness.service.catalogText()).toContain('`alpha`')
 })

@@ -796,3 +796,47 @@ describe('cordis 装配路径', () => {
     }
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* W13 补盲：灰度开关的名单形态与默认值、cordis 路径的 onProvide。      */
+/* ------------------------------------------------------------------ */
+
+describe('cordis 灰度开关的名单形态（W13）', () => {
+  test('名单形态：只有点名的走 cordis，其余仍走旧账本', async () => {
+    scope['__DSC_CORDIS_PROBE__'] = ['picked']
+    const applied: string[] = []
+    const session = await bootOnce(
+      graph([entry('picked'), entry('other')], [{ phase: 'early', entries: ['picked', 'other'] }]),
+      {
+        picked: makeFactory(() => {
+          applied.push('picked')
+        }),
+        other: makeFactory(() => {
+          applied.push('other')
+        }),
+      },
+    )
+    expect(applied).toEqual(['picked', 'other'])
+    expect(session.getState().plugins['picked']).toMatchObject({ via: 'cordis', fiber: 2 })
+    expect(session.getState().plugins['other']).toMatchObject({ via: 'ledger' })
+  })
+
+  test('开关不设（缺省）：全部走 cordis', async () => {
+    delete scope['__DSC_CORDIS_PROBE__']
+    const session = await bootOnce(graph([entry('defaulted')]), {
+      defaulted: makeFactory(() => undefined),
+    })
+    expect(session.getState().plugins['defaulted']).toMatchObject({ via: 'cordis', fiber: 2 })
+  })
+
+  test('cordis 路径里插件 provide 的服务进报告（onProvide 回调）', async () => {
+    scope['__DSC_CORDIS_PROBE__'] = '*'
+    const session = await bootOnce(graph([entry('provider')]), {
+      provider: makeFactory((ui) => {
+        ;(ui['provide'] as (name: string, value: unknown) => void)('w13.service', 7)
+      }),
+    })
+    expect(session.services.consume('w13.service')).toBe(7)
+    expect(session.getReports()).toMatchObject([{ id: 'provider', ok: true, provides: ['w13.service'] }])
+  })
+})

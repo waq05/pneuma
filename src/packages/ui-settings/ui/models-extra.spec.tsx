@@ -821,3 +821,153 @@ describe('刷新', () => {
     await waitFor(() => expect(calls.filter((call) => call.method === 'getModelConfig')).toHaveLength(2))
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* W13 补盲：Base URL 键盘、批量文本、新增端点带密钥、模型校验、设默认失败、 */
+/*           思考档位的「加回来」两条回调。                                   */
+/* ------------------------------------------------------------------ */
+
+/** 等到某个选择器出现（返回命中的元素）。 */
+async function waitForElement(page: ReturnType<typeof render>, selector: string): Promise<Element> {
+  await waitFor(() => expect(page.container.querySelector(selector)).not.toBeNull())
+  return page.container.querySelector(selector) as Element
+}
+
+describe('W13：端点表单与批量文本', () => {
+  test('Base URL：回车保存；Esc 把本地输入还原成已存值；桥失败时 toast 并重取配置', async () => {
+    const native = nativeOf()
+    const { channel, calls } = channelOf((method) => (method === 'getModelConfig' ? configOf() : { ok: true }))
+    const page = mount(channel)
+    await waitRail(page)
+
+    const urlInput = (await waitForElement(page, 'input[aria-label="Base URL"]')) as HTMLInputElement
+    urlInput.focus()
+
+    // 回车 = 失焦保存：一次 saveProvider，且之后重取了配置。
+    type(urlInput, 'https://lab2.example/v1')
+    fireEvent.keyDown(urlInput, { key: 'Enter' })
+    await waitFor(() => expect(native.calls.some((call) => call.op === 'saveProvider')).toBe(true))
+    expect(native.calls[0]?.args[0]).toMatchObject({ name: 'deepseek', baseUrl: 'https://lab2.example/v1' })
+    await waitFor(() => expect(calls.filter((call) => call.method === 'getModelConfig').length).toBeGreaterThanOrEqual(2))
+
+    // Esc：本地脏值还原成 props 里那份已存值，并照常失焦保存（saveBaseUrl 判等后早退）。
+    const fresh = (await waitForElement(page, 'input[aria-label="Base URL"]')) as HTMLInputElement
+    fresh.focus()
+    type(fresh, 'https://dirty.example/v9')
+    fireEvent.keyDown(fresh, { key: 'Escape' })
+    expect(fresh.value).toBe('https://api.deepseek.com/v1')
+  })
+
+  test('批量文本：重复 id 被校验拦下（不发桥）；改好能保存；点取消收起编辑框', async () => {
+    const native = nativeOf()
+    const { channel } = channelOf((method) => (method === 'getModelConfig' ? configOf() : { ok: true }))
+    const page = mount(channel)
+    await waitRail(page)
+
+    fireEvent.click(page.container.querySelector('[data-model-bulk="1"]') as HTMLElement)
+    const box = await waitForElement(page, '[data-model-bulk-box="1"]')
+    const area = box.querySelector('textarea') as HTMLTextAreaElement
+    type(area, 'deepseek-chat, A\ndeepseek-chat, B')
+    fireEvent.click(box.querySelector('[data-model-bulk-save="1"]') as HTMLElement)
+    await waitFor(() => expect(lastToast()).not.toBe(''))
+    // 校验没过：没有任何桥调用。
+    expect(native.calls).toHaveLength(0)
+
+    type(area, 'bulk-a, A, 64000\nbulk-b, B, 64000')
+    fireEvent.click(box.querySelector('[data-model-bulk-save="1"]') as HTMLElement)
+    await waitFor(() => expect(native.calls.some((call) => call.op === 'saveProvider')).toBe(true))
+    const saved = native.calls[0]?.args[0] as ProviderDraft
+    expect(saved.models.map((model) => model.id)).toEqual(['bulk-a', 'bulk-b'])
+
+    // 重开批量框，点「取消」收起（不改配置）。
+    const before = native.calls.length
+    fireEvent.click(page.container.querySelector('[data-model-bulk="1"]') as HTMLElement)
+    const reopened = await waitForElement(page, '[data-model-bulk-box="1"]')
+    const ghost = [...reopened.querySelectorAll('.model-edit-acts .btn-ghost')][0] as HTMLElement
+    fireEvent.click(ghost)
+    expect(page.container.querySelector('[data-model-bulk-box="1"]')).toBeNull()
+    expect(native.calls).toHaveLength(before)
+  })
+
+  test('新增端点时填了 API key：先存端点再写密钥，toast 里点明密钥已进凭据库', async () => {
+    const native = nativeOf()
+    const { channel } = channelOf((method) => (method === 'getModelConfig' ? configOf() : { ok: true }))
+    const page = mount(channel)
+    await waitRail(page)
+
+    fireEvent.click(page.container.querySelector('[data-provider-add="1"]') as HTMLElement)
+    const form = await waitForElement(page, '[data-provider-form="new"]')
+    fillNewProvider(form, { name: 'fresh', baseUrl: 'https://fresh.example/v1', modelId: 'fresh-mini' })
+    type(formField(form, 3), 'sk-test-123')
+    fireEvent.click(form.querySelector('[data-provider-save="1"]') as HTMLElement)
+
+    await waitFor(() => expect(native.calls.some((call) => call.op === 'saveProvider')).toBe(true))
+    await waitFor(() => expect(native.calls.some((call) => call.op === 'setProviderKey')).toBe(true))
+    const keyCall = native.calls.find((call) => call.op === 'setProviderKey')
+    expect(keyCall?.args).toEqual(['fresh', 'sk-test-123'])
+    await waitFor(() => expect(lastToast()).toContain('API key 已写进凭据库'))
+  })
+
+  test('模型校验失败（id 重复）：不发桥，toast 说明原因', async () => {
+    const native = nativeOf()
+    const { channel } = channelOf((method) => (method === 'getModelConfig' ? configOf() : { ok: true }))
+    const page = mount(channel)
+    await waitRail(page)
+
+    fireEvent.click(page.container.querySelector('[data-model-add="1"]') as HTMLElement)
+    const box = await waitForElement(page, '[data-model-add-box="1"]')
+    const inputs = box.querySelectorAll('input')
+    type(inputs[0] ?? null, 'deepseek-chat')
+    fireEvent.click(box.querySelector('[data-model-save="new"]') as HTMLElement)
+    await waitFor(() => expect(lastToast()).not.toBe(''))
+    expect(lastToast()).toContain('deepseek-chat')
+    expect(native.calls).toHaveLength(0)
+  })
+})
+
+describe('W13：设默认失败与思考档位回调', () => {
+  test('setDefaultModel 通道失败：toast「操作失败」，并重取配置回到原默认', async () => {
+    const { channel, calls } = channelOf((method) => {
+      if (method === 'getModelConfig') return configOf()
+      if (method === 'setDefaultModel') return new Error('通道坏了')
+      return { ok: true }
+    })
+    const page = mount(channel)
+    await waitRail(page)
+
+    fireEvent.click(page.container.querySelector('[data-model-set-default="deepseek-reasoner"]') as HTMLElement)
+    await waitFor(() => expect(lastToast()).toContain('操作失败'))
+    expect(lastToast()).toContain('通道坏了')
+    await waitFor(() => expect(calls.filter((call) => call.method === 'getModelConfig').length).toBeGreaterThanOrEqual(2))
+    // 默认没变：默认标记仍在原模型上。
+    expect(page.container.querySelector('[data-model-default="1"]')?.getAttribute('data-model-chip')).toBe('deepseek-chat')
+  })
+
+  test('思考档位：去掉再点回来（加回档位）在编辑框与新增框两条回调都生效', async () => {
+    const native = nativeOf()
+    const { channel } = channelOf((method) => (method === 'getModelConfig' ? configOf() : { ok: true }))
+    const page = mount(channel)
+    await waitRail(page)
+
+    // 编辑框（已有行）：把 max 去掉再加回。
+    fireEvent.click(page.container.querySelector('[data-model-edit="deepseek-chat"]') as HTMLElement)
+    const box = await waitForElement(page, '[data-model-edit-box="deepseek-chat"]')
+    fireEvent.click(box.querySelector('[data-cap-level="max"]') as HTMLElement)
+    expect(box.querySelector('[data-cap-level="max"]')?.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(box.querySelector('[data-cap-level="max"]') as HTMLElement)
+    expect(box.querySelector('[data-cap-level="max"]')?.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(box.querySelector('[data-model-save="deepseek-chat"]') as HTMLElement)
+    await waitFor(() => expect(native.calls.length).toBe(1))
+    expect((native.calls[0]?.args[0] as ProviderDraft).models[0]?.thinkingLevels).toEqual(['off', 'low', 'high', 'max'])
+
+    // 新增框（草稿行）：勾一档也走同一条 onLevels 回调。
+    fireEvent.click(page.container.querySelector('[data-model-add="1"]') as HTMLElement)
+    const addBox = await waitForElement(page, '[data-model-add-box="1"]')
+    const level = addBox.querySelector('[data-cap-level="low"]') as HTMLElement
+    const before = level.getAttribute('aria-pressed')
+    fireEvent.click(level)
+    expect(addBox.querySelector('[data-cap-level="low"]')?.getAttribute('aria-pressed')).not.toBe(before)
+  })
+})
+
+

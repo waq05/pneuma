@@ -817,3 +817,90 @@ describe('队友面包屑与其他入口', () => {
     expect(harness.calls.some((call) => call.method === 'openSession')).toBe(false)
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* W13 补盲：会话/热更订阅回灌、两处搜索入口、dock=1 自检钩子、标题回落。 */
+/* ------------------------------------------------------------------ */
+
+describe('W13：订阅回灌与零散入口', () => {
+  test('session 与 hmr 的订阅回调把新报告/账本/失败清单灌回界面', async () => {
+    window.history.replaceState({}, '', '/?diag=1')
+    const sessionListeners: Array<() => void> = []
+    const hmrListeners: Array<() => void> = []
+    let reports: UiPluginLoadReport[] = []
+    let ledger: ReturnType<AppBootSession['getState']> | null = null
+    let failures: ReturnType<AppSyncHandle['getFailures']> = []
+    const session: AppBootSession = {
+      getReports: () => reports,
+      getState: () => ledger as never,
+      subscribe: (listener: () => void) => {
+        sessionListeners.push(listener)
+        return () => undefined
+      },
+    }
+    const hmr: AppSyncHandle = {
+      getFailures: () => failures,
+      retry: () => undefined,
+      subscribe: (listener: () => void) => {
+        hmrListeners.push(listener)
+        return () => undefined
+      },
+    }
+    const { container } = mount(makeChannel(), { session, hmr })
+    await flush()
+    expect(container.querySelector('[data-plugin="alpha"]')).toBeNull()
+
+    // 首帧之后 application 批装完：报告、账本、换装失败清单一起变。
+    reports = [{ id: 'alpha', ok: true, name: 'Alpha' }]
+    ledger = {
+      startedAt: 1,
+      batches: [{ phase: 'application', entries: ['alpha'], state: 'done', startedAt: 2, doneAt: 3 }],
+      plugins: {},
+    } as ReturnType<AppBootSession['getState']>
+    failures = [{ id: 'gamma', message: '换装失败', at: 1 }]
+    act(() => {
+      for (const listener of sessionListeners) listener()
+      for (const listener of hmrListeners) listener()
+    })
+
+    expect(container.querySelector('[data-plugin="alpha"]')).not.toBeNull()
+    expect(container.querySelector('[data-batch="application"]')).not.toBeNull()
+    expect(container.querySelector('[data-sync-failure="gamma"]')).not.toBeNull()
+  })
+
+  test('侧栏品牌行与手机顶栏两处搜索都发 shell.palette.open', () => {
+    const opened: string[] = []
+    const onOpen = (): void => { opened.push('open') }
+    window.addEventListener('shell.palette.open', onOpen)
+    try {
+      const wide = mount(makeChannel())
+      fireEvent.click(wide.container.querySelector('.sidebar-header .icon-btn') as HTMLElement)
+      expect(opened).toHaveLength(1)
+      cleanup()
+
+      narrowViewport = true
+      const narrow = mount(makeChannel())
+      const search = narrow.container.querySelector('.topbar-search') as HTMLElement
+      expect(search).not.toBeNull()
+      fireEvent.click(search)
+      expect(opened).toHaveLength(2)
+    } finally {
+      window.removeEventListener('shell.palette.open', onOpen)
+    }
+  })
+
+  test('?dock=1 自检钩子：有会话 id 后停在「开始」页签', async () => {
+    window.history.replaceState({}, '', '/?dock=1')
+    mount(makeChannel({ snapshot: { sessionId: nextSessionId() } }))
+    await flush()
+    const kinds = dockSurface().panes.flatMap((pane) => pane.tabs).map((tab) => tab.kind)
+    expect(kinds).toContain('guide')
+  })
+
+  test('会话列表里找不到当前会话：标题回落「新会话」', () => {
+    const { container } = mount(
+      makeChannel({ snapshot: { sessions: [{ id: 'other', title: '别的会话' }], sessionPath: 'mine', sessionId: 'sid' } }),
+    )
+    expect(textOf(container.querySelector('.topbar .title'))).toBe('新会话')
+  })
+})

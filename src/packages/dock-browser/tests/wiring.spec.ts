@@ -16,7 +16,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { DOCK_CALL_TIMEOUT_MS } from '@pneuma/runtime/core/dock-browser.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
@@ -670,5 +671,162 @@ describe('审批与设置分区', () => {
     expect(
       await errorOf(() => tool(harness, 'browser_dock').run({ action: 'open', url: 'javascript:alert(1)' }, RUN_CTX())),
     ).toContain('只允许 http/https')
+  })
+})
+
+// ── 弹窗、地址比较与事件补盲（w13）──────────────────────────────────────────
+
+describe('w13 补盲：弹窗兜底、等待落地、事件与快照细节', () => {
+  test('地址根本解析不了：open 在进审批前就报「地址解析不了」', async () => {
+    const harness = mount({ link: makeLink({ views: [AGENT_VIEW] }).link, config: { lookWithoutApproval: true } })
+    expect(
+      await errorOf(() => tool(harness, 'browser_dock').run({ action: 'open', url: '不是地址' }, RUN_CTX())),
+    ).toContain('地址解析不了')
+  })
+
+  test('快照超出行/字符上限：说明还有多少行没显示', async () => {
+    const bigTree: Responder = (method, params) => {
+      if (method === 'Accessibility.getFullAXTree') {
+        return {
+          nodes: Array.from({ length: 40 }, (_unused, index) => ({
+            nodeId: String(index + 1),
+            role: { value: 'button' },
+            name: { value: `按钮名称第 ${String(index)} 号很长很长很长` },
+            backendDOMNodeId: 100 + index,
+          })),
+        }
+      }
+      return defaultResponder('https://example.com/')(method, params)
+    }
+    const harness = mount({ link: makeLink({ views: [AGENT_VIEW], responder: bigTree }).link, config: { lookWithoutApproval: true } })
+    const text = String(
+      await tool(harness, 'browser_dock_look').run({ action: 'snapshot', viewId: 'agent-1', maxChars: 500 }, RUN_CTX()),
+    )
+    expect(text).toContain('没显示')
+    expect(text).toContain('后面截断了')
+  })
+
+  test('open 等落地：地址完全不像 / 只是前缀相像都算没到，再读一次对上才算', async () => {
+    /** 前几次读到的地址按顺序给，用完之后固定给最后一个。 */
+    const sequenceResponder = (urls: string[]): Responder => {
+      let index = 0
+      const base = defaultResponder(urls[urls.length - 1] as string)
+      return (method, params) => {
+        if (method === 'Runtime.evaluate' && String(params?.['expression'] ?? '').includes('location.href')) {
+          const url = urls[Math.min(index, urls.length - 1)] as string
+          index += 1
+          return { result: { value: { url, title: '中间态', readyState: 'complete' } } }
+        }
+        return base(method, params)
+      }
+    }
+
+    // 完全不沾边：走「前缀都不匹配」那条比较
+    const unrelated = mount({
+      link: makeLink({ responder: sequenceResponder(['https://wrong.example/', 'https://example.com/']) }).link,
+      config: { lookWithoutApproval: true },
+    })
+    const first = String(
+      await tool(unrelated, 'browser_dock').run({ action: 'open', url: 'https://example.com/' }, RUN_CTX()),
+    )
+    expect(first).toContain('页面落在 https://example.com/')
+
+    // 只是前缀相像（example.com 与 example.com/pathology）：URL 边界不算到
+    const lookalike = mount({
+      link: makeLink({
+        responder: sequenceResponder(['https://example.com/pathology', 'https://example.com/path']),
+      }).link,
+      config: { lookWithoutApproval: true },
+    })
+    const second = String(
+      await tool(lookalike, 'browser_dock').run({ action: 'open', url: 'https://example.com/path' }, RUN_CTX()),
+    )
+    expect(second).toContain('页面落在 https://example.com/path')
+  })
+
+  test('白名单之外的事件静默忽略；换链路时旧订阅退不掉也照样订新的', async () => {
+    const ignored = makeLink({ views: [AGENT_VIEW] })
+    const ignoredHarness = mount({ link: ignored.link, config: { lookWithoutApproval: true } })
+    await tool(ignoredHarness, 'browser_dock_look').run({ action: 'views' }, RUN_CTX())
+    ignored.emit({ viewId: 'agent-1', method: 'Runtime.somethingElse', params: {} })
+    expect(
+      String(await tool(ignoredHarness, 'browser_dock_look').run({ action: 'console', viewId: 'agent-1' }, RUN_CTX())),
+    ).toContain('还没有输出')
+
+    // 旧链路的退订函数抛错：吞掉，不挡新订阅
+    const first = makeLink({ views: [AGENT_VIEW] })
+    first.link.onEvent = () => () => {
+      throw new Error('退订失败')
+    }
+    const options: { link?: Record<string, unknown> } = { link: first.link }
+    const harness = mount(options as never)
+    await tool(harness, 'browser_dock_look').run({ action: 'views' }, RUN_CTX())
+    const second = makeLink({ views: [AGENT_VIEW] })
+    options.link = second.link
+    await tool(harness, 'browser_dock_look').run({ action: 'views' }, RUN_CTX())
+    expect(second.listeners.size).toBe(1)
+    second.emit({ viewId: 'agent-1', method: 'Runtime.consoleAPICalled', params: { type: 'log', args: [{ value: '新链路' }] } })
+    expect(
+      String(await tool(harness, 'browser_dock_look').run({ action: 'console', viewId: 'agent-1' }, RUN_CTX())),
+    ).toContain('新链路')
+  })
+
+  test('弹窗 25 秒没人处理：自动 dismiss，说明只随下一次结果带一次', async () => {
+    const fake = makeLink({ views: [AGENT_VIEW] })
+    const harness = mount({ link: fake.link, config: { lookWithoutApproval: true } })
+    vi.useFakeTimers()
+    try {
+      await tool(harness, 'browser_dock_look').run({ action: 'views' }, RUN_CTX())
+      fake.emit({
+        viewId: 'agent-1',
+        method: 'Page.javascriptDialogOpening',
+        params: { type: 'confirm', message: '要保存吗' },
+      })
+      expect(harness.notes.join('\n')).toContain('弹出了 confirm 对话框')
+      await vi.advanceTimersByTimeAsync(DOCK_CALL_TIMEOUT_MS + 10)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(harness.notes.join('\n')).toContain('已自动关掉')
+    expect(fake.calls.some((call) => call.method === 'Page.handleJavaScriptDialog')).toBe(true)
+
+    const first = String(await tool(harness, 'browser_dock_look').run({ action: 'snapshot', viewId: 'agent-1' }, RUN_CTX()))
+    expect(first).toContain('已自动关掉')
+    const second = String(await tool(harness, 'browser_dock_look').run({ action: 'snapshot', viewId: 'agent-1' }, RUN_CTX()))
+    expect(second).not.toContain('已自动关掉')
+  })
+
+  test('dialog 动作：缺 dialogAction、要输入的文本像密钥、正常接受', async () => {
+    const fake = makeLink({ views: [AGENT_VIEW] })
+    const harness = mount({ link: fake.link, config: { lookWithoutApproval: true } })
+    await tool(harness, 'browser_dock_look').run({ action: 'views' }, RUN_CTX())
+    fake.emit({
+      viewId: 'agent-1',
+      method: 'Page.javascriptDialogOpening',
+      params: { type: 'prompt', message: '名字', defaultPrompt: '默认名字' },
+    })
+
+    expect(
+      await errorOf(() => tool(harness, 'browser_dock').run({ action: 'dialog', viewId: 'agent-1' }, RUN_CTX())),
+    ).toContain('dialog 需要 dialogAction')
+
+    expect(
+      await errorOf(() =>
+        tool(harness, 'browser_dock').run(
+          { action: 'dialog', viewId: 'agent-1', dialogAction: 'accept', promptText: 'sk-abcdefghijklmnop' },
+          RUN_CTX(),
+        ),
+      ),
+    ).toContain('密钥形状')
+
+    // 前两次失败没把弹窗处理掉：正常接受才真正关
+    const accepted = String(
+      await tool(harness, 'browser_dock').run(
+        { action: 'dialog', viewId: 'agent-1', dialogAction: 'accept', promptText: '新名字' },
+        RUN_CTX(),
+      ),
+    )
+    expect(accepted).toContain('已接受视图 agent-1 的 prompt 对话框')
+    expect(fake.calls.some((call) => call.method === 'Page.handleJavaScriptDialog')).toBe(true)
   })
 })
