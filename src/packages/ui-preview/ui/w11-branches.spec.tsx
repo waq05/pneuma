@@ -250,8 +250,8 @@ describe('预览分流：二进制与 bytes', () => {
       kind: 'preview',
       path: 'C:/repo/a.pdf',
     })
-    await flush()
-    expect(pdfView.container.querySelector('.file-pdf')).not.toBeNull()
+    // PDF 视图是懒加载（pdfjs 动态 import 才挂 .file-pdf），flush 一帧可能还没到；等到它出现。
+    await waitFor(() => expect(pdfView.container.querySelector('.file-pdf')).not.toBeNull())
     cleanup()
 
     const unknown: ReadResult = {

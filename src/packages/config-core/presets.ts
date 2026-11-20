@@ -431,6 +431,9 @@ export function writePreset(draft: {
     if (existsSync(oldFile) && !existsSync(file)) rmSync(oldFile, { force: true })
   }
   writeFileSync(file, presetFileText({ ...draft, name, label, drop, deny, replace }), 'utf8')
+  // 同一毫秒内改两次文件时 mtimeMs 不变，缓存会返回上一份内容（Windows CI 上稳定复现：
+  // 先建 review 再改 label/tools，读回来还是旧值）。写完先作废这一条缓存再读。
+  presetCache.delete(file)
   const written = readPreset(file)
   if (written === null) throw new Error(`模式 ${name} 写下去了却读不回来，检查一下 ${file}`)
   return written
