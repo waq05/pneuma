@@ -394,7 +394,10 @@ export default defineConfig({
           environment: 'node',
           testTimeout: 15_000,
           hookTimeout: 15_000,
-          retry: 0,
+          // 帧捕获受 CPU 负载影响：Windows runner 上偶尔 press() 拿到的是上一帧
+          // （2026-11-20 实测 3 条 settings 用例偶发红，本地稳定复现不了）。和 integration 同一
+          // 口径：只给一次重试机会，连续两次红仍然是红，不拿重试掩盖真失败。
+          retry: 1,
           // 假终端与定时器是进程级状态，线程间会互相踩。
           pool: 'forks',
         },
