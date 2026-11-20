@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
 const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+// Linux 无头 CI：Electron 的 SUID sandbox helper 没有 setuid，直接起会退出（探针只在
+// 等结果文件超时，看起来像「卡住」）；xvfb 环境也没有 GPU。三项都是 Chromium 的标准 CI 开关。
+const ELECTRON_FLAGS = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] : []
 const DRIVER = join(root, 'scripts', '_ui-sweep-main.cjs')
 const FAKE_LLM = join(root, 'desktop', 'shots', 'conv-fake-llm.mjs')
 /** 截图落点：按语言分目录（中英两套截图不会互相覆盖）。 */
@@ -287,7 +290,7 @@ async function main() {
   // 这个环境变量会让 electron.exe 退化成纯 Node：那样 require('electron') 直接找不到模块。
   const electronEnv = { ...process.env }
   delete electronEnv['ELECTRON_RUN_AS_NODE']
-  const driver = spawn(ELECTRON, [DRIVER, url], {
+  const driver = spawn(ELECTRON, [...ELECTRON_FLAGS, DRIVER, url], {
     env: { ...electronEnv, DSC_SWEEP_STEPS: stepsFile, DSC_SWEEP_OUT: outFile, DSC_SWEEP_SHOTS: shotsDir, DSC_SWEEP_USER_DATA: join(work, 'user-data') },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

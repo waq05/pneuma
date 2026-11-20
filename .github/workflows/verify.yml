@@ -493,7 +493,9 @@ jobs:
     # 只在夜跑与手动触发时跑：推一次就等 8 分钟的门，没人会去修红灯。
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 2026-11-20：末尾的真 Chromium 探针跑在 xvfb 上，7 条加起来可能十几分钟；
+    # 30 分钟会被 job 超时掐掉（上一轮就是在 e2e 步被 cancel），放宽到 45。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

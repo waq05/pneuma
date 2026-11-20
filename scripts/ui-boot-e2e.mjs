@@ -29,6 +29,9 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
 const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+// Linux 无头 CI：Electron 的 SUID sandbox helper 没有 setuid，直接起会退出（探针只在
+// 等结果文件超时，看起来像「卡住」）；xvfb 环境也没有 GPU。三项都是 Chromium 的标准 CI 开关。
+const ELECTRON_FLAGS = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] : []
 const DRIVER = join(root, 'scripts', '_ui-boot-e2e-main.cjs')
 const SHOTS = join(root, 'desktop', 'shots')
 const REPORT = join(SHOTS, 'ui-boot.json')
@@ -143,7 +146,7 @@ async function runDriver({ url, home, label, resultPath, shotPath }) {
   env['DSC_BOOT_SHOT'] = shotPath
   env['DSC_BOOT_LABEL'] = label
   env['DSC_BOOT_USER_DATA'] = join(home, 'electron-user-data-' + label)
-  const electron = spawn(ELECTRON, [DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
+  const electron = spawn(ELECTRON, [...ELECTRON_FLAGS, DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
   const startedAt = Date.now()
   for (let waited = 0; waited < 240000 && !existsSync(resultPath); waited += 250) await sleep(250)
   const waitedMs = Date.now() - startedAt

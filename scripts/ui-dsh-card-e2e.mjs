@@ -24,6 +24,9 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
 const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+// Linux 无头 CI：Electron 的 SUID sandbox helper 没有 setuid，直接起会退出（探针只在
+// 等结果文件超时，看起来像「卡住」）；xvfb 环境也没有 GPU。三项都是 Chromium 的标准 CI 开关。
+const ELECTRON_FLAGS = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] : []
 const DRIVER = join(root, 'scripts', '_ui-dsh-card-main.cjs')
 const FAKE = join(root, 'scripts', '_fake-llm.mjs')
 const EXAMPLE = join(root, 'examples', 'plugins', 'dsh-style-clock.js')
@@ -162,7 +165,7 @@ async function main() {
   env['DSC_CARD_USER_DATA'] = join(home, 'electron-user-data')
   env['DSC_CARD_QUESTION'] = '把这条备注写进文件，我要看它改了哪几行。'
   env['DSC_CARD_EXPECT'] = '已写入'
-  const electron = spawn(ELECTRON, [DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
+  const electron = spawn(ELECTRON, [...ELECTRON_FLAGS, DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
 
   for (let waited = 0; waited < 240000; waited += 500) {
     if (existsSync(RESULT)) break

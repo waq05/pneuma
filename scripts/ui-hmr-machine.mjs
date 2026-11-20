@@ -44,6 +44,9 @@ const markerLine = (nonce) => `    document.documentElement.dataset['hmrProbe'] 
 
 // 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
 const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+// Linux 无头 CI：Electron 的 SUID sandbox helper 没有 setuid，直接起会退出（探针只在
+// 等结果文件超时，看起来像「卡住」）；xvfb 环境也没有 GPU。三项都是 Chromium 的标准 CI 开关。
+const ELECTRON_FLAGS = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] : []
 const DRIVER = join(root, 'scripts', '_ui-hmr-machine-main.cjs')
 const EVIDENCE_PNG = join(root, 'desktop', 'shots', 'ui-hmr-machine.png')
 const EVIDENCE_JSON = join(root, 'desktop', 'shots', 'ui-hmr-machine.json')
@@ -369,7 +372,7 @@ async function main() {
     // 交接文档 §0）：带着它起的 Electron 是「纯 Node」，窗口还没建就退出了。
     const electronEnv = { ...process.env, DSC_UI_HMR_USER_DATA: join(home, 'electron-user-data') }
     delete electronEnv['ELECTRON_RUN_AS_NODE']
-    const child = spawn(ELECTRON, [DRIVER, url], {
+    const child = spawn(ELECTRON, [...ELECTRON_FLAGS, DRIVER, url], {
       cwd: root,
       env: electronEnv,
       stdio: ['pipe', 'pipe', 'pipe'],

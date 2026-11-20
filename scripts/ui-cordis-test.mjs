@@ -26,6 +26,9 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
 const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+// Linux 无头 CI：Electron 的 SUID sandbox helper 没有 setuid，直接起会退出（探针只在
+// 等结果文件超时，看起来像「卡住」）；xvfb 环境也没有 GPU。三项都是 Chromium 的标准 CI 开关。
+const ELECTRON_FLAGS = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] : []
 const DRIVER = join(root, 'scripts', '_ui-cordis-main.cjs')
 const BUNDLE = join(root, 'lib', 'ui', 'plugins', 'statusbar', 'client.js')
 const SHOT = join(root, 'desktop', 'shots', 'cordis-probe.png')
@@ -167,7 +170,7 @@ async function main() {
     env['DSC_CORDIS_DIAG'] = process.env['DSC_CORDIS_DIAG'] ?? ''
     // 只带入口地址一个位置参数（多带一个 electron 就退出 127）。
     // `DSC_CORDIS_DIAG=1` 时驱动会在令牌跳转之后再跳一次 `/?diag=1`（见驱动里的注释）。
-    electron = spawn(ELECTRON, [DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
+    electron = spawn(ELECTRON, [...ELECTRON_FLAGS, DRIVER, url], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] })
 
     for (let waited = 0; waited < 240000; waited += 500) {
       if (existsSync(RESULT_FILE)) break
