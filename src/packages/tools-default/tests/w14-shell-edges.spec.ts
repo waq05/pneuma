@@ -52,6 +52,16 @@ afterEach(() => {
 const ctxOf = (cwd = HOME) => ({ cwd, sessionId: 'sess-1' }) as never
 
 describe('persistent-shell：纯函数与工具转发', () => {
+  /**
+   * 这一组要真起一条常驻 shell 并跑命令。
+   *
+   * Windows 用 pwsh + PowerShell 语法；POSIX 上没有 pwsh（探测结果只有 sh 一档），
+   * 所以切到 `sh` 档（persistent-shell.ts:86-88 起 bash）并用 POSIX 语法——两边断言
+   * 的都是「命令真的跑完、输出回到调用方」这条真行为。
+   */
+  const isWin = process.platform === 'win32'
+  const shellChoice = isWin ? 'pwsh' : 'sh'
+
   test('shellEnvelope：bash 用 eval + base64，哨兵字面量拆成两段拼出来', () => {
     const envelope = shell.shellEnvelope('bash', 'ZmFrZQ==', 'tag42')
     expect(envelope).toContain('eval "$(printf')
@@ -60,12 +70,13 @@ describe('persistent-shell：纯函数与工具转发', () => {
   })
 
   test('shell 工具：空命令当场拒，正常命令交给表执行', async () => {
-    chooseShell('pwsh')
+    chooseShell(shellChoice)
     const table = new shell.PersistentShellTable()
-    const tool = shell.createPersistentShellTool(table, { timeoutMs: 20_000 }, 'PowerShell')
+    const tool = shell.createPersistentShellTool(table, { timeoutMs: 20_000 }, isWin ? 'PowerShell' : 'sh')
     try {
       await expect(tool.run!({ command: '   ' }, ctxOf())).rejects.toThrow('command 不能为空')
-      const output = await tool.run!({ command: 'Write-Output hello-w14' }, ctxOf())
+      const command = isWin ? 'Write-Output hello-w14' : 'echo hello-w14'
+      const output = await tool.run!({ command }, ctxOf())
       expect(output).toContain('hello-w14')
     } finally {
       table.closeAll()
@@ -73,10 +84,11 @@ describe('persistent-shell：纯函数与工具转发', () => {
   }, 30_000)
 
   test('stderr 也计入输出：命令写 stderr 照样能等到哨兵', async () => {
-    chooseShell('pwsh')
+    chooseShell(shellChoice)
     const table = new shell.PersistentShellTable()
     try {
-      const output = await table.run('sess-stderr', HOME, '[Console]::Error.WriteLine("err-w14")', 20_000)
+      const command = isWin ? '[Console]::Error.WriteLine("err-w14")' : 'echo err-w14 1>&2'
+      const output = await table.run('sess-stderr', HOME, command, 20_000)
       expect(output).toContain('err-w14')
       expect(table.close('sess-stderr')).toBe(true)
     } finally {

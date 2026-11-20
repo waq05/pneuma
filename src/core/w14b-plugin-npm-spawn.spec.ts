@@ -6,7 +6,7 @@
  *
  * @module dsc/core/w14b-plugin-npm-spawn.spec
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { EventEmitter as NodeEventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -70,6 +70,10 @@ function profile(name: string): { dir: string; original: string } {
 function fakePnpm(): string {
   const file = join(HOME, 'pnpm.cjs')
   writeFileSync(file, 'process.exit(0)\n', 'utf8')
+  // POSIX 上 `resolveExecutable` 要求可执行位（core/executable.ts:133 的 accessSync X_OK）：
+  // 少了它 pnpmTarget 直接判「找不到 pnpm」，就走不到 spawn 同步抛错那条分支。
+  // Windows 上 chmod 只切只读位，不影响这里。
+  chmodSync(file, 0o755)
   return file
 }
 

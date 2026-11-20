@@ -32,7 +32,15 @@ process.env['DSC_HOME'] = HOME
 
 type Core = typeof import('./session.js')
 let core: Core
-const WORK = 'D:\\work\\w14b-session'
+/**
+ * 工作目录用当前平台的原生绝对路径。
+ *
+ * 「头行坏掉从 changes 反推 cwd」走 `commonDirectory`（session.ts:521-534），它只收
+ * `path.isAbsolute` 为真的路径：Windows 风格的 `D:\work\...` 在 POSIX 上不是绝对路径，
+ * 于是反推结果是空串（这正是 Linux CI 上报的失败）。夹具写平台原生路径，才能在两个
+ * 平台上都验证「从幸存改动路径反推出工作目录」这条真行为。
+ */
+const WORK = process.platform === 'win32' ? 'D:\\work\\w14b-session' : '/work/w14b-session'
 let sessionDir = ''
 
 beforeAll(async () => {

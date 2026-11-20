@@ -5,10 +5,14 @@
  * 候选清单改名失败、建技能目录失败、附属文件写失败、归档搬不动、使用台账写失败、老化
  * 归档失败，以及新 id 连续撞车的兜底。既有 spec 只跑正常路径，错误分支一条没走。
  *
- * 手法一律是**真文件系统造失败**，不 mock `node:fs`：
- *   - Windows 上对只读文件 `rename` 会 EPERM → 驱动「先 unlink 临时文件再抛」的 catch；
- *   - 把目标路径造成目录 / 把父目录造成普通文件 → 驱动 `writeFileSync` / `mkdirSync` 失败；
- *   - 把 `.archive` 造成文件 → 驱动归档失败与 `archivedCount` 的 catch。
+ * 手法一律是**真文件系统造失败**，不 mock `node:fs`，且按平台各用一种确定性手段：
+ *   - Windows：对只读文件 `rename` 会 EPERM → 驱动「先 unlink 临时文件再抛」的 catch；
+ *   - POSIX：`rename` 只看目录权限、不看目标文件权限，只读挡不住，所以把目标路径占成
+ *     目录（读它就是 EISDIR）或把 `.tmp` 路径占成目录（写它就是 EISDIR）——不依赖
+ *     运行用户有没有 root 权限，确定性更强；
+ *   - 两个平台都用：「把目标路径造成目录 / 把父目录造成普通文件」驱动
+ *     `writeFileSync` / `mkdirSync` 失败；「把 `.archive` 造成文件」驱动归档失败与
+ *     `archivedCount` 的 catch。
  *
  * `DSC_HOME` 在 import 之前指进 mkdtemp 临时目录（路径常量在模块求值时算定），不碰真实 `~/.dsc`。
  *
@@ -85,6 +89,31 @@ function readonly(file: string): void {
   chmodSync(file, 0o444)
 }
 
+/**
+ * 让台账写入失败（`createSkill` 走 notice、`appendLedger` 走抛错都靠它）。
+ *
+ * Windows：目标文件只读，`renameSync(tmp, 台账)` 覆盖时 EPERM。
+ * POSIX：rename 只看目录权限，只读文件照覆盖；改成让台账路径被目录占着——
+ * `appendLedger` 先 `readFileSync(台账)`（ledger.ts:100）就 EISDIR，一定写不进去，
+ * 且不依赖运行用户是不是 root。
+ */
+function blockLedger(): void {
+  if (process.platform === 'win32') readonly(ld.ledgerFile())
+  else mkdirSync(ld.ledgerFile(), { recursive: true })
+}
+
+/**
+ * 让「先写 `.tmp` 再 rename」的候选清单写失败。
+ *
+ * Windows：目标只读，rename 覆盖时 EPERM。
+ * POSIX：只读挡不住 rename，所以把 `.tmp` 路径占成目录——`appendLines` / `writeAll`
+ * 的 `writeFileSync(tmp, ...)` 直接 EISDIR，崩在写文件那一步（两边断言的都是「原样抛错」）。
+ */
+function blockAtomicWrite(file: string): void {
+  if (process.platform === 'win32') chmodSync(file, 0o444)
+  else mkdirSync(`${file}.tmp`, { recursive: true })
+}
+
 const usageRecord = (over: Record<string, unknown> = {}) => ({
   createdBy: 'agent',
   useCount: 1,
@@ -100,8 +129,8 @@ const usageRecord = (over: Record<string, unknown> = {}) => ({
 
 describe('skill-write：原子写与安检验证的兜底', () => {
   test('createSkill：台账写失败不影响技能已写成的事实，回执里说明', () => {
-    // 先把台账文件造成只读：appendLedger 会在 rename 时 EPERM，finishWrite 的 catch 接住。
-    readonly(ld.ledgerFile())
+    // 台账写不进去（平台各自的确定性手法见 blockLedger）：finishWrite 的 catch 接住。
+    blockLedger()
     const result = sw.createSkill({
       name: 'ledger-broken',
       markdown: markdown('ledger-broken'),
@@ -241,8 +270,8 @@ describe('skill-write：归档与老化整理的失败分支', () => {
 })
 
 describe('ledger：台账追加与回滚的失败分支', () => {
-  test('appendLedger：台账文件只读时 rename 失败，临时文件清掉并抛错', () => {
-    readonly(ld.ledgerFile())
+  test('appendLedger：台账写不进去时抛错，临时文件清掉', () => {
+    blockLedger()
     expect(() =>
       ld.appendLedger({
         actor: 'model',
@@ -295,14 +324,14 @@ describe('store：候选清单的读坏行与写失败', () => {
     expect(st.readCandidates(cwd)).toEqual([])
   })
 
-  test('recordCandidate：候选文件只读导致追加失败时原样抛错', () => {
+  test('recordCandidate：候选文件写不进去导致追加失败时原样抛错', () => {
     mkdirSync(join(fileOf(), '..'), { recursive: true })
     writeFileSync(fileOf(), '', 'utf8')
-    chmodSync(fileOf(), 0o444)
+    blockAtomicWrite(fileOf())
     expect(() => st.recordCandidate(cwd, { kind: 'note', text: '记一条', turnRef: '' })).toThrow()
   })
 
-  test('pruneCandidates：裁剪需要整份覆盖写，文件只读时抛错', () => {
+  test('pruneCandidates：裁剪需要整份覆盖写，写不进去时抛错', () => {
     mkdirSync(join(fileOf(), '..'), { recursive: true })
     const stale = {
       id: 'old',
@@ -314,7 +343,7 @@ describe('store：候选清单的读坏行与写失败', () => {
       state: 'candidate',
     }
     writeFileSync(fileOf(), `${JSON.stringify(stale)}\n`, 'utf8')
-    chmodSync(fileOf(), 0o444)
+    blockAtomicWrite(fileOf())
     expect(() => st.pruneCandidates(cwd, { retentionDays: 1 }, Date.now())).toThrow()
   })
 

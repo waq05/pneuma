@@ -6,6 +6,10 @@
  * 在真机上造不出来（真的 WSL 与真的 Docker Desktop 发行版不能为了测试去改）。
  * `SystemRoot` 指到临时目录，不碰真实系统目录；`DSC_HOME` 也指到临时目录（探测缓存落这里）。
  *
+ * 平台边界：`spawnSync` 抛错这条分支两个平台都有，按平台各自断言真实结果（Windows 五档、
+ * POSIX 两档）；`SystemRoot` 下的 powershell.exe 与 wsl.exe 是 Windows 专有语义，
+ * POSIX 上 `detectShells` 根本不走那两个探测函数（terminal-env.ts:400-402），显式跳过。
+ *
  * @module dsc/core/w14b-terminal-env-spawn.spec
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -66,6 +70,15 @@ describe('probe：spawnSync 自己抛错', () => {
     }
     const shells = env.detectShells(true)
     expect(shells[0]?.value).toBe('auto')
+    if (process.platform !== 'win32') {
+      // POSIX 只给 auto + sh 两项（terminal-env.ts:400-402）；探测抛错时 detectPosixShell
+      // 同样退化成静态名，但仍给出可用的兜底 /bin/sh（terminal-env.ts:259-268）。
+      expect(shells.map((item) => item.value)).toEqual(['auto', 'sh'])
+      expect(shells[1]?.label).toBe('sh')
+      expect(shells[1]?.available).toBe(true)
+      expect(shells[1]?.detail).toBe('/bin/sh')
+      return
+    }
     expect(shells).toHaveLength(5)
     // powershell.exe 的路径存在（真 SystemRoot），但探版本那次抛错：标签退化成静态名。
     const powershell = shells.find((item) => item.value === 'powershell')
@@ -75,7 +88,10 @@ describe('probe：spawnSync 自己抛错', () => {
   })
 })
 
-describe('detectWindowsPowerShell / detectWsl：装没装与能不能用', () => {
+// Windows 专有夹具：`SystemRoot` 下的 powershell.exe 与 wsl.exe。POSIX 上这两个探测
+// 函数在 detectShells 里根本不会被调用，没有等价的 Linux 行为可断言，所以显式跳过；
+// 上面那条「spawnSync 抛错」的通用分支在 POSIX 上仍然照跑（按平台断言）。
+describe.skipIf(process.platform !== 'win32')('detectWindowsPowerShell / detectWsl：装没装与能不能用', () => {
   test('SystemRoot 下没有 powershell.exe / wsl.exe：都标不可用并说清原因', () => {
     process.env['SystemRoot'] = SYSTEM_ROOT
     // where.exe 什么也没找到（PATH 里没有这些程序）。
