@@ -307,8 +307,14 @@ export default defineConfig({
             '**/node_modules/**',
           ],
           environment: 'node',
-          testTimeout: 5_000,
-          hookTimeout: 5_000,
+          // 20 秒而不是 5 秒：unit 里混着一批真子进程 / 真 sqlite 的用例（lsp 的假语言服务器、
+          // git 子命令、superagent 的库），满载 runner 上它们会明显变慢。2026-11-20 夜跑连撞
+          // 三次「不同用例各自 5 秒超时」（Node 22 / Node 24 / Windows 车道各一次，同一提交
+          // 换台机器就绿）——那类红是机器负载决定的，不是被测行为。覆盖率跑本来就用
+          // `--testTimeout=20000 --hookTimeout=20000` 的同口径，这里对齐它。
+          // 断言级失败不受影响；hang 仍会被抓到，只是晚 15 秒。
+          testTimeout: 20_000,
+          hookTimeout: 20_000,
           retry: 0,
         },
       },
