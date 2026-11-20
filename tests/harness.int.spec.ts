@@ -126,9 +126,15 @@ describe('runCli', () => {
     // 10ms 一定早于 node 冷启动完成；这里验的是「超时路径有返回」而不是 CLI 多快。
     const result = await runCli(['--version'], { timeoutMs: 10 })
     expect(result.timedOut).toBe(true)
-    // Windows 上被 kill 的进程报 code=1/signal=null，与 CLI 自己退出 1 无法区分；
-    // 因此跨平台只断言「不是正常成功」，POSIX 上再钉 SIGKILL。
-    expect(result.signal === 'SIGKILL' || result.code !== 0).toBe(true)
+    // Windows 的杀树走 `spawnSync('taskkill', …)`，这本身是几十毫秒的外部进程；`--version`
+    // 的 node 冷启动同样几十毫秒，谁先到是赛跑（实测会有一小部分概率进程自己以 0 退出，
+    // 2026-11-20 本机连跑三次都是这条形态）。所以 Windows 只钉「超时路径有返回、timedOut
+    // 为真、没有被信号名骗到」，POSIX 才钉 SIGKILL（`process.kill(-pid, 'SIGKILL')` 是同步的）。
+    if (process.platform === 'win32') {
+      expect(result.signal).toBeNull()
+    } else {
+      expect(result.signal).toBe('SIGKILL')
+    }
   })
 
   test('参数或选项传错时同步抛可读的错，不静默起进程', () => {
