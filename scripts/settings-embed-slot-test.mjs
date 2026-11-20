@@ -82,11 +82,13 @@ const infoText = infoField?.text ?? ''
 const infoHelp = infoField?.help ?? ''
 const label = env.shellChoiceLabel(target)
 const allLabels = env.detectShells().map((item) => item.label)
-check('检测结果这一行还在（说明里是完整列表）', (infoHelp.match(/[✓✗]/g) ?? []).length >= 3, infoHelp)
+// 基准不能写死 3：Linux CI 的终端只认到 2 个 shell（平台默认 + sh），写死 3 会在那边恒红。
+// 所以以本轮实际检测到的个数为准：Windows 检出几个就要求几个。
+check('检测结果这一行还在（说明里是完整列表）', (infoHelp.match(/[✓✗]/g) ?? []).length >= allLabels.length, infoHelp)
 check(`右侧写的是当前这一档（当前：${label}）`, infoText.includes('当前：') && infoText.includes(label), infoText)
 check('右侧不带 ✓/✗（可用性只由左栏列表说，不互相复述）', !/[✓✗]/.test(infoText), infoText)
 check('右侧不重复列表里的其它 shell 名（一行只说一件事）', allLabels.filter((name) => name !== label).every((name) => !infoText.includes(name)), infoText)
-check('整张 ✓/✗ 列表在说明里（可折行，不会被单行省略截掉）', (infoHelp.match(/[✓✗]/g) ?? []).length >= 3 && infoHelp.includes(label), infoHelp)
+check('整张 ✓/✗ 列表在说明里（可折行，不会被单行省略截掉）', (infoHelp.match(/[✓✗]/g) ?? []).length >= allLabels.length && infoHelp.includes(label), infoHelp)
 const redetected = await kernel.settings.action('terminal-env', 'redetect')
 check('「重新检测」按钮仍按子分区 id 生效', redetected.ok === true && (redetected.notice ?? '').includes('重新检测完成'), JSON.stringify(redetected))
 

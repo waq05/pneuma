@@ -508,11 +508,12 @@ jobs:
       # 多数探针 import ../lib 的编译产物，不先 build 会整片模块找不到。
       - name: 编译内核
         run: pnpm build
-      - name: 内核自检
-        run: pnpm run check:core
-      # 界面探针读插件产物（lib/ui/plugins/*），所以壳也要先 build。
+      # 内核探针里的 superagent-candidate-e2e 要读界面插件产物（lib/ui/plugins/*），
+      # 所以界面壳与插件产物也得在「内核自检」之前编好：两份产物都齐了才跑自检。
       - name: 编译界面壳与插件产物
         run: pnpm -C ui-shell build
+      - name: 内核自检
+        run: pnpm run check:core
       - name: 界面自检
         run: pnpm run check:ui
       # B49：产物层（插件 client.js / 界面 SDK 类型树 + examples tsc）。到这一步两份产物
