@@ -363,3 +363,25 @@ integration 层 `win-token.int.spec.ts` 已覆盖真实令牌路径。
 2. 待做（非覆盖率）：CI 接 e2e / snapshot / coverage；会话回放录制；C3 PTY；B31/B32 产物层；
    B37-R CSS→真 Chromium；文档漂移订正。见 [testing-backlog.md](testing-backlog.md) 第五节。
 3. 以上闭环后启动 W1；每批单独提交、单独抬基线。
+
+## 6 2026-11-20 W12 补测：superagent 新树与 UI
+
+**告警**：11/20 凌晨夜跑（run 44645459805）覆盖率门红，lines 82.03% 对阈值 91.5%。原因不是代码变坏，是口径漂移：`coverage-baseline.json` 的 92.09% 是 2026-11-17 01:02 的实测值，此后 `dev` 又合进来 163 个源文件、21,622 行原始代码（`src/packages/superagent` 103 文件 11,832 行最大，其次是 `subagent` 1,711、`ui-superagent` 975、`web-fetch` 784）。这批新树的测试多半是 `node:test` 的 `*.test.mjs`（由 `check:plugin` 跑）与探针，vitest 的 v8 覆盖率量不到它们。
+
+**补测**：按未覆盖行数把 586 个文件切成 8 块，8 个子代理并行补 `*.spec.ts(x)`（只新增测试，产品代码一行未改），新增 100+ 个 spec、约 1,250 条用例。实测（`pnpm run test:coverage:run`，Windows 本机）：
+
+| 指标 | 补测前 | 补测后 | 阈值（基线 − 0.5） |
+| --- | --- | --- | --- |
+| lines | 82.37% | **93.86%** | 91.5 |
+| branches | 70.59% | **83.45%** | 81.3 |
+| functions | 75.21% | **91.00%** | 89.2 |
+| statements | 78.95% | **91.42%** | 89.1 |
+| `src/core/**` lines | 92.43% | **95.06%** | 91.9 |
+
+阈值一条没动：原基线现在四项全过，所以 `coverage-baseline.json` 保持 11/17 的值（抬基线按政策要单独复核，留到下一轮）。基线口径仍是「全五 project」。
+
+**剩余缺口（下一批，登记到 [testing-backlog.md](testing-backlog.md) B60）**：`superagent/subagent/index.ts` 的队友生成/复活/名册序列化分支约 150 行；`ui-settings` / `ui-plugins` / `ui-skills` / `ui-transcript` 几个超大组件约 500 行；`remote` / `tools-default/bash` / `lsp` 需要真子进程或真协议对端约 180 行；`sandbox/win/**` 只有 Windows 能量到，CI（Ubuntu）天然不计。
+
+**同一夜跑里另外两处红灯，同批修掉**：
+- probe job：`readme-test` 的 H2 期望清单漏了 0.9.2 新增的「界面」；`settings-embed-slot-test` 把 ✓/✗ 条数写死 3（Linux 只认 2 个 shell）；`superagent-candidate-e2e` 要读 `lib/ui/plugins`，而 CI 把它排在内核自检之前跑（顺序已调）。
+- `check:plugin`：依赖方向判据把 spec 里的跨包 import 也判红（16 条假红；判据改为只管发布代码，见 development.md 包依赖方向门禁）；`plugin-inventory` 快照还停在 `^0.9.1`，按 0.9.2 重录。
