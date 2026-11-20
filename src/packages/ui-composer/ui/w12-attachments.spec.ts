@@ -48,7 +48,14 @@ let canvasCalls: Array<{ width: number; height: number; quality: number | undefi
 let videos: FakeVideo[]
 
 /** `<video>` 的替身：真 div 挂上媒体属性，seek 用真事件派发。 */
+// 用例只借 DOM 节点能力（appendChild / addEventListener），节点本身用 div 造；
+// 这里额外摆上 video 专属的四个字段（muted / playsInline / preload / crossOrigin），
+// 所以显式声明在接口里，而不是直接 extends HTMLVideoElement（会与 mock 的 load/pause 冲突）。
 interface FakeVideo extends HTMLDivElement {
+  muted: boolean
+  playsInline: boolean
+  preload: string
+  crossOrigin: string
   duration: number
   videoWidth: number
   videoHeight: number

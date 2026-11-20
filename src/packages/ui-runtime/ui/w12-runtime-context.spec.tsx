@@ -21,7 +21,8 @@ import {
 } from './runtime-context.js'
 import type { HostChannel, HostHello } from './host-channel.js'
 
-const snapshot = { status: { sessionId: 's-1' }, entries: [] } as unknown as HostSnapshot
+const statusFixture = { sessionId: 's-1' }
+const snapshot = { status: statusFixture, entries: [] } as unknown as HostSnapshot
 const hello = { protocol: 1, host: { platform: 'web' } } as unknown as HostHello
 
 /** 造一个只读通道：四个 getter 各返回给定值。 */
@@ -41,6 +42,10 @@ function fakeChannel(): HostChannel {
   }
 }
 
+/** `HostSnapshot.status` 在契约里是开放对象；用例按自己摆的夹具收窄后再读。 */
+const statusOf = (value: HostSnapshot | null): string =>
+  (value?.status as typeof statusFixture | undefined)?.sessionId ?? ''
+
 /** 一个把四个 hook 的返回值都摊到 DOM 里的探针。 */
 function Probe(): ReactNode {
   const current = useHostSnapshot()
@@ -49,7 +54,7 @@ function Probe(): ReactNode {
   const error = useHostError()
   return (
     <div>
-      <span data-testid="snapshot">{current === null ? 'null' : String(current.status?.sessionId ?? '')}</span>
+      <span data-testid="snapshot">{current === null ? 'null' : statusOf(current)}</span>
       <span data-testid="status">{status}</span>
       <span data-testid="hello">{identity === null ? 'null' : 'hello'}</span>
       <span data-testid="error">{error ?? 'null'}</span>
