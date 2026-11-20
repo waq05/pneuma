@@ -73,9 +73,13 @@ function findEsbuild() {
       const pkgDir = join(store, entry, 'node_modules', '@esbuild')
       if (!existsSync(pkgDir)) continue
       for (const platform of readdirSync(pkgDir)) {
+        // 平台包的可执行文件位置两边不一样：Windows 的 @esbuild/win32-x64 把
+        // esbuild.exe 放在包根，Linux 的 @esbuild/linux-x64 放在 bin/esbuild。
+        // 只认包根会让这条探针在 Linux CI 上直接判「找不到 esbuild」。
         for (const name of ['esbuild.exe', 'esbuild']) {
-          const bin = join(pkgDir, platform, name)
-          if (existsSync(bin)) return bin
+          for (const bin of [join(pkgDir, platform, name), join(pkgDir, platform, 'bin', name)]) {
+            if (existsSync(bin)) return bin
+          }
         }
       }
     }
