@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
-import { afterAll, expect, test } from 'vitest'
+import { afterAll, expect, test, vi } from 'vitest'
 
 /** 按相对本文件的路径读文本。 */
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -86,6 +86,8 @@ interface Captured {
   sections: Map<string, SettingsSectionSpec>
   /** 命令 notice 出来的文字。 */
   notices: string[]
+  /** 假 logger 的缓冲：`/log` 与 log 服务的 tail 从这里取。 */
+  buffer: LogMessage[]
 }
 
 /**
@@ -101,11 +103,12 @@ function mount(config: Record<string, unknown>): { captured: Captured; dispose: 
     commands: new Map(),
     sections: new Map(),
     notices: [],
+    buffer: [],
   }
   const effects: Array<() => void> = []
   const ctx = {
     logger: {
-      buffer: [] as LogMessage[],
+      buffer: captured.buffer,
       exporter: (exporter: { export: (message: LogMessage) => void }) => {
         captured.exporters.push(exporter)
         return () => {}
@@ -391,4 +394,162 @@ test('保存路径不等 TTL：设置分区 save() 之后立刻是新值', async
   // 若保存路径没有打掉缓存，这里在 TTL 内仍是 info 而红
   expect(service.level()).toBe('debug')
   dispose()
+})
+
+// ── 7. 崩溃现场：两条进程级错误都落一行，且只落一次 ────────────────────────────
+
+/** 取某个进程事件的监听器（process.listeners 的签名只认信号名，这里按字符串取）。 */
+function listenersOf(event: string): Function[] {
+  return (process.listeners as unknown as (name: string) => Function[])(event)
+}
+
+/** 从进程监听表里挑出「本次 mount 新加的那一个」。 */
+function addedListener(event: string, before: ReadonlySet<unknown>): ((...args: never[]) => void) | undefined {
+  return listenersOf(event).find((listener) => !before.has(listener)) as ((...args: never[]) => void) | undefined
+}
+
+test('uncaughtException：落一行带栈、退出码 1；重复事件不重复记；exit 监听器刷掉队列', () => {
+  const dir = tempDir('dsc-log-crash-')
+  writeLogConfigOnDisk({ dir, level: 'info' })
+  const beforeUncaught = new Set<unknown>(listenersOf('uncaughtException'))
+  const beforeExit = new Set<unknown>(listenersOf('exit'))
+  const { captured, dispose } = mount({ dir, level: 'info' })
+  const uncaught = addedListener('uncaughtException', beforeUncaught)
+  const onExit = addedListener('exit', beforeExit)
+  expect(uncaught, 'apply 应挂上 uncaughtException').toBeDefined()
+  expect(onExit, 'apply 应挂上 exit').toBeDefined()
+
+  const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const service = logServiceOf(captured)
+  try {
+    uncaught?.(new Error('boom') as never)
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(readFileSync(service.file(), 'utf8')).toContain('[uncaughtException] Error: boom')
+
+    // crashing 已置位：第二次进来只打印与退出，不再写第二行。
+    const lines = readFileSync(service.file(), 'utf8').trim().split('\n').length
+    uncaught?.(new Error('again') as never)
+    expect(readFileSync(service.file(), 'utf8').trim().split('\n').length).toBe(lines)
+  } finally {
+    exitSpy.mockRestore(); vi.restoreAllMocks()
+  }
+
+  // 正常退出：队列里剩下的行由 exit 监听器刷盘。
+  captured.exporters[0]?.export(message('info', 2, 'before-exit'))
+  onExit?.()
+  expect(readFileSync(service.file(), 'utf8')).toContain('before-exit')
+  dispose()
+})
+
+test('unhandledRejection：非 Error 的原因折成字符串落一行', () => {
+  const dir = tempDir('dsc-log-rejection-')
+  writeLogConfigOnDisk({ dir, level: 'info' })
+  const beforeRejection = new Set<unknown>(listenersOf('unhandledRejection'))
+  const { captured, dispose } = mount({ dir, level: 'info' })
+  const rejection = addedListener('unhandledRejection', beforeRejection)
+  expect(rejection, 'apply 应挂上 unhandledRejection').toBeDefined()
+  const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    rejection?.('字符串原因' as never)
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(readFileSync(logServiceOf(captured).file(), 'utf8')).toContain('[unhandledRejection] 字符串原因')
+  } finally {
+    exitSpy.mockRestore(); vi.restoreAllMocks()
+  }
+  dispose()
+})
+
+// ── 8. /log 的条数归一与 tail 取日志缓冲 ─────────────────────────────────────
+
+test('/log 条数非法或非正时按 20 条；日志缓冲非空时 tail 给出级别/来源/正文', () => {
+  const dir = tempDir('dsc-log-tail-')
+  writeLogConfigOnDisk({ dir, level: 'info' })
+  const { captured, dispose } = mount({ dir, level: 'info' })
+  captured.buffer.push(message('info', 2, '第一条日志'))
+  captured.buffer.push(message('warn', 1, '第二条日志'))
+
+  const notices = runCommand(captured, 'log', ['不是数字'])
+  expect(notices).toHaveLength(1)
+  expect(notices[0]).toContain('日志文件')
+  // buffer 里的两行会被 tail 出来（级别名 + 来源 + 正文）。
+  expect(notices[0]).toContain('info')
+  expect(notices[0]).toContain('第二条日志')
+
+  const service = logServiceOf(captured)
+  // 0 按「没填」回落 20 条；负数被夹成 0，而 slice(-0) 等于整段。
+  expect(service.tail(0)).toHaveLength(2)
+  expect(service.tail(-5)).toHaveLength(2)
+  expect(service.tail(1)).toHaveLength(1)
+  expect(service.tail()).toHaveLength(2)
+  dispose()
+})
+
+// ── 9. 设置分区剩余分支：off 标签、总量上限、未知键、清理按钮 ─────────────────
+
+test('设置分区：off 选项有中文标签；保存总量上限与未知键；清理按钮回报删了几个目录', () => {
+  const dir = tempDir('dsc-log-section-')
+  writeLogConfigOnDisk({ dir, level: 'info' })
+  const { captured, dispose } = mount({ dir, level: 'info' })
+  const section = captured.sections.get('log')
+  expect(section).toBeDefined()
+
+  const fields = section?.fields() as Array<{ key?: string; type: string; options?: Array<{ value: string; label: string }> }>
+  const level = fields.find((field) => field.key === 'level')
+  expect(level?.options?.find((option) => option.value === 'off')?.label).toBe('关闭')
+  expect(level?.options?.some((option) => option.value === 'debug')).toBe(true)
+
+  expect(String(section?.save?.('maxTotalMB', 'not-a-number'))).toContain('正数')
+  expect(section?.save?.('maxTotalMB', '16')).toBeUndefined()
+  expect(section?.values?.()).toMatchObject({ maxTotalMB: 16 })
+  expect(String(section?.save?.('bogus', '1'))).toContain('bogus')
+
+  expect(String(section?.action?.('bogus'))).toContain('未知的操作')
+  expect(String(section?.action?.('cleanup'))).toContain('清理完成')
+  dispose()
+})
+
+// ── 10. sink 的剩余分支：size / 目录不存在 / 打开失败 / 总量预算 ──────────────
+
+test('sink：size 随写入增长；目录不存在时清理返回零；目录位置被文件占着时静默丢弃', () => {
+  const dir = tempDir('dsc-log-sink-extra-')
+  const sink = new LogSink({ dir, sweepIntervalMs: 0 })
+  expect(sink.size()).toBe(0)
+  sink.write('{"msg":"x"}')
+  sink.flush()
+  expect(sink.size()).toBeGreaterThan(0)
+  expect(sink.file()).toContain(dayKey(Date.now()))
+  sink.close()
+
+  const missing = new LogSink({ dir: join(dir, 'no-such-dir') })
+  expect(missing.prune(true)).toStrictEqual({ dirs: 0, bytes: 0 })
+
+  // 用普通文件占住「日志目录」的位置：开文件失败，写入被丢弃但不抛。
+  const blocked = join(dir, 'blocked')
+  writeFileSync(blocked, 'x')
+  const broken = new LogSink({ dir: blocked })
+  expect(() => {
+    broken.write('{"msg":"lost"}')
+    broken.flush()
+    broken.close()
+  }).not.toThrow()
+})
+
+test('sink 总量预算：超过上限从最旧的一天开始整目录删，今天不删', () => {
+  const dir = tempDir('dsc-log-budget-')
+  const now = Date.now()
+  const oldDay = dayKey(now - 2 * 24 * 60 * 60 * 1000)
+  const yesterday = dayKey(now - 24 * 60 * 60 * 1000)
+  for (const day of [oldDay, yesterday]) {
+    mkdirSync(join(dir, day), { recursive: true })
+    writeFileSync(join(dir, day, 'dsc-1.jsonl'), 'x'.repeat(1024))
+  }
+  // keepDays 大、总量上限只够一天：保留期内的两天里，最旧的那天被删。
+  const sink = new LogSink({ dir, keepDays: 30, maxTotalBytes: 1024, sweepIntervalMs: 0 })
+  const result = sink.prune(true)
+  expect(result.dirs).toBe(1)
+  expect(result.bytes).toBe(1024)
+  expect(existsSync(join(dir, oldDay))).toBe(false)
+  expect(existsSync(join(dir, yesterday))).toBe(true)
 })

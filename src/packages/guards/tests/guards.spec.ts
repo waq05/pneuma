@@ -96,3 +96,53 @@ test('空链 defer；注册的 deny 守卫按 order 抢先；退订后恢复 def
   offLate()
   expect(await guards.gate(input)).toEqual({ action: 'defer' })
 })
+
+// 服务面剩下的四样：观察者链、会话归属解析、chain 只读视图。它们各是一层转发，
+// 断了不会报错、只会静默不生效（遮红不生效 = 密钥落日志），所以逐条钉住。
+test('观察者链按 order 依次加工；退订后恢复原文', () => {
+  const guards = applied()
+  expect(guards.observe('read', 'plain')).toBe('plain')
+
+  const offLate = guards.registerObserver({ id: 'late', order: 50, observe: (_tool, text) => `${text}|late` })
+  const offEarly = guards.registerObserver({ id: 'early', order: 10, observe: (_tool, text) => `${text}|early` })
+  // 小的先加工：先 early 再 late。
+  expect(guards.observe('read', 'x')).toBe('x|early|late')
+
+  offEarly()
+  expect(guards.observe('read', 'x')).toBe('x|late')
+  offLate()
+  expect(guards.observe('read', 'x')).toBe('x')
+})
+
+test('会话归属解析：解析器把队友会话改写成归属会话，认不出时原样返回', () => {
+  const guards = applied()
+  const seen: string[] = []
+  const off = guards.registerSessionResolver!('teammate', (sessionId) => {
+    seen.push(sessionId)
+    return sessionId === 'mate-session' ? { sessionId: 'owner-session', sessionPath: 'owner.jsonl', facts: { teammate: 'a' } } : undefined
+  })
+
+  expect(guards.resolveSession?.({ ...input, sessionId: 'mate-session' })).toMatchObject({
+    sessionId: 'owner-session',
+    sessionPath: 'owner.jsonl',
+    teammate: 'a',
+  })
+  expect(guards.resolveSession?.({ ...input, sessionId: 'plain-session' })).toMatchObject({ sessionId: 'plain-session' })
+  // 归属解析会跟跳：先解析 mate-session → owner-session，再对 owner-session 解析一次（原样）。
+  expect(seen).toStrictEqual(['mate-session', 'owner-session', 'plain-session'])
+
+  off()
+  expect(guards.resolveSession?.({ ...input, sessionId: 'mate-session' })).toMatchObject({ sessionId: 'mate-session' })
+})
+
+test('chain 只读视图按 order 列出已注册的守卫', () => {
+  const guards = applied()
+  expect(Array.isArray(guards.chain)).toBe(true)
+  const off = guards.register({ id: 'chain-check', order: 7, decide: () => ({ action: 'defer' }) })
+  expect(guards.chain.map((guard) => guard.id)).toContain('chain-check')
+  // 链上顺序是 order 升序。
+  const orders = guards.chain.map((guard) => guard.order)
+  expect(orders).toStrictEqual([...orders].sort((a, b) => a - b))
+  off()
+  expect(guards.chain.map((guard) => guard.id)).not.toContain('chain-check')
+})

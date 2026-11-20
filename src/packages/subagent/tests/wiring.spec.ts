@@ -656,6 +656,45 @@ describe('设置分区', () => {
     })
   })
 
+  test('其余设置键：按角色轮次、并发/深度/团队模式、最大轮次与通知', () => {
+    const harness = fakeCtx()
+    const save = harness.section.save
+    const values = (): Record<string, unknown> => harness.section.values() as Record<string, unknown>
+
+    // 按角色轮次：出厂默认打底（pm=48），只认 0..200 的整数。
+    expect(values()['roleTurns.pm']).toBe(48)
+    expect(String(save('roleTurns.no-such-role', '3'))).toContain('没有这项')
+    expect(String(save('roleTurns.pm', 'abc'))).toContain('轮次要填')
+    expect(String(save('roleTurns.pm', '-1'))).toContain('轮次要填')
+    expect(save('roleTurns.pm', '12')).toBeUndefined()
+    expect(values()['roleTurns.pm']).toBe(12)
+    // 0 = 不限，也是合法值。
+    expect(save('roleTurns.pm', '0')).toBeUndefined()
+    expect(values()['roleTurns.pm']).toBe(0)
+
+    // 并发与深度：原样写进配置。
+    expect(save('maxTeammates', '3')).toBeUndefined()
+    expect(values()['maxTeammates']).toBe(3)
+    expect(save('maxDepth', '2')).toBeUndefined()
+    expect(values()['maxDepth']).toBe(2)
+    expect(save('maxTurns', '7')).toBeUndefined()
+    expect(values()['maxTurns']).toBe(7)
+    expect(save('notify', 'quiet')).toBeUndefined()
+    expect(values()['notify']).toBe('quiet')
+    // 通知只认 quiet / auto，其它值按 auto 处理。
+    expect(save('notify', 'weird')).toBeUndefined()
+    expect(values()['notify']).toBe('auto')
+
+    // 团队模式 = 允许二层派活：打开时把 maxDepth 抬到至少 2；关闭不回退深度。
+    expect(values()['teamMode']).toBe(false)
+    expect(save('teamMode', true)).toBeUndefined()
+    expect(values()['teamMode']).toBe(true)
+    expect(values()['maxDepth']).toBe(2)
+    expect(save('teamMode', false)).toBeUndefined()
+    expect(values()['teamMode']).toBe(false)
+    expect(values()['maxDepth']).toBe(2)
+  })
+
   test('动作：新建示例角色写进角色目录；清空任务板返回条数；未知按钮抛错', async () => {
     const harness = fakeCtx()
     const said = String(harness.section.action('new-role'))

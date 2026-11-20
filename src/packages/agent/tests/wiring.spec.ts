@@ -8,7 +8,7 @@
  *
  * @module dsc/packages/agent/tests/wiring.spec
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
@@ -77,6 +77,19 @@ interface AgentServiceLike {
   sessionFor(filePath: string): SessionT | undefined
   isRunning(filePath: string): boolean
   stop(filePath: string): Promise<void>
+  attach(session: SessionT, driver?: ForeignDriverLike): void
+  detach(sessionId: string): void
+  acceptsInput(sessionId: string): boolean
+}
+
+/** 外部循环（队友）的执行面替身。 */
+interface ForeignDriverLike {
+  followup(text: string, images?: string[], origin?: string, files?: unknown[]): void
+  interrupt(): void
+  isRunning(): boolean
+  editQueued?(index: number, text: string): boolean
+  removeQueued?(index: number): boolean
+  steerQueued?(index?: number): boolean
 }
 
 interface Harness {
@@ -93,6 +106,8 @@ interface Harness {
   rewrite: (messages: ChatMessage[], session?: SessionT) => ChatMessage[]
   /** 每轮系统提示正文；缓存探针用例靠改它制造「system 变」的断点。 */
   systemText: string
+  /** 假审批服务（缺省缺席）：测「挂着审批卡切走」的状态点时用。 */
+  approval?: { pendingFor(filePath: string): boolean }
 }
 
 function newSession(id: string): SessionT {
@@ -183,7 +198,7 @@ function fakeCtx(): Harness {
       if (name === 'dsc/notice' && typeof args[0] === 'string') notices.push(args[0])
     },
     get(name: string) {
-      if (name === 'approval') return undefined
+      if (name === 'approval') return harness.approval
       return undefined
     },
     on(event: string, handler: (...args: never[]) => void) {
@@ -421,5 +436,222 @@ describe('缓存归因探针', () => {
     } finally {
       delete process.env['DSC_CACHE_PROBE']
     }
+  })
+})
+
+describe('外部驱动（队友）与休眠投递的剩余分支', () => {
+  /** 记录调用的 driver 替身。 */
+  function driverOf(calls: string[]): ForeignDriverLike {
+    return {
+      followup: (text) => calls.push(`followup:${text}`),
+      interrupt: () => calls.push('interrupt'),
+      isRunning: () => true,
+      editQueued: (index, text) => (calls.push(`edit:${String(index)}:${text}`), true),
+      removeQueued: (index) => (calls.push(`remove:${String(index)}`), true),
+      steerQueued: (index) => (calls.push(`steer:${String(index ?? 'all')}`), true),
+    }
+  }
+
+  test('attach / detach：按 id 与路径查得到；有驱动才算「能接住输入」；isRunning 走驱动', () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const foreign = newSession('sess-foreign')
+    const calls: string[] = []
+    const driver = driverOf(calls)
+
+    service.attach(foreign, driver)
+    expect(service.sessionById(foreign.meta.id)).toBe(foreign)
+    expect(service.sessionFor(foreign.filePath)).toBe(foreign)
+    expect(service.acceptsInput(foreign.meta.id)).toBe(true)
+    expect(service.isRunning(foreign.filePath)).toBe(true)
+    // 有驱动但不在常驻表里：hasAgent 仍是 false（不能被当成常驻 agent 去唤醒）。
+    expect(service.hasAgent(foreign.meta.id)).toBe(false)
+
+    service.detach(foreign.meta.id)
+    expect(service.sessionById(foreign.meta.id)).toBeUndefined()
+    expect(service.acceptsInput(foreign.meta.id)).toBe(false)
+    expect(service.isRunning(foreign.filePath)).toBe(false)
+    // 没登记过的 detach 是空操作。
+    expect(() => service.detach('never')).not.toThrow()
+  })
+
+  test('followup 投给外部驱动；interrupt 按路径 / 按当前查看都走驱动；排队动作交给驱动', () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const calls: string[] = []
+    const driver = driverOf(calls)
+    const foreign = newSession('sess-foreign')
+    service.attach(foreign, driver)
+
+    service.followup('给队友的话', undefined, foreign.meta.id)
+    expect(calls).toContain('followup:给队友的话')
+
+    // 当前查看的会话也 attach 了驱动：无路径的 interrupt 先看当前查看有没有驱动。
+    service.attach(harness.session, driver)
+    service.interrupt()
+    expect(calls).toContain('interrupt')
+
+    // 按路径停：常驻表里没有这条，落到 attached 的驱动上。
+    service.interrupt(foreign.filePath)
+    expect(calls.filter((call) => call === 'interrupt').length).toBe(2)
+
+    // 打开外部驱动的会话：active 让出来（null），排队动作改交当前查看的驱动。
+    open(harness, foreign)
+    expect(service.editQueued(0, '改一句')).toBe(true)
+    expect(service.removeQueued(1)).toBe(true)
+    expect(service.steerQueued()).toBe(true)
+    expect(calls).toContain('edit:0:改一句')
+    expect(calls).toContain('remove:1')
+    expect(calls).toContain('steer:all')
+  })
+
+  test('打开队友会话时把前一条在跑的会话状态点重新点亮（挂着审批卡的发 awaiting-approval）', async () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const running = harness.session
+    // 让第一轮卡在流里：回合开始后不返回，直到测试放行。
+    let release: (() => void) | undefined
+    ;(harness as { stream: unknown }).stream = () =>
+      new Promise<StreamResult>((resolve) => {
+        release = () => resolve(okStream('好'))
+      })
+    service.followup('卡住的一轮', undefined, undefined, 'user')
+    await until(() => harness.events.some((event) => event.name === 'dsc/turn-start'))
+
+    harness.approval = { pendingFor: (path) => path === running.filePath }
+    const foreign = newSession('sess-foreign')
+    const driver = driverOf([])
+    service.attach(foreign, driver)
+    harness.events.length = 0
+    open(harness, foreign)
+
+    const status = harness.events.find(
+      (event) => event.name === 'dsc/agent-status' && (event.args[0] as { path?: string }).path === running.filePath,
+    )
+    expect(status).toBeDefined()
+    expect((status?.args[0] as { state: string }).state).toBe('awaiting-approval')
+
+    release?.()
+    await until(() => harness.events.some((event) => event.name === 'dsc/turn-end'))
+  })
+
+  test('普通会话切换：前一条在跑就重发状态点（没有审批卡时是 working），空闲的进保留名册', async () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const running = harness.session
+    let release: (() => void) | undefined
+    ;(harness as { stream: unknown }).stream = () =>
+      new Promise<StreamResult>((resolve) => {
+        release = () => resolve(okStream('好'))
+      })
+    service.followup('后台跑一轮', undefined, undefined, 'user')
+    await until(() => harness.events.some((event) => event.name === 'dsc/turn-start'))
+
+    const next = newSession('sess-next')
+    harness.events.length = 0
+    open(harness, next)
+    const status = harness.events.find(
+      (event) => event.name === 'dsc/agent-status' && (event.args[0] as { path?: string }).path === running.filePath,
+    )
+    expect((status?.args[0] as { state: string }).state).toBe('working')
+    release?.()
+    await until(() => harness.events.some((event) => event.name === 'dsc/turn-end'))
+
+    // 再切走一条空闲会话：它按「空闲保留」处理，不重发运行中状态。
+    harness.events.length = 0
+    const idle = newSession('sess-idle')
+    open(harness, idle)
+    expect(harness.events.some((event) => event.name === 'dsc/agent-status')).toBe(false)
+  })
+
+  test('后台会话跑完自己收摊（onIdle），不用等人切回去', async () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const background = newSession('sess-background')
+    open(harness, background)
+    expect(service.hasAgent(background.meta.id)).toBe(true)
+    // 切到别的会话后让后台那条跑一轮：跑完 onIdle 发现它不是当前查看的就收摊。
+    service.followup('跑完就走', undefined, background.meta.id, 'notice')
+    const other = newSession('sess-other')
+    open(harness, other)
+    await until(() => !service.hasAgent(background.meta.id))
+    expect(service.sessionById(background.meta.id)).toBeUndefined()
+  })
+
+  test('dsc/exit：把所有常驻 agent 收摊清表', () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const extra = newSession('sess-extra')
+    open(harness, extra)
+    expect(service.hasAgent(harness.session.meta.id)).toBe(true)
+    harness.handlers.get('dsc/exit')!()
+    expect(service.hasAgent(harness.session.meta.id)).toBe(false)
+    expect(service.hasAgent(extra.meta.id)).toBe(false)
+  })
+
+  test('收工队友的记录只读：投递被拒；墓碑指向坏文件时给一条「没能写进会话」', async () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    // 造墓碑：开一条会话再切走四条，它被挤出空闲保留窗后 disposeAgent 记下路径。
+    const retired = newSession('sess-retired')
+    open(harness, retired)
+    const fillers = Array.from({ length: 4 }, (_, index) => newSession(`sess-fill-${String(index)}`))
+    for (const filler of fillers) open(harness, filler)
+    expect(service.hasAgent(retired.meta.id)).toBe(false)
+
+    // 把它的首行改成队友记录：投递应被拒（只读史料），不写用户消息。
+    writeFileSync(retired.filePath, `${JSON.stringify({ type: 'meta', ...retired.meta, origin: 'subagent' })}\n`, 'utf8')
+    service.followup('叫它接着干', undefined, retired.meta.id, 'user')
+    expect(harness.notices.some((message) => message.includes('这位队友已经收工'))).toBe(true)
+
+    // 墓碑指向的文件没了：Session.load 抛错，折成一句通知而不是让调用方炸。
+    rmSync(retired.filePath, { force: true })
+    service.followup('再投一次', undefined, retired.meta.id, 'user')
+    expect(harness.notices.some((message) => message.includes('没能写进会话'))).toBe(true)
+  })
+
+  test('当前查看的就是收工队友时，followup 明说只读，不悄悄写日志', () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    const teammate = newSession('sess-teammate')
+    harness.setSession(teammate)
+    // 直接改 meta 的 origin：这条会话没有经过 session-open，因此没有常驻 agent。
+    ;(teammate.meta as { origin?: string }).origin = 'subagent'
+    service.followup('接着干', undefined, teammate.meta.id, 'user')
+    expect(harness.notices.some((message) => message.includes('这位队友已经收工'))).toBe(true)
+    expect(teammate.messages).toHaveLength(0)
+  })
+})
+
+describe('工具结果记账', () => {
+  test('工具调用带耗时：tool/result 落一条工具行；没有耗时的合成结果不记', async () => {
+    const harness = fakeCtx()
+    const service = serviceOf(harness)
+    // 第一次回一个工具调用（工具不存在，循环仍会为它产出一条带耗时的失败结果），第二次收尾。
+    let round = 0
+    ;(harness as { stream: unknown }).stream = async () => {
+      round += 1
+      if (round === 1) {
+        return {
+          ...okStream(''),
+          toolCalls: [{ id: 'c1', name: 'read', arguments: '{}' }],
+          finishReason: 'tool_calls',
+        }
+      }
+      return okStream('收工')
+    }
+    service.followup('用一次工具', undefined, undefined, 'user')
+    const usageFile = join(HOME, 'usage', 'usage.jsonl')
+    await until(() => {
+      if (!existsSync(usageFile)) return false
+      return readFileSync(usageFile, 'utf8').includes('"k":"tool"')
+    })
+    const toolRow = readFileSync(usageFile, 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((row) => row['k'] === 'tool' && row['sid'] === harness.session.meta.id)
+    expect(toolRow).toBeDefined()
+    expect(typeof toolRow?.['ms']).toBe('number')
   })
 })
