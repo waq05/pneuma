@@ -241,9 +241,12 @@ describe('连接已关 / 管道坏掉之后', () => {
     const { instance, file } = makeFixtureInstance('die')
     // 第一条查询在 didOpen 上把进程弄死；第二条走「连接已关仍调 request」的分支。
     await expect(instance.query('goToDefinition', file, position, undefined)).rejects.toThrow()
+    // 进程死亡是异步感知的：不等 `dead` 置位就发第二条，可能先撞上「往语言服务器写消息
+    // 失败：write EPIPE」（CI Node 24 上偶发），而不是「已退出」。等它真死了再发。
+    await vi.waitFor(() => expect(instance.dead).toBe(true), { timeout: 5_000 })
     await expect(instance.query('goToDefinition', file, position, undefined)).rejects.toThrow(/进程退出|退出/)
     expect(instance.dead).toBe(true)
-  })
+  }, 15_000)
 
   test('stdin 已被销毁：写的时候按「输入口已经关了」收场', async () => {
     const { instance, file } = makeFixtureInstance('ok')
