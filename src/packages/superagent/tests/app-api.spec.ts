@@ -6,7 +6,7 @@
  *
  * @module dsc/packages/superagent/tests/app-api
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createTempDir } from '../../../../tests/support/tmp-dir.js'
@@ -277,18 +277,17 @@ describe('peekSession', () => {
     session.appendUser('Fix the typo')
     session.appendAssistant('On it.', '', [])
     session.close()
-    // 会话日志是流式写盘的：文件先出现、内容随后落地。只等「文件存在」不够——CI 的
-    // Windows runner 上就撞到过「文件在、头行还没写」，peekSession 读到半个日志报
-    // 「会话文件头损坏」。等到条目正文真的写进去再读。
-    await vi.waitFor(() => {
-      expect(existsSync(file)).toBe(true)
-      expect(readFileSync(file, 'utf8')).toContain('Fix the typo')
-    }, { timeout: 5_000 })
-    const entries = await f.api.peekSession(TICKET)
+    // 日志走的是写入流：`close()` 只 `end()` 流，内容稍后才真正到位。CI 的 Windows runner
+    // 上就撞到过「文件先出现、头行后到」，直接读会报「会话文件头损坏」。这里不去读文件
+    // （流没关时读盘在 Windows 上可能抛），直接按**最终行为**重试 `peekSession`。
+    const entries = await vi.waitFor(async () => {
+      const got = await f.api.peekSession(TICKET)
+      expect(got.some((entry) => entry.kind === 'user')).toBe(true)
+      expect(got.some((entry) => entry.kind === 'text')).toBe(true)
+      return got
+    }, { timeout: 10_000, interval: 50 })
     expect(entries.length).toBeGreaterThan(0)
-    expect(entries.some(entry => entry.kind === 'user')).toBe(true)
-    expect(entries.some(entry => entry.kind === 'text')).toBe(true)
-  })
+  }, 20_000)
 })
 
 describe('导出的常量', () => {
