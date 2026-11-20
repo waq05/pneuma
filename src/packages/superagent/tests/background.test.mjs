@@ -147,7 +147,15 @@ test('until：工作先到给结果，信号中止或超时给 false（本仓原
   const aborted = new AbortController()
   aborted.abort()
   assert.equal(await until(new Promise(() => {}), aborted.signal), false)
-  assert.equal(await until(new Promise(() => {}), undefined, 5), false)
+  // 超时那条靠计时器把 await 叫醒，而 `until` 的超时计时器是 unref 的（不想单独吊住进程）：
+  // 测试自己得留一个 ref 句柄，否则事件循环先排空，node:test 会判「Promise resolution is still
+  // pending but the event loop has already resolved」（Node 22 上稳定复现，5ms 计时器根本等不到）。
+  const keepAlive = setInterval(() => {}, 1_000)
+  try {
+    assert.equal(await until(new Promise(() => {}), undefined, 5), false)
+  } finally {
+    clearInterval(keepAlive)
+  }
   passed += 1
 })
 
