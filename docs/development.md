@@ -707,6 +707,7 @@ node desktop/shots/_verify-sandbox-write-packaged.mjs  # 命令真在系统级�
 
 **包依赖方向门禁（含相对路径，2026-11-09 起）**：`scripts/plugin-dep-graph.mjs` 现在把 `./`、`../` 也解析成真实文件（`.js` → `.ts` / `.tsx`、目录 → `index.ts`），再按「文件属于哪一层、哪个包」归类；包 → 包的相对导入与 `@pneuma/<id>` 用同一个判据（功能包只许 import 库包）。
 两条硬规则：`src/core/**` 与 `src/services/**` 都不许用相对路径进 `src/packages/**`（要共用类型放 `src/contract`，要调实现走 `@pneuma/runtime/*` 或 inject 的服务），违反就以退出码 1 失败并打印 `文件:行号 → 目标`。
+判据只管**会发布的代码**：`*.spec.ts` / `*.int.spec.ts` / `*.spec.tsx` 不参与依赖方向判定（2026-11-20 起）。测试不进出厂产物，契约与集成用例本来就要组合真包；出厂文件（非 spec）的判据一条没松。此前 `check:plugin` 只在夜跑跑，攒下 16 条全落在 spec 里的假红。
 单独跑 `node scripts/plugin-dep-graph.mjs`；它同时打印跨层相对边的统计（按「源层 → 目标层」分组），以后要收紧哪条方向就先看这张表。
 
 **P0 定点门禁（`check:p0`，2026-11-09 起）**：`src/**` 那 14 条 P0 修复、加上第二轮复审挖出的

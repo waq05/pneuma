@@ -310,6 +310,12 @@ export function createPackageGraph(options) {
    */
   const scan = (dir, judge) => {
     for (const file of walkSources(dir, pattern)) {
+      // 依赖方向只管「会发布的代码」：`*.spec.ts` / `*.int.spec.ts` / `*.spec.tsx` 是测试，
+      // 不进构建产物；契约与集成用例本来就要组合真包（例如 core 的契约 spec 直接 import
+      // 功能包、tui 的 app spec 直接 import commands），按出厂口径判它们只会逼人写假件。
+      // 出厂文件（非 spec）的判据一条没松：功能包 → 功能包、core → 任何包仍然记缺口。
+      // 2026-11-20 起补这一条：此前 check:plugin 只在夜跑跑，攒下 16 条全在 spec 里的假红。
+      if (/\.spec\.tsx?$/.test(file)) continue
       let source
       try {
         source = readFileSync(file, 'utf8')
