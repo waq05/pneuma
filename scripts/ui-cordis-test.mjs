@@ -24,7 +24,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', 'electron.exe')
+// 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
+const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
 const DRIVER = join(root, 'scripts', '_ui-cordis-main.cjs')
 const BUNDLE = join(root, 'lib', 'ui', 'plugins', 'statusbar', 'client.js')
 const SHOT = join(root, 'desktop', 'shots', 'cordis-probe.png')

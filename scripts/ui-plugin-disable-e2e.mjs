@@ -23,7 +23,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', 'electron.exe')
+// 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
+const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
 const DRIVER = join(root, 'scripts', '_ui-plugin-disable-main.cjs')
 const SHOT_BEFORE = join(root, 'desktop', 'shots', 'dock-disable-before.png')
 const SHOT_AFTER = join(root, 'desktop', 'shots', 'dock-disable-after.png')

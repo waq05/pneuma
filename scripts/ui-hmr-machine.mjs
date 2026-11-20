@@ -42,7 +42,8 @@ const TARGET = {
 const ANCHOR = 'apply(ui) {'
 const markerLine = (nonce) => `    document.documentElement.dataset['hmrProbe'] = ${JSON.stringify(nonce)}`
 
-const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', 'electron.exe')
+// 平台包名不同：Windows 是 electron.exe，Linux/macOS 是 electron（无后缀）。
+const ELECTRON = join(root, 'desktop', 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
 const DRIVER = join(root, 'scripts', '_ui-hmr-machine-main.cjs')
 const EVIDENCE_PNG = join(root, 'desktop', 'shots', 'ui-hmr-machine.png')
 const EVIDENCE_JSON = join(root, 'desktop', 'shots', 'ui-hmr-machine.json')
