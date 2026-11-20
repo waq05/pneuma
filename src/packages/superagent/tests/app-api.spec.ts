@@ -6,7 +6,7 @@
  *
  * @module dsc/packages/superagent/tests/app-api
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createTempDir } from '../../../../tests/support/tmp-dir.js'
@@ -277,8 +277,13 @@ describe('peekSession', () => {
     session.appendUser('Fix the typo')
     session.appendAssistant('On it.', '', [])
     session.close()
-    // 会话日志是流式写盘的：等文件真的出现再读。
-    await vi.waitFor(() => { expect(existsSync(file)).toBe(true) }, { timeout: 5_000 })
+    // 会话日志是流式写盘的：文件先出现、内容随后落地。只等「文件存在」不够——CI 的
+    // Windows runner 上就撞到过「文件在、头行还没写」，peekSession 读到半个日志报
+    // 「会话文件头损坏」。等到条目正文真的写进去再读。
+    await vi.waitFor(() => {
+      expect(existsSync(file)).toBe(true)
+      expect(readFileSync(file, 'utf8')).toContain('Fix the typo')
+    }, { timeout: 5_000 })
     const entries = await f.api.peekSession(TICKET)
     expect(entries.length).toBeGreaterThan(0)
     expect(entries.some(entry => entry.kind === 'user')).toBe(true)
