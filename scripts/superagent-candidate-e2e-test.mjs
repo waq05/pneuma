@@ -33,11 +33,13 @@
  *    （`cli` 本就可以填任意可执行文件路径）进去的，走的仍是真来源装配、真准入闸、真判定器。
  *    GitHub 的假 gh 与飞书共用同一个 `api` 脚本（`argv[2]` 是 `user` / `repos/...` 就回 gh 的两份
  *    JSON，是 `GET` 就回飞书接口），因为 `resolveDeployment` 在飞书之前跑。
- * 4. **prepare 走 `.cmd` 而不是内联命令**：`prepareDirectory` 用
- *    `spawn(cmd.exe, ['/d','/s','/c', command])` 调它（`executor/dsh.ts:248-249`），Windows 上
- *    Node 会把参数里的引号转义成 `\"`、cmd 又不认，内联的 `"%DSH_SUPERAGENT_DIR%"` 会被当成路径的
- *    一部分。这里把 `git clone ... "%DSH_SUPERAGENT_DIR%"` 放进 PATH 上的 `sa-prepare.cmd`，
- *    `executor.prepare` 只写命令名，转义那层就绕开了。
+ * 4. **prepare 走一个 PATH 上的小脚本而不是内联命令**：`prepareDirectory` 在 Windows 用
+ *    `spawn(cmd.exe, ['/d','/s','/c', command])`（`executor/dsh.ts:248-253`），Node 会把参数里的
+ *    引号转义成 `\"`、cmd 又不认，内联的 `"%DSH_SUPERAGENT_DIR%"` 会被当成路径的一部分；POSIX
+ *    平台则是 `sh -c`。这里把 `git clone <临时仓库> "$DSH_SUPERAGENT_DIR"` 放进 PATH 上的
+ *    `sa-prepare.cmd`（Windows）/ `sa-prepare`（POSIX，带执行位），`executor.prepare` 只写命令名，
+ *    转义那层就绕开了；两个平台都真跑过（2026-11-20 补 POSIX 分支：此前只写了 `.cmd`，Linux CI
+ *    上 `sh -c sa-prepare` 找不到命令，工单在 prepare 阶段就失败，夜跑必红）。
  *
  * ## 判据（逐条打印 PASS / FAIL，退出码 0 / 1）
  *
@@ -458,21 +460,33 @@ function cliCalls() {
 // 立刻 `store.settings()` 就是这里播的那份。字段以 `core/policy.ts` 的 `SettingsSchema` 为准，
 // 来源配置以各自 kind 的 schema 为准（多一个键会被 `.strict()` 拒掉、整个来源降级成停用）。
 //
-// prepare 为什么是一个 PATH 上的 `.cmd` 而不是一行内联命令：`prepareDirectory` 用
-// `spawn(cmd.exe, ['/d','/s','/c', command])` 调它（`executor/dsh.ts:248-249`），Node 在 Windows
-// 上会把带空格的参数整体加引号、把参数里的引号转义成 `\"`，cmd 又不认 `\"`——内联命令里的
+// prepare 为什么是一个 PATH 上的小脚本而不是一行内联命令：`prepareDirectory` 在 Windows 用
+// `spawn(cmd.exe, ['/d','/s','/c', command])` 调它（`executor/dsh.ts:248-253`），Node 会把带空格的
+// 参数整体加引号、把参数里的引号转义成 `\"`，cmd 又不认 `\"`——内联命令里的
 // `"%DSH_SUPERAGENT_DIR%"` 于是被当成路径的一部分（实测报
-// `could not create leading directories of '"C:\...\fix-..."'`）。把命令放进 `.cmd` 文件、
-// 让 prepare 只写一个不含空格和引号的命令名，就绕开了这层转义。
+// `could not create leading directories of '"C:\...\fix-..."'`）。POSIX 上是 `sh -c`，
+// 所以脚本要写成 `#!/bin/sh` 且带执行位，命令名两边都叫 `sa-prepare`。
+// 2026-11-20：此前只写 `.cmd`（Windows 靠 PATHEXT 解析 `sa-prepare` → `sa-prepare.cmd`），
+// Linux 上 `sh -c sa-prepare` 找不到命令，工单在 prepare 阶段就失败——夜跑这条一直红。
 const PATH_BIN = join(home, 'bin')
 mkdirSync(PATH_BIN, { recursive: true })
-writeFileSync(join(PATH_BIN, 'sa-prepare.cmd'), [
-  '@echo off',
-  'git clone "%~dp0..\\repo" "%DSH_SUPERAGENT_DIR%"',
-  '',
-].join('\r\n'), 'utf8')
-process.env['PATH'] = PATH_BIN + ';' + String(process.env['PATH'] ?? '')
-check('prepare 命令与 clone 源就位（PATH 上的 sa-prepare.cmd）', existsSync(join(PATH_BIN, 'sa-prepare.cmd')))
+const PREPARE = process.platform === 'win32' ? 'sa-prepare.cmd' : 'sa-prepare'
+if (process.platform === 'win32') {
+  writeFileSync(join(PATH_BIN, PREPARE), [
+    '@echo off',
+    'git clone "%~dp0..\\repo" "%DSH_SUPERAGENT_DIR%"',
+    '',
+  ].join('\r\n'), 'utf8')
+} else {
+  writeFileSync(join(PATH_BIN, PREPARE), [
+    '#!/bin/sh',
+    'git clone "$(dirname "$0")/../repo" "$DSH_SUPERAGENT_DIR"',
+    '',
+  ].join('\n'), { mode: 0o755 })
+}
+const PATH_SEPARATOR = process.platform === 'win32' ? ';' : ':'
+process.env['PATH'] = PATH_BIN + PATH_SEPARATOR + String(process.env['PATH'] ?? '')
+check(`prepare 命令与 clone 源就位（PATH 上的 ${PREPARE}）`, existsSync(join(PATH_BIN, PREPARE)))
 
 const settings = {
   paused: false,
