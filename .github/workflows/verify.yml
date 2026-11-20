@@ -528,10 +528,16 @@ jobs:
       # 所以必须排在上面「编译内核」之后。合并成一套记在 docs/testing-backlog.md 的 B57。
       - name: 插件门禁（模型 / 包标准 / 包级测试 / 清单快照 / 装配 / 热替换）
         run: pnpm run check:plugin
-      # 真机 e2e 档（2026-11-14 起）：ui-*_e2e 探针要 Electron 的 Chromium，
-      # 上面的正常安装（没带 --ignore-scripts）已经把 Electron 二进制拉下来了。
+      # 真机 e2e 档（2026-11-14 起）：ui-*_e2e 探针要 Electron 的 Chromium。
       # 无头 runner 上 Electron 起不来（Missing X server or $DISPLAY），所以和 snapshot /
       # e2e / coverage 三个 job 一样套 xvfb 虚拟显示；2026-11-20 补。
+      #
+      # 2026-11-20 实测：干净 runner 上 `desktop/node_modules/electron/dist` 根本不存在
+      # （pnpm 10 的构建脚本白名单没有替我们下载运行时，e2e job 因此一直在静默跳过它的
+      # Electron 文件）。这里显式补一次；install.js 幂等，已经下好就立刻退出。
+      - name: 确保 Electron 运行时二进制
+        working-directory: desktop
+        run: node node_modules/electron/install.js
       - name: 界面 e2e 自检（真 Chromium）
         run: xvfb-run --auto-servernum pnpm run check:ui:e2e
 

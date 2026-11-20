@@ -28,8 +28,17 @@ import {
 let dir = ''
 
 afterEach(() => {
-  // 真终端会话刚被收掉时，子进程可能还占着 cwd 一瞬（Windows 上 rmSync 会 EPERM）。
-  if (dir !== '') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  // 真终端会话刚被收掉时，子进程可能还占着 cwd 一瞬（Windows 上 rmSync 会 EPERM/EBUSY）。
+  // 2026-11-20：CI 的 Windows runner 上 1 秒重试不够，EBUSY 直接把 5 条用例判红；
+  // 这些临时目录在系统 tmp 下，清理失败不该影响用例结论——删不掉就留给下一轮清理，
+  // 但重试次数放宽到约 5 秒，正常情况下仍能自己删干净。
+  if (dir !== '') {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+    } catch {
+      /* 子进程还没退干净：留在系统 tmp 里，由下一轮清理收 */
+    }
+  }
   dir = ''
 })
 
