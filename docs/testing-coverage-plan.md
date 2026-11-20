@@ -393,3 +393,40 @@ integration 层 `win-token.int.spec.ts` 已覆盖真实令牌路径。
 实测（全五 project，Windows 本机）：lines **95.65%**、branches **85.07%**、functions **93.07%**、statements **93.18%**，`src/core/**` lines **96.78%**——原基线阈值仍全部通过。`src/packages/sandbox/win/**`（271 行）不补：只有 Windows 能量到，CI 跑 Ubuntu 天然不计。
 
 本地全量跑仍有 5 条既有 flake（`lsp` 真子进程超时 4 条 + `tests/harness.int.spec.ts` runCli 1 条），单跑全绿，与新增测试无关；CI Ubuntu 上同一批用例一直是绿的。
+
+### W14（2026-11-20 同日第三轮，收尾）
+
+W13 后仍剩 2,197 行未覆盖。按「文件 → 缺口行数」切成 8 个任务包，最多 5 个子代理并行（含子代理再拆批），
+只新增 `w14*.spec.ts(x)`、不改产品代码，要求每个代理先读实测覆盖再补、并逐行对照验收。合计新增 135 个
+spec、约 780 条用例，覆盖 2,051 行（2,197 → 641）。
+
+实测（全五 project，Windows 本机，`pnpm run test:coverage:run`）：
+
+| 指标 | W13 | W14 | 阈值（基线 − 0.5） |
+| --- | --- | --- | --- |
+| lines | 95.65% | **98.73%**（49,957 / 50,598） | 91.5 |
+| statements | 93.18% | **96.20%** | 89.1 |
+| functions | 93.07% | **97.01%** | 89.2 |
+| branches | 85.07% | **87.99%** | 81.3 |
+| `src/core/**` lines | 96.78% | **99.26%**（9,487 / 9,558） | 91.9 |
+
+基线仍按政策不动（只记录实测，抬基线要单独复核）。`pnpm run check:coverage-summary` 自检 exit 0。
+
+**剩余 641 行按性质分三类（不是漏测）**：
+
+1. **只有 Windows 能跑到的沙箱 FFI 面 305 行**：`sandbox/win/runner-entry.ts` 的令牌构造 /
+   `CreateProcessAsUserW` / 作业对象 / ConPTY / 管道排水（255 行）需要真实受限令牌与管理员级能力；
+   参数解析与失败语义（`dsc-sandbox-run: …` + 127）已用「喂真 argv 跑真入口」补上（17 条），
+   其余 6 个 win 模块（ffi / doctor / token / setup / wfp / backend）只能 mock 掉 koffi 才测，
+   属于「伪造被测面」，不做。CI Ubuntu 上这块天然不计。
+2. **统计口径与死分支约 90 行**：`ui-primitives/ui/highlight.ts` 55 行是 59 门语法的动态 `import()`，
+   V8 记在别的文件里（`w12-highlight.spec.ts` 真装了每一门并断言 resolves）；其余是「上游校验已挡」
+   的防御分支（semver 对坏范围只返回 false 不抛、disabled 控件不派发 click、切片恒以 `{` 开头等）。
+3. **竞态与重 harness 约 250 行**：目录项在 `stat`/`open` 之间消失、跨进程文件锁、SIGPIPE 时序、
+   真 Web Push 端点、夏令时跳表小时；以及 `superagent/executor/dsh.ts` 的 worker 回合状态机（14 行）
+   与 `approval-floor` / `desktop-dock` 等需要整套服务替身的入口。
+
+同轮修掉的测试设施问题：`ui-terminal` 的原生桥引用不稳定（产品 bug，已修，回归用例覆盖）；
+`tests/harness.int.spec.ts` 的超时杀进程断言在 Windows 上跟 `taskkill` 赛跑（按平台分流后本机稳定）。
+本机全量跑仍有 2 条 lsp 真子进程时序 flake（`w11-branches` 并发冷启动、`client` 推送版本窗口），
+单跑全绿、CI Ubuntu 一直绿，已在 [testing-backlog.md](testing-backlog.md) B62 记明。
