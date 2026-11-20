@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/remote",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "把当前会话开给局域网里的手机浏览器：8 位配对码换设备令牌，只放行白名单方法，审批与轮次结束会推送通知",
   "private": true,
   "type": "module",

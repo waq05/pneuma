@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/cli",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "numa config 与 numa plugin 两个子命令的实现：在内核起来之前跑，不进启动图",
   "private": true,
   "type": "module",

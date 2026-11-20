@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/session-search",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "按关键词翻以前聊过的会话，中文一两个字也能搜到；提供 session_search 工具与 /search 命令",
   "private": true,
   "type": "module",

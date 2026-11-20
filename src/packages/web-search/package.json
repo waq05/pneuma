@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/web-search",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "让模型上网查资料并附来源链接；默认用 DeepSeek 原生搜索，也可换 Tavily / 博查 / Serper",
   "private": true,
   "type": "module",

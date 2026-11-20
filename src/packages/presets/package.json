@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/presets",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "人格、工具目录与提示词的那根旋钮：标准 / 极简 / 创造 / PTC 四个内置模式，可自己加；「协作模式」管四档工具闸门，这里管模型是谁、能用哪些工具、收到什么提示",
   "private": true,
   "type": "module",

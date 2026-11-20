@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-team",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "子智能体的名册轮询、正文区只读运行记录（发话 / 停止 / 移除）与右栏页签；成员列表只在状态面板列一次，本包不再画标题旁按钮",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "子智能体的名册轮询、正文区只读运行记录（发话 / 停止 / 移除）与右栏页签；成员列表只在状态面板列一次，本包不再画标题旁按钮",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.2"
+      "api": "^0.9.3"
     },
     "toggleable": true
   },

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/image-diet",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "历史里太久/太多的图不再随每轮请求重发：用户图与工具图各按预算保留，更早回合的图全卸载",
   "private": true,
   "type": "module",

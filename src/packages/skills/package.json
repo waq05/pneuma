@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/skills",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "SKILL.md 发现、开关、市场与 skill 工具",
   "private": true,
   "type": "module",

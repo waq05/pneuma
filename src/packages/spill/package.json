@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/spill",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆",
   "private": true,
   "type": "module",

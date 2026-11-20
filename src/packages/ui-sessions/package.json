@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-sessions",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "左侧栏会话列表：分组、搜索、重命名与拖拽排序",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "左侧栏会话列表：分组、搜索、重命名与拖拽排序",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.2"
+      "api": "^0.9.3"
     },
     "toggleable": true
   },

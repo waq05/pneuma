@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/computer-use",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认",
   "private": true,
   "type": "module",

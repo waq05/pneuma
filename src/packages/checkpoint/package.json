@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/checkpoint",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "每个回合前后各存一份影子 git 快照：能回看，还原下一批再做",
   "private": true,
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-primitives",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "界面壳的基元库：图标、载体基元、平台视图、面板几何与格式化口径，也作为平台种子下发给界面插件",
   "private": true,
   "type": "module",

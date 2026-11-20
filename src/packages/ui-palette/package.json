@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-palette",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Ctrl+K 一处搜动作、会话、页面与设置",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "Ctrl+K 一处搜动作、会话、页面与设置",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.2"
+      "api": "^0.9.3"
     },
     "toggleable": true
   },

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/guards",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "工具动手之前该问谁：模式闸门与审批卡各占一环",
   "private": true,
   "type": "module",

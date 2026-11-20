@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/browser",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "模型自己开一台隔离 Chrome，按页面元素点击输入；动作每次审批，可设域名黑白名单",
   "private": true,
   "type": "module",

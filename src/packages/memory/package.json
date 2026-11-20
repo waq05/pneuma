@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/memory",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "跨会话留下的事实：全局事实、用户偏好、当前工作区各一格，注入给模型的就是这些",
   "private": true,
   "type": "module",

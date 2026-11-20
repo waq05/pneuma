@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/mode",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "执行 / 计划 / 探索 / 免打扰四档与工具闸门",
   "private": true,
   "type": "module",

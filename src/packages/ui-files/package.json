@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-files",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "工作区文件树与 Git 变更两个页签",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "工作区文件树与 Git 变更两个页签",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.2"
+      "api": "^0.9.3"
     },
     "toggleable": true
   },

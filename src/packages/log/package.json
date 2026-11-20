@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/log",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "内核日志落到 ~/.dsc/logs：按天分片、写满轮转、总量封顶，崩溃那一刻也留得下现场",
   "private": true,
   "type": "module",

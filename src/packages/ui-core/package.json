@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-core",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "插件版界面的共用核心：槽位注册表、服务表、席位、帧协议与两个壳的装载约定",
   "private": true,
   "type": "module",

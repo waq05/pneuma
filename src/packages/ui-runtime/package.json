@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-runtime",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "界面壳的共享运行时：宿主通道、React 上下文与读数 hook、页与视图信号、外观落地、今日用量；作为平台种子下发给界面插件",
   "private": true,
   "type": "module",

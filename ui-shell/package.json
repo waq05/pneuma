@@ -1,6 +1,6 @@
 {
   "name": "dsc-ui-shell",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "type": "module",
   "description": "Pneuma 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",

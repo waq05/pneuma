@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-actions",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "全局动作的唯一登记处：按 owner 去重、变化时通知订阅者",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "全局动作的唯一登记处：按 owner 去重、变化时通知订阅者",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.2"
+      "api": "^0.9.3"
     },
     "toggleable": true
   },

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/commands-core",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "斜杠命令表、补全候选与唯一前缀展开的唯一一份实现；commands / runtime / tui 与界面输入框共用",
   "private": true,
   "type": "module",

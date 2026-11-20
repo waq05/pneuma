@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/web-fetch",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "让模型读一个具体网页的正文：抓回 HTML 转成 Markdown，太长的自动截断",
   "private": true,
   "type": "module",

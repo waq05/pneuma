@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/compact",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "上下文超阈值自动压缩",
   "private": true,
   "type": "module",
