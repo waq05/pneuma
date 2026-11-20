@@ -30,7 +30,6 @@ import { Terminal } from '@xterm/xterm'
 import {
   createT,
   defineUiPlugin,
-  getHostNative,
   IconTerminal,
   readCssColor,
   readCssValue,
@@ -39,7 +38,11 @@ import {
   type DockTabBodyProps,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, readCwd } from '@dsc/ui-primitives'
+// `useHostNative` 是 `getHostNative` 的缓存形态：原生桥在页面生命周期内不会出现/消失，取一次就够。
+// 这里**必须**用 hook 形态——`getHostNative()` 每次调用都新建对象，而 `native` 在「起 shell」effect
+// 的依赖里：引用一变 effect 就重跑，spawn 失败时 `setError('')` / `setError(failure)` 轮流触发渲染，
+// 会变成无限重试（2026-11-20 实测几秒写出 160 万字符横幅）。ui-layout 的 update-button 同口径。
+import { Select, readCwd, useHostNative } from '@dsc/ui-primitives'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 // 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
 import zh from '../locale/ui.zh.json'
@@ -86,7 +89,7 @@ export default defineUiPlugin({
  * 卸载只发生在整壳关闭（或这张页签被关掉）。
  */
 function TerminalTab({ active }: DockTabBodyProps): ReactNode {
-  const native = getHostNative()
+  const native = useHostNative()
   const [shell, setShell] = useState<ShellValue>(() => {
     let saved: string | null = null
     try {
@@ -117,7 +120,7 @@ function TerminalTab({ active }: DockTabBodyProps): ReactNode {
  * 切换 Shell 下拉 = 杀旧会话、按新 shell 重开（旧界面 pickShell 同款）。 */
 function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible: boolean; onShell: (next: ShellValue) => void }): ReactNode {
   const hostRef = useRef<HTMLDivElement | null>(null)
-  const native = getHostNative()
+  const native = useHostNative()
   const cwd = useHostSelector(readCwd)
   // 会话 id、终端实例与当前 shell 都放在 ref 里：它们跨渲染存活，且改动不该触发重画。
   const sessionRef = useRef('')
