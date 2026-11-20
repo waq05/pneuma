@@ -1381,6 +1381,16 @@ try {
 }
 
 console.log(`\n${String(total - failures)}/${String(total)} 通过`)
-if (failures === 0) rmSync(home, { recursive: true, force: true })
-else console.log(`隔离的 HOME 留在 ${home}（失败现场，方便翻 settings.json 与 audit.jsonl）`)
+if (failures === 0) {
+  try {
+    // Windows 上宿主刚收尾时子进程可能还攥着句柄（EPERM/EBUSY，2026-11-20 本机实测）：
+    // 重试几次；仍删不掉就留下路径提示，别把「105/105 通过」变成失败。
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? String(error)
+    console.log(`临时 HOME 没删掉（${code}），留在 ${home}`)
+  }
+} else {
+  console.log(`隔离的 HOME 留在 ${home}（失败现场，方便翻 settings.json 与 audit.jsonl）`)
+}
 process.exit(failures === 0 ? 0 : 1)
