@@ -51,10 +51,18 @@ function tempDir(): string {
   return root
 }
 
-/** 写文件并让指纹一定变化（同一毫秒连写两次也认得出）。 */
+/**
+ * 写文件并让指纹一定变化。
+ *
+ * 时钟必须**单调递增**：`Date.now() + 1000` 在同一毫秒里连写两次会得到相同的 mtimeMs，
+ * 指纹（mtimeMs + size）不变，第二轮变更就被漏检（CI Node 22 上实测偶发）。这里用
+ * 模块级计数器往前推，保证每次写都比上一次晚，跟机器快慢无关。
+ */
+let fingerprintClock = Date.now()
 function writeChanged(file: string, text: string): void {
   writeFileSync(file, text, 'utf8')
-  const later = new Date(Date.now() + 1_000)
+  fingerprintClock += 1_500
+  const later = new Date(fingerprintClock)
   utimesSync(file, later, later)
 }
 
@@ -130,12 +138,16 @@ describe('缺省日志与缺省实现', () => {
     })
     writeChanged(file, 'v2\n')
     await handle.pollNow()
-    expect(writes.some((line) => line.includes('已换成新代码'))).toBe(true)
+    await vi.waitFor(() => expect(writes.some((line) => line.includes('已换成新代码'))).toBe(true), {
+      timeout: 3_000,
+    })
 
     fail = true
     writeChanged(file, 'v3\n')
     await handle.pollNow()
-    expect(writes.some((line) => line.includes('重挂出错'))).toBe(true)
+    await vi.waitFor(() => expect(writes.some((line) => line.includes('重挂出错'))).toBe(true), {
+      timeout: 3_000,
+    })
     handle.stop()
   })
 
