@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-ask",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "右侧栏的只读旁问：基于当前上下文答一次，不执行工具、不写主会话、不进会话列表；ask_user 的选项卡不在这里，在「等待用户决定的卡」",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "右侧栏的只读旁问：基于当前上下文答一次，不执行工具、不写主会话、不进会话列表；ask_user 的选项卡不在这里，在「等待用户决定的卡」",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1"
+      "api": "^0.9.2"
     },
     "toggleable": true
   },

@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ptc",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "run_code 工具：模型写一段脚本批量调工具，只把结论交回上下文（只属于 PTC 模式）",
   "private": true,
   "type": "module",

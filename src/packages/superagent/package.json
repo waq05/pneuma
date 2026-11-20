@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/superagent",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "把一句话需求派给独占工作区的智能体去改代码，结果回到工单里",
   "private": true,
   "type": "module",

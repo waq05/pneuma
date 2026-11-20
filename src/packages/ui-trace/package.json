@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-trace",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "轨迹页：时间轴、轮次记录与行内检查器",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "轨迹页：时间轴、轮次记录与行内检查器",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1",
+      "api": "^0.9.2",
       "inject": [
         "transcript"
       ]

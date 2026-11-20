@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/desktop-dock",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "把当前会话工作目录里的文件系统、Git 与终端三类操作开给桌面面板：写类先过审批，终端只从桌面原生桥进来",
   "private": true,
   "type": "module",

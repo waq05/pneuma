@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/waiting",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "哪张卡片正挂着等用户做决定，一问就知道",
   "private": true,
   "type": "module",

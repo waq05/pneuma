@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/tool-search",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "只把用得上的工具说明发给模型；撤下的动手类工具与 MCP 工具用 tool_search 查、tool_call 调",
   "private": true,
   "type": "module",

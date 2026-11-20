@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/goal",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "跨轮自动续跑与它的刹车",
   "private": true,
   "type": "module",

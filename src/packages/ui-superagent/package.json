@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-superagent",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Super Agent 的界面：侧栏入口 + 工单面板",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "Super Agent 的界面：侧栏入口 + 工单面板",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1"
+      "api": "^0.9.2"
     },
     "toggleable": true
   },

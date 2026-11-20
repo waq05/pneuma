@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/session-title",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "首回合结束后自动生成会话标题（用户改名优先）",
   "private": true,
   "type": "module",

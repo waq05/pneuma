@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/ui-layout",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "界面壳的骨架与运行时：App 骨架、审查栏、正文区的两张脸、宿主通道与外观落地",
   "private": true,
   "type": "module",
@@ -32,7 +32,7 @@
     "description": "界面壳的骨架与运行时：App 骨架、审查栏、正文区的两张脸、宿主通道与外观落地",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.1",
+      "api": "^0.9.2",
       "phase": "early"
     },
     "toggleable": true

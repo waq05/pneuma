@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/plugin-manager",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "让模型列出、开关、安装本地或远程插件；写操作先过审批，远程插件装之前把来源写进审批卡",
   "private": true,
   "type": "module",

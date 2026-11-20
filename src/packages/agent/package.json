@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/agent",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "ReAct 推理与工具调用循环",
   "private": true,
   "type": "module",
